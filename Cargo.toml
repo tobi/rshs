@@ -1,0 +1,10 @@
+[package]
+name = "rshs"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+actix-web = "4.13.0"
+clap = "4.6.1"
+tokio = { version = "1.52.1", features = ["full"] }
+webdav-handler = { version = "0.2.0", features = ["actix-web"] }
