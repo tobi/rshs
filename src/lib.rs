@@ -1,9 +1,26 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use actix_web::{App, HttpServer, web};
+use clap::Parser;
 use dav_server::{
     DavHandler, actix::DavRequest, actix::DavResponse, fakels::FakeLs, localfs::LocalFs,
 };
+
+/// Simple HTTP/WebDAV Server
+#[derive(Parser)]
+#[command(name = "rshs")]
+pub struct Cli {
+    /// Root directory to serve
+    pub root_dir: String,
+
+    /// Host address to bind to
+    #[arg(short = 'H', long, default_value = "0.0.0.0")]
+    pub host: String,
+
+    /// Port to bind to
+    #[arg(short, long, default_value = "8080")]
+    pub port: u16,
+}
 
 #[derive(Clone)]
 pub struct ServerConfig {
@@ -22,14 +39,18 @@ impl ServerConfig {
     }
 }
 
+pub fn create_dav_handler(root_dir: &Path) -> DavHandler {
+    DavHandler::builder()
+        .filesystem(LocalFs::new(root_dir, false, false, false))
+        .locksystem(FakeLs::new())
+        .build_handler()
+}
+
 pub async fn start_server(config: ServerConfig) -> std::io::Result<()> {
     let root_dir = config.root_dir.clone();
     let addr = format!("{}:{}", config.host, config.port);
 
-    let dav_handler = DavHandler::builder()
-        .filesystem(LocalFs::new(&root_dir, false, false, false))
-        .locksystem(FakeLs::new())
-        .build_handler();
+    let dav_handler = create_dav_handler(&root_dir);
 
     println!("Serving {} on http://{}", root_dir.display(), addr);
 
@@ -44,6 +65,6 @@ pub async fn start_server(config: ServerConfig) -> std::io::Result<()> {
     .await
 }
 
-async fn dav_route(req: DavRequest, dav: web::Data<DavHandler>) -> DavResponse {
+pub async fn dav_route(req: DavRequest, dav: web::Data<DavHandler>) -> DavResponse {
     dav.handle(req.request).await.into()
 }

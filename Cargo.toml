@@ -8,3 +8,8 @@ actix-web = "4.13.0"
 clap = { version = "4.6.1", features = ["derive"] }
 tokio = { version = "1.52.1", features = ["full"] }
 dav-server = { version = "0.11.0", features = ["actix-compat"] }
+
+[dev-dependencies]
+actix-web = "4.13.0"
+dav-server = { version = "0.11.0", features = ["actix-compat"] }
+tempfile = "3"
