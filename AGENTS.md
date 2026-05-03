@@ -14,7 +14,7 @@ cargo clippy
 
 - binary crate (`rshs`), entrypoint: `src/main.rs`
 - library crate (`rshs_lib`), entrypoint: `src/lib.rs`
-- Dependencies: `actix-web` (HTTP server), `clap` (CLI args), `tokio` (async runtime, full features), `webdav-handler` (WebDAV support)
+- Dependencies: `actix-web` (HTTP server), `clap` (CLI args), `tokio` (async runtime, full features), `dav-server` (WebDAV support)
 - Edition 2024 — requires Rust 1.85+
 
 ## Conventions
