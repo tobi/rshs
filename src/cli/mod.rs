@@ -3,7 +3,7 @@ use clap::Parser;
 
 /// Simple HTTP/WebDAV Server
 #[derive(Parser)]
-#[command(name = "rshs")]
+#[command(name = "rshs", version = env!("CARGO_PKG_VERSION"))]
 pub struct Cli {
     /// Root directory to serve
     #[arg(default_value = ".", env = "RSHS_ROOT_DIR")]
@@ -16,6 +16,14 @@ pub struct Cli {
     /// Port to bind to
     #[arg(short, long, default_value = "8080", env = "RSHS_PORT")]
     pub port: u16,
+
+    /// Increase log verbosity (-v = debug, -vv = trace)
+    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count, conflicts_with = "quiet")]
+    pub verbose: u8,
+
+    /// Suppress all log output
+    #[arg(short = 'q', long = "quiet", conflicts_with = "verbose")]
+    pub quiet: bool,
 
     /// Basic Auth credentials in format username:password (can be repeated)
     #[arg(
@@ -42,5 +50,17 @@ impl Cli {
         }
 
         config
+    }
+
+    pub fn log_level(&self) -> &str {
+        if self.quiet {
+            "off"
+        } else {
+            match self.verbose {
+                0 => "info",
+                1 => "debug",
+                _ => "trace",
+            }
+        }
     }
 }
