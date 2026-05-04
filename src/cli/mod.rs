@@ -38,20 +38,6 @@ pub struct Cli {
 }
 
 impl Cli {
-    pub fn log_level(&self) -> &str {
-        if self.quiet {
-            "off"
-        } else {
-            match self.verbose {
-                0 => "info",
-                1 => "debug",
-                _ => "trace",
-            }
-        }
-    }
-}
-
-impl Cli {
     pub fn to_auth_config(&self) -> AuthConfig {
         let mut config = AuthConfig::new();
 
@@ -64,5 +50,17 @@ impl Cli {
         }
 
         config
+    }
+
+    pub fn log_level(&self) -> &str {
+        if self.quiet {
+            "off"
+        } else {
+            match self.verbose {
+                0 => "info",
+                1 => "debug",
+                _ => "trace",
+            }
+        }
     }
 }
