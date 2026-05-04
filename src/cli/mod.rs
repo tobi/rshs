@@ -17,6 +17,14 @@ pub struct Cli {
     #[arg(short, long, default_value = "8080", env = "RSHS_PORT")]
     pub port: u16,
 
+    /// Increase log verbosity (-v = debug, -vv = trace)
+    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count, conflicts_with = "quiet")]
+    pub verbose: u8,
+
+    /// Suppress all log output
+    #[arg(short = 'q', long = "quiet", conflicts_with = "verbose")]
+    pub quiet: bool,
+
     /// Basic Auth credentials in format username:password (can be repeated)
     #[arg(
         short = 'u',
@@ -27,6 +35,20 @@ pub struct Cli {
         env = "RSHS_USERS"
     )]
     pub users: Vec<String>,
+}
+
+impl Cli {
+    pub fn log_level(&self) -> &str {
+        if self.quiet {
+            "off"
+        } else {
+            match self.verbose {
+                0 => "info",
+                1 => "debug",
+                _ => "trace",
+            }
+        }
+    }
 }
 
 impl Cli {

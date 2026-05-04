@@ -144,3 +144,70 @@ fn test_cli_combined_flags() {
     assert_eq!(cli.root_dir, "/data");
     assert_eq!(cli.users.len(), 1);
 }
+
+#[test]
+fn test_cli_log_level_default() {
+    let cli = Cli::try_parse_from(["rshs", "/tmp/test"]).unwrap();
+    assert!(!cli.quiet);
+    assert_eq!(cli.verbose, 0);
+    assert_eq!(cli.log_level(), "info");
+}
+
+#[test]
+fn test_cli_log_level_verbose_short() {
+    let cli = Cli::try_parse_from(["rshs", "-v", "/tmp/test"]).unwrap();
+    assert_eq!(cli.verbose, 1);
+    assert_eq!(cli.log_level(), "debug");
+}
+
+#[test]
+fn test_cli_log_level_verbose_long() {
+    let cli = Cli::try_parse_from(["rshs", "--verbose", "/tmp/test"]).unwrap();
+    assert_eq!(cli.verbose, 1);
+    assert_eq!(cli.log_level(), "debug");
+}
+
+#[test]
+fn test_cli_log_level_very_verbose_short() {
+    let cli = Cli::try_parse_from(["rshs", "-vv", "/tmp/test"]).unwrap();
+    assert_eq!(cli.verbose, 2);
+    assert_eq!(cli.log_level(), "trace");
+}
+
+#[test]
+fn test_cli_log_level_very_verbose_short_repeated() {
+    let cli = Cli::try_parse_from(["rshs", "-v", "-v", "/tmp/test"]).unwrap();
+    assert_eq!(cli.verbose, 2);
+    assert_eq!(cli.log_level(), "trace");
+}
+
+#[test]
+fn test_cli_log_level_very_verbose_excess() {
+    let cli = Cli::try_parse_from(["rshs", "-vvvv", "/tmp/test"]).unwrap();
+    assert_eq!(cli.verbose, 4);
+    assert_eq!(cli.log_level(), "trace");
+}
+
+#[test]
+fn test_cli_log_level_quiet_short() {
+    let cli = Cli::try_parse_from(["rshs", "-q", "/tmp/test"]).unwrap();
+    assert!(cli.quiet);
+    assert_eq!(cli.log_level(), "off");
+}
+
+#[test]
+fn test_cli_log_level_quiet_long() {
+    let cli = Cli::try_parse_from(["rshs", "--quiet", "/tmp/test"]).unwrap();
+    assert!(cli.quiet);
+    assert_eq!(cli.log_level(), "off");
+}
+
+#[test]
+fn test_cli_log_level_verbose_conflicts_with_quiet() {
+    assert!(Cli::try_parse_from(["rshs", "-v", "-q", "/tmp/test"]).is_err());
+}
+
+#[test]
+fn test_cli_log_level_verbose_long_conflicts_with_quiet() {
+    assert!(Cli::try_parse_from(["rshs", "--verbose", "--quiet", "/tmp/test"]).is_err());
+}
