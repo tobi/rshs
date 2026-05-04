@@ -10,12 +10,7 @@ async fn main() -> std::io::Result<()> {
 
     let cli = Cli::parse();
     let auth_config = cli.to_auth_config();
-    let config = rshs::ServerConfig::new(
-        cli.host,
-        cli.port,
-        PathBuf::from(cli.root_dir),
-        auth_config,
-        cli.is_dav,
-    );
+    let config =
+        rshs::ServerConfig::new(cli.host, cli.port, PathBuf::from(cli.root_dir), auth_config);
     rshs::start_server(config).await
 }

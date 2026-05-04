@@ -27,10 +27,6 @@ pub struct Cli {
         env = "RSHS_USERS"
     )]
     pub users: Vec<String>,
-
-    /// Run in WebDAV mode
-    #[arg(short = 'd', long = "dav", env = "RSHS_WEBDAV")]
-    pub is_dav: bool,
 }
 
 impl Cli {

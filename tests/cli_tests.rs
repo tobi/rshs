@@ -62,24 +62,6 @@ fn test_cli_root_dir_custom() {
 }
 
 #[test]
-fn test_cli_default_dav_false() {
-    let cli = Cli::try_parse_from(["rshs", "/tmp/test"]).unwrap();
-    assert!(!cli.is_dav);
-}
-
-#[test]
-fn test_cli_dav_short() {
-    let cli = Cli::try_parse_from(["rshs", "-d", "/tmp/test"]).unwrap();
-    assert!(cli.is_dav);
-}
-
-#[test]
-fn test_cli_dav_long() {
-    let cli = Cli::try_parse_from(["rshs", "--dav", "/tmp/test"]).unwrap();
-    assert!(cli.is_dav);
-}
-
-#[test]
 fn test_cli_user_single() {
     let cli = Cli::try_parse_from(["rshs", "--user", "admin:secret", "/tmp/test"]).unwrap();
     assert_eq!(cli.users.len(), 1);
@@ -148,7 +130,6 @@ fn test_cli_to_auth_config_skips_empty_username() {
 fn test_cli_combined_flags() {
     let cli = Cli::try_parse_from([
         "rshs",
-        "--dav",
         "--user",
         "u:p",
         "-H",
@@ -158,7 +139,6 @@ fn test_cli_combined_flags() {
         "/data",
     ])
     .unwrap();
-    assert!(cli.is_dav);
     assert_eq!(cli.host, "127.0.0.1");
     assert_eq!(cli.port, 9999);
     assert_eq!(cli.root_dir, "/data");

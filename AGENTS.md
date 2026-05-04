@@ -75,23 +75,22 @@ RSHS_USERS="admin:secret;viewer:public" rshs ./docs
 
 ## Modes
 
-The server has two operating modes, controlled by `--dav` / `-d`:
+The server always runs in HTTP + WebDAV hybrid mode:
 
 ```sh
-rshs ./docs               # Serve files in ./docs (HTTP mode, browser-friendly)
+rshs ./docs               # Serve files in ./docs
 rshs                       # Default: serve current directory
 RSHS_ROOT_DIR=./docs rshs  # Set root via env var
-rshs --dav ./docs          # WebDAV mode
 ```
 
-| Flag          | Short | Description                                    |
-| ------------- | ----- | ---------------------------------------------- |
-| `--dav`       | `-d`  | Enable WebDAV mode (default: read-only HTTP)   |
+- **Browser**: GET/HEAD → HTML directory listing, file serving
+- **WebDAV client**: PROPFIND/PUT/DELETE/MKCOL… → WebDAV protocol
 
-| Env Var         | Description                            |
-| --------------- | -------------------------------------- |
-| `RSHS_ROOT_DIR` | Root directory (default: `.`)          |
-| `RSHS_HOST`     | Bind address                           |
-| `RSHS_PORT`     | Bind port                              |
-| `RSHS_USERS`    | Basic Auth credentials                 |
-| `RSHS_WEBDAV`   | Set to any value to enable WebDAV mode |
+# Environment Variables
+
+| Env Var         | Description                   |
+| --------------- | ----------------------------- |
+| `RSHS_ROOT_DIR` | Root directory (default: `.`) |
+| `RSHS_HOST`     | Bind address                  |
+| `RSHS_PORT`     | Bind port                     |
+| `RSHS_USERS`    | Basic Auth credentials        |
