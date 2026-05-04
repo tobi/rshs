@@ -1,16 +1,23 @@
-use std::path::PathBuf;
-
 use clap::Parser;
-use env_logger::Env;
-use rshs::Cli;
+use std::path::PathBuf;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+    env_logger::Builder::from_env(
+        env_logger::Env::new()
+            .write_style("RSHS_LOG_STYLE")
+            .filter_or("RSHS_LOG", "info"),
+    )
+    .init();
 
-    let cli = Cli::parse();
+    let cli = rshs::Cli::parse();
     let auth_config = cli.to_auth_config();
-    let config =
-        rshs::ServerConfig::new(cli.host, cli.port, PathBuf::from(cli.root_dir), auth_config);
-    rshs::start_server(config).await
+
+    rshs::start_server(rshs::ServerConfig::new(
+        cli.host,
+        cli.port,
+        PathBuf::from(cli.root_dir),
+        auth_config,
+    ))
+    .await
 }
