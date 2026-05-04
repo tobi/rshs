@@ -19,11 +19,11 @@ async fn test_server_config_new() {
 #[actix_web::test]
 async fn test_get_root_returns_405() {
     let dir = temp_dir_with_files();
-    let handler = rshs::create_dav_handler(dir.path());
+    let handler = rshs::dav::create_dav_handler(dir.path());
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(handler))
-            .default_service(web::to(rshs::dav_route)),
+            .default_service(web::to(rshs::dav::dav_route)),
     )
     .await;
 
@@ -35,11 +35,11 @@ async fn test_get_root_returns_405() {
 #[actix_web::test]
 async fn test_get_file_content() {
     let dir = temp_dir_with_files();
-    let handler = rshs::create_dav_handler(dir.path());
+    let handler = rshs::dav::create_dav_handler(dir.path());
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(handler))
-            .default_service(web::to(rshs::dav_route)),
+            .default_service(web::to(rshs::dav::dav_route)),
     )
     .await;
 
@@ -54,11 +54,11 @@ async fn test_get_file_content() {
 #[actix_web::test]
 async fn test_head_file() {
     let dir = temp_dir_with_files();
-    let handler = rshs::create_dav_handler(dir.path());
+    let handler = rshs::dav::create_dav_handler(dir.path());
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(handler))
-            .default_service(web::to(rshs::dav_route)),
+            .default_service(web::to(rshs::dav::dav_route)),
     )
     .await;
 
@@ -73,11 +73,11 @@ async fn test_head_file() {
 #[actix_web::test]
 async fn test_options_request() {
     let dir = temp_dir_with_files();
-    let handler = rshs::create_dav_handler(dir.path());
+    let handler = rshs::dav::create_dav_handler(dir.path());
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(handler))
-            .default_service(web::to(rshs::dav_route)),
+            .default_service(web::to(rshs::dav::dav_route)),
     )
     .await;
 
@@ -92,11 +92,11 @@ async fn test_options_request() {
 #[actix_web::test]
 async fn test_propfind_request() {
     let dir = temp_dir_with_files();
-    let handler = rshs::create_dav_handler(dir.path());
+    let handler = rshs::dav::create_dav_handler(dir.path());
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(handler))
-            .default_service(web::to(rshs::dav_route)),
+            .default_service(web::to(rshs::dav::dav_route)),
     )
     .await;
 
@@ -117,11 +117,11 @@ async fn test_propfind_request() {
 #[actix_web::test]
 async fn test_not_found() {
     let dir = temp_dir_with_files();
-    let handler = rshs::create_dav_handler(dir.path());
+    let handler = rshs::dav::create_dav_handler(dir.path());
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(handler))
-            .default_service(web::to(rshs::dav_route)),
+            .default_service(web::to(rshs::dav::dav_route)),
     )
     .await;
 
@@ -135,11 +135,11 @@ async fn test_not_found() {
 #[actix_web::test]
 async fn test_nested_file() {
     let dir = temp_dir_with_files();
-    let handler = rshs::create_dav_handler(dir.path());
+    let handler = rshs::dav::create_dav_handler(dir.path());
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(handler))
-            .default_service(web::to(rshs::dav_route)),
+            .default_service(web::to(rshs::dav::dav_route)),
     )
     .await;
 
