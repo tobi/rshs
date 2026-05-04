@@ -1,5 +1,8 @@
 # rshs
 
+[![Build](https://github.com/mogeko/rshs/actions/workflows/build.yaml/badge.svg)](https://github.com/mogeko/rshs/actions/workflows/build.yaml)
+[![Test](https://github.com/mogeko/rshs/actions/workflows/test.yaml/badge.svg)](https://github.com/mogeko/rshs/actions/workflows/test.yaml)
+
 A lightweight file server with WebDAV support.
 
 - **Browser**: open directories as HTML pages, browse and view files
