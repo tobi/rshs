@@ -62,9 +62,32 @@ CLI values take precedence over environment variables.
 | Linux davfs2     | `mount.davfs http://localhost:8080 /mnt`                     |
 | curl             | `curl http://localhost:8080` (GET) / `curl -X PROPFIND http://localhost:8080` |
 
+### Logging
+
+```sh
+# Default: info level
+docker run --rm -p 8080:8080 mogeko/rshs
+
+# Debug level
+docker run --rm -p 8080:8080 mogeko/rshs -v
+
+# Trace level (most verbose)
+docker run --rm -p 8080:8080 mogeko/rshs -vv
+
+# Suppress all logs
+docker run --rm -p 8080:8080 mogeko/rshs -q
+
+# Using environment variable for log level
+docker run --rm -p 8080:8080 -e RSHS_LOG="debug" mogeko/rshs
+```
+
+Log level priority: `-q` > `-vv` / `-v` > `RSHS_LOG` env var > default `info`.
+
 ## CLI Reference
 
-```
+```plaintext
+Simple HTTP/WebDAV Server
+
 Usage: rshs [OPTIONS] [ROOT_DIR]
 
 Arguments:
@@ -73,18 +96,23 @@ Arguments:
 Options:
   -H, --host <HOST>       Host address to bind to [env: RSHS_HOST=] [default: 0.0.0.0]
   -p, --port <PORT>       Port to bind to [env: RSHS_PORT=] [default: 8080]
+  -v, --verbose...        Increase log verbosity (-v = debug, -vv = trace)
+  -q, --quiet             Suppress all log output
   -u, --user <USER:PASS>  Basic Auth credentials in format username:password (can be repeated) [env: RSHS_USERS=]
-  -h, --help
+  -h, --help              Print help
+  -V, --version           Print version
 ```
 
 ## Environment Variables
 
-| Variable        | Description           | Default   |
-| --------------- | --------------------- | --------- |
-| `RSHS_ROOT_DIR` | Root directory        | `.`       |
-| `RSHS_HOST`     | Bind address          | `0.0.0.0` |
-| `RSHS_PORT`     | Bind port             | `8080`    |
-| `RSHS_USERS`    | `user:pass;...` pairs | —         |
+| Variable          | Description                   | Default   |
+| ----------------- | ----------------------------- | --------- |
+| `RSHS_ROOT_DIR`   | Root directory                | `.`       |
+| `RSHS_HOST`       | Bind address                  | `0.0.0.0` |
+| `RSHS_PORT`       | Bind port                     | `8080`    |
+| `RSHS_USERS`      | `user:pass;...` pairs         | —         |
+| `RSHS_LOG`        | Log level (e.g. `debug`)      | —         |
+| `RSHS_LOG_STYLE`  | Log output style              | `auto`    |
 
 ## License
 

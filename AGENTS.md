@@ -62,7 +62,7 @@ cargo clippy
 
 ## Authentication
 
-Basic HTTP Authentication (RFC 7617) is supported via `--user` / `-U` and `RSHS_USERS` env var.
+Basic HTTP Authentication (RFC 7617) is supported via `--user` / `-u` and `RSHS_USERS` env var.
 
 ```sh
 rshs --user admin:secret --user viewer:public ./docs
@@ -86,11 +86,32 @@ RSHS_ROOT_DIR=./docs rshs  # Set root via env var
 - **Browser**: GET/HEAD → HTML directory listing, file serving
 - **WebDAV client**: PROPFIND/PUT/DELETE/MKCOL… → WebDAV protocol
 
+## Logging
+
+Log level is determined by the following priority (highest first):
+
+1. `-q` / `--quiet` — suppress all logs (`off`)
+2. `-vv` / `--verbose --verbose` — trace level
+3. `-v` / `--verbose` — debug level
+4. `RSHS_LOG` env var — arbitrary filter string (e.g. `info`, `rshs=debug`)
+5. Default — `info` level
+
+```sh
+rshs -v                  # debug
+rshs -vv                 # trace
+rshs -q                  # silent
+rshs                     # info (or RSHS_LOG if set)
+```
+
+`RSHS_LOG_STYLE` controls log output style (`auto`, `always`, `never`).
+
 # Environment Variables
 
-| Env Var         | Description                   |
-| --------------- | ----------------------------- |
-| `RSHS_ROOT_DIR` | Root directory (default: `.`) |
-| `RSHS_HOST`     | Bind address                  |
-| `RSHS_PORT`     | Bind port                     |
-| `RSHS_USERS`    | Basic Auth credentials        |
+| Env Var          | Description                                       |
+| ---------------- | ------------------------------------------------- |
+| `RSHS_ROOT_DIR`  | Root directory (default: `.`)                     |
+| `RSHS_HOST`      | Bind address                                      |
+| `RSHS_PORT`      | Bind port                                         |
+| `RSHS_USERS`     | Basic Auth credentials                            |
+| `RSHS_LOG`       | Logging level (e.g. `info`)                       |
+| `RSHS_LOG_STYLE` | Log output style (e.g. `auto`, `always`, `never`) |
