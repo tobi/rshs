@@ -11,10 +11,12 @@ async fn test_server_config_new() {
         3000,
         std::path::PathBuf::from("/tmp/test"),
         rshs::AuthConfig::new(),
+        false,
     );
     assert_eq!(config.host, "127.0.0.1");
     assert_eq!(config.port, 3000);
     assert_eq!(config.root_dir, std::path::PathBuf::from("/tmp/test"));
+    assert!(!config.is_dav);
 }
 
 #[actix_web::test]

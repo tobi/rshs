@@ -6,6 +6,7 @@ use clap::Parser;
 #[command(name = "rshs")]
 pub struct Cli {
     /// Root directory to serve
+    #[arg(default_value = ".", env = "RSHS_ROOT_DIR")]
     pub root_dir: String,
 
     /// Host address to bind to
@@ -18,14 +19,18 @@ pub struct Cli {
 
     /// Basic Auth credentials in format username:password (can be repeated)
     #[arg(
-        short = 'U',
-        long,
+        short = 'u',
+        long = "user",
         value_name = "USER:PASS",
         verbatim_doc_comment,
         value_delimiter = ';',
         env = "RSHS_USERS"
     )]
     pub users: Vec<String>,
+
+    /// Run in WebDAV mode
+    #[arg(short = 'd', long = "dav", env = "RSHS_WEBDAV")]
+    pub is_dav: bool,
 }
 
 impl Cli {

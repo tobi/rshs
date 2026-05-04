@@ -1520,6 +1520,7 @@ dependencies = [
  "dav-server",
  "env_logger",
  "log",
+ "mime_guess",
  "tempfile",
  "tokio",
 ]
