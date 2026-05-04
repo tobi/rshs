@@ -9,11 +9,11 @@ pub struct Cli {
     pub root_dir: String,
 
     /// Host address to bind to
-    #[arg(short = 'H', long, default_value = "0.0.0.0")]
+    #[arg(short = 'H', long, default_value = "0.0.0.0", env = "RSHS_HOST")]
     pub host: String,
 
     /// Port to bind to
-    #[arg(short, long, default_value = "8080")]
+    #[arg(short, long, default_value = "8080", env = "RSHS_PORT")]
     pub port: u16,
 
     /// Basic Auth credentials in format username:password (can be repeated)
