@@ -12,44 +12,41 @@ A lightweight file server with WebDAV support.
 ## Installation
 
 ```sh
-cargo install --git https://github.com/mogeko/rshs
-```
+# Docker Hub
+docker pull docker.io/mogeko/rshs:latest
 
-Or build from source:
-
-```sh
-git clone https://github.com/mogeko/rshs
-cd rshs
-cargo build --release
+# GitHub Container Registry
+docker pull ghcr.io/mogeko/rshs:latest
 ```
 
 ## Usage
 
 ```sh
 # Serve the current directory
-rshs
+docker run --rm -p 8080:8080 -v .:/mnt/data mogeko/rshs
 
 # Serve a specific directory
-rshs ./docs
-
-# Set root via environment variable
-RSHS_ROOT_DIR=/var/www rshs
+docker run --rm -p 8080:8080 -v /path/to/serve:/mnt/data mogeko/rshs
 
 # Custom host and port
-rshs -H 127.0.0.1 -p 3000 ./public
+docker run --rm -p 3000:3000 -v .:/mnt/data mogeko/rshs --port 3000
 ```
 
 ### Authentication
 
 ```sh
-# Single user
-rshs --user admin:secret123 ./private
+# With authentication
+docker run --rm -p 8080:8080 -v ./private:/mnt/data mogeko/rshs --user admin:secret123
 
 # Multiple users
-rshs --user admin:secret --user viewer:public ./private
+docker run --rm -p 8080:8080 -v ./private:/mnt/data \
+  mogeko/rshs --user admin:secret --user viewer:public
 
-# Via environment variable
-RSHS_USERS="admin:secret;viewer:public" rshs ./private
+# Using environment variables
+docker run --rm -p 3000:3000 \
+  -e RSHS_USERS="admin:secret;viewer:public" \
+  -v .:/mnt/data \
+  mogeko/rshs
 ```
 
 Credentials format: `username:password`, separated by `;` for multiple users.
