@@ -3,7 +3,16 @@ use clap::Parser;
 
 /// Simple HTTP/WebDAV Server
 #[derive(Parser)]
-#[command(name = "rshs", version = env!("CARGO_PKG_VERSION"))]
+#[command(
+    name = "rshs",
+    version = env!("CARGO_PKG_VERSION"),
+    after_help = concat!(
+        "Logging environment variables:\n",
+        "  RSHS_LOG          Logging level filter (e.g. info, rshs=debug)\n",
+        "                    Only used when no -v/-q flags are given\n",
+        "  RSHS_LOG_STYLE    Log output style: auto, always, never"
+    ),
+)]
 pub struct Cli {
     /// Root directory to serve
     #[arg(default_value = ".", env = "RSHS_ROOT_DIR")]
