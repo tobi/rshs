@@ -98,9 +98,14 @@ Options:
   -p, --port <PORT>       Port to bind to [env: RSHS_PORT=] [default: 8080]
   -v, --verbose...        Increase log verbosity (-v = debug, -vv = trace)
   -q, --quiet             Suppress all log output
-  -u, --user <USER:PASS>  Basic Auth credentials in format username:password (can be repeated) [env: RSHS_USERS=]
+  -u, --user <USER:PASS>  Basic Auth credentials in format username:password (can be repeated) [env: RSHS_USERS]
   -h, --help              Print help
   -V, --version           Print version
+
+Logging environment variables:
+  RSHS_LOG          Logging level filter (e.g. info, rshs=debug)
+                    Only used when no -v/-q flags are given
+  RSHS_LOG_STYLE    Log output style: auto, always, never
 ```
 
 ## Environment Variables
