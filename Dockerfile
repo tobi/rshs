@@ -18,7 +18,7 @@ COPY --from=builder /app/README.md /usr/share/doc/rshs/README.md
 
 WORKDIR /mnt/data/
 
-ENV RUST_LOG=info RSHS_ROOT_DIR=/mnt/data/
+ENV RSHS_LOG=info RSHS_ROOT_DIR=/mnt/data/
 
 EXPOSE 8080/tcp
 VOLUME /mnt/data/
