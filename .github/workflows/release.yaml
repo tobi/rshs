@@ -18,7 +18,9 @@ jobs:
       output: image
       push: true
       platforms: linux/amd64,linux/arm64
-      meta-images: mogeko/rshs
+      meta-images: |
+        docker.io/mogeko/rshs
+        ghcr.io/mogeko/rshs
       meta-tags: |
         type=semver,pattern={{version}}
         type=semver,pattern={{major}}.{{minor}}
