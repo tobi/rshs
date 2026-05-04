@@ -32,6 +32,7 @@ pub struct Cli {
         value_name = "USER:PASS",
         verbatim_doc_comment,
         value_delimiter = ';',
+        hide_env_values = true,
         env = "RSHS_USERS"
     )]
     pub users: Vec<String>,
