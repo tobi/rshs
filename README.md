@@ -1,2 +1,3 @@
 # rshs
-Simple HTTP/WebDAV Server
+
+Simple HTTP/WebDAV Server.

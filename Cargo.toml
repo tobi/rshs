@@ -5,13 +5,15 @@ edition = "2024"
 
 [dependencies]
 actix-web = "4.13.0"
-clap = { version = "4.6.1", features = ["derive"] }
+actix-web-httpauth = "0.8.2"
+clap = { version = "4.6.1", features = ["derive", "env"] }
 tokio = { version = "1.52.1", features = ["full"] }
 dav-server = { version = "0.11.0", features = ["actix-compat"] }
-log = "0.4"
-env_logger = "0.11"
+log = "0.4.29"
+env_logger = "0.11.10"
+
 
 [dev-dependencies]
 actix-web = "4.13.0"
 dav-server = { version = "0.11.0", features = ["actix-compat"] }
-tempfile = "3"
+tempfile = "3.27.0"
