@@ -13,7 +13,7 @@ RUN cargo build --release
 FROM gcr.io/distroless/cc-debian13
 
 COPY --from=builder /app/target/release/rshs /usr/bin/rshs
-COPY --from=builder /app/LICENSE /usr/share/doc/rshs/LICENSE
+COPY --from=builder /app/LICENSE /usr/share/doc/rshs/copyright
 COPY --from=builder /app/README.md /usr/share/doc/rshs/README.md
 
 WORKDIR /mnt/data/
