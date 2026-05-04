@@ -3,7 +3,7 @@ use clap::Parser;
 
 /// Simple HTTP/WebDAV Server
 #[derive(Parser)]
-#[command(name = "rshs")]
+#[command(name = "rshs", version = env!("CARGO_PKG_VERSION"))]
 pub struct Cli {
     /// Root directory to serve
     #[arg(default_value = ".", env = "RSHS_ROOT_DIR")]
