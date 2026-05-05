@@ -211,3 +211,62 @@ fn test_cli_log_level_verbose_conflicts_with_quiet() {
 fn test_cli_log_level_verbose_long_conflicts_with_quiet() {
     assert!(Cli::try_parse_from(["rshs", "--verbose", "--quiet", "/tmp/test"]).is_err());
 }
+
+#[test]
+fn test_shadow_file_parse_default_rw() {
+    let cli = Cli::try_parse_from(["rshs", "--shadow-file", "/etc/rshs/shadow"]).unwrap();
+    let arg = cli.to_shadow_file_arg().unwrap();
+    assert_eq!(arg.path, "/etc/rshs/shadow");
+    assert!(arg.writable);
+}
+
+#[test]
+fn test_shadow_file_parse_explicit_ro() {
+    let cli = Cli::try_parse_from(["rshs", "--shadow-file", "ro:/etc/rshs/shadow"]).unwrap();
+    let arg = cli.to_shadow_file_arg().unwrap();
+    assert_eq!(arg.path, "/etc/rshs/shadow");
+    assert!(!arg.writable);
+}
+
+#[test]
+fn test_shadow_file_parse_rw() {
+    let cli = Cli::try_parse_from(["rshs", "--shadow-file", "rw:/etc/rshs/shadow"]).unwrap();
+    let arg = cli.to_shadow_file_arg().unwrap();
+    assert_eq!(arg.path, "/etc/rshs/shadow");
+    assert!(arg.writable);
+}
+
+#[test]
+fn test_shadow_file_none() {
+    let cli = Cli::try_parse_from(["rshs", "/tmp/test"]).unwrap();
+    assert!(cli.to_shadow_file_arg().is_none());
+    assert!(!cli.shadow_write);
+}
+
+#[test]
+fn test_shadow_write_flag() {
+    let cli = Cli::try_parse_from([
+        "rshs",
+        "--shadow-file",
+        "/etc/rshs/shadow",
+        "--shadow-write",
+    ])
+    .unwrap();
+    assert!(cli.shadow_write);
+}
+
+#[test]
+fn test_shadow_write_short_flags() {
+    let cli =
+        Cli::try_parse_from(["rshs", "-S", "rw:/etc/rshs/shadow", "-W", "/tmp/test"]).unwrap();
+    let arg = cli.to_shadow_file_arg().unwrap();
+    assert_eq!(arg.path, "/etc/rshs/shadow");
+    assert!(arg.writable);
+    assert!(cli.shadow_write);
+}
+
+#[test]
+fn test_shadow_write_requires_shadow_file() {
+    let result = Cli::try_parse_from(["rshs", "--shadow-write", "/tmp/test"]);
+    assert!(result.is_err());
+}

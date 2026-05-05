@@ -1,6 +1,15 @@
 use crate::server::auth_basic::AuthConfig;
 use clap::Parser;
 
+/// Arguments for shadow file access mode
+#[derive(Debug, Clone)]
+pub struct ShadowFileArg {
+    /// Path to the shadow file
+    pub path: String,
+    /// Whether the file is writable (rw: prefix)
+    pub writable: bool,
+}
+
 /// Simple HTTP/WebDAV Server
 #[derive(Parser)]
 #[command(
@@ -45,9 +54,43 @@ pub struct Cli {
         env = "RSHS_USERS"
     )]
     pub users: Vec<String>,
+
+    /// Path to shadow file for persistent auth ([rw:|ro:]PATH, default rw)
+    #[arg(
+        short = 'S',
+        long = "shadow-file",
+        value_name = "[rw:|ro:]PATH",
+        env = "RSHS_SHADOW_FILE"
+    )]
+    pub shadow_file: Option<String>,
+
+    /// Write CLI credentials into the shadow file (requires --shadow-file rw:)
+    #[arg(short = 'W', long = "shadow-write", requires = "shadow_file")]
+    pub shadow_write: bool,
 }
 
 impl Cli {
+    pub fn to_shadow_file_arg(&self) -> Option<ShadowFileArg> {
+        self.shadow_file.as_ref().map(|s| {
+            if let Some(path) = s.strip_prefix("rw:") {
+                ShadowFileArg {
+                    path: path.to_string(),
+                    writable: true,
+                }
+            } else if let Some(path) = s.strip_prefix("ro:") {
+                ShadowFileArg {
+                    path: path.to_string(),
+                    writable: false,
+                }
+            } else {
+                ShadowFileArg {
+                    path: s.clone(),
+                    writable: true,
+                }
+            }
+        })
+    }
+
     pub fn to_auth_config(&self) -> AuthConfig {
         let mut config = AuthConfig::new();
 
