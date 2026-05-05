@@ -55,7 +55,7 @@ cargo clippy
 - Standard Rust conventions; no custom formatter or lint config overrides
 - Run `cargo fmt` then `cargo clippy` before committing — both must produce zero warnings
 - All public types are re-exported from `src/lib.rs`; tests import from `rshs` crate root
-- Update AGENTS.md and README.md accordingly when new features are added or existing ones are changed
+- Update `AGENTS.md`, `README.md` and `docs/` accordingly when new features are added or existing ones are changed
 
 ## Testing
 

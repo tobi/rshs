@@ -117,19 +117,15 @@ Arguments:
   [ROOT_DIR]  Root directory to serve [env: RSHS_ROOT_DIR=] [default: .]
 
 Options:
-  -H, --host <HOST>                Host address to bind to [env: RSHS_HOST=] [default: 0.0.0.0]
-  -p, --port <PORT>                Port to bind to [env: RSHS_PORT=] [default: 8080]
-  -v, --verbose...                 Increase log verbosity (-v = debug, -vv = trace)
-  -q, --quiet                      Suppress all log output
-  -u, --user <USER:PASS>           Basic Auth credentials in format username:password
-                                   (can be repeated) [env: RSHS_USERS]
-  -S, --shadow-file <[rw:|ro:]PATH>
-                                   Path to shadow file for persistent auth
-                                   [env: RSHS_SHADOW_FILE=]
-  -W, --shadow-write               Write CLI credentials into the shadow file
-                                   (requires --shadow-file rw:)
-  -h, --help                       Print help
-  -V, --version                    Print version
+  -H, --host <HOST>                  Host address to bind to [env: RSHS_HOST=] [default: 0.0.0.0]
+  -p, --port <PORT>                  Port to bind to [env: RSHS_PORT=] [default: 8080]
+  -v, --verbose...                   Increase log verbosity (-v = debug, -vv = trace)
+  -q, --quiet                        Suppress all log output
+  -u, --user <USER:PASS>             Basic Auth credentials in format username:password (can be repeated) [env: RSHS_USERS]
+  -S, --shadow-file <[rw:|ro:]PATH>  Path to shadow file for persistent auth ([rw:|ro:]PATH, default rw) [env: RSHS_SHADOW_FILE=]
+  -W, --shadow-write                 Write CLI credentials into the shadow file (requires --shadow-file rw:)
+  -h, --help                         Print help
+  -V, --version                      Print version
 
 Logging environment variables:
   RSHS_LOG          Logging level filter (e.g. info, rshs=debug)
