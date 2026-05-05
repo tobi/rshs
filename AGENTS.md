@@ -26,6 +26,7 @@ cargo clippy
 | `server::auth_basic`  | `src/server/auth_basic.rs`  | Basic Auth credential store and validator                    |
 | `server::webdav`      | `src/server/webdav.rs`      | WebDAV handler (local FS + fake locks)                       |
 | `server::http_server` | `src/server/http_server.rs` | A read-only file server accessible via a browser             |
+| `server::shadow`      | `src/server/shadow.rs`      | Shadow file management (create, load, merge, write)          |
 
 ### Dependencies
 
@@ -39,13 +40,15 @@ cargo clippy
 | `mime_guess` 2           | —               | MIME type detection        |
 | `log` 0.4                | —               | Logging facade             |
 | `env_logger` 0.11        | —               | Logging backend            |
+| `sha-crypt` 0.4          | —               | SHA-512 crypt hash verification |
 
 ### Key Patterns
 
 - **Clone-before-move**: Clone values before `move ||` closures to capture owned data
 - **Conditional middleware**: In actix-web, `App::wrap()` changes the concrete `ServiceFactory` type, so conditional middleware requires separate `HttpServer::new()` paths in `if`/`else` branches — do NOT reassign `App` to the same variable
 - **App data**: Shared state (`DavHandler`, `AuthConfig`) passed via `web::Data<T>`
-- **Auth**: `AuthConfig` holds `HashMap<String, String>`. When users are configured, Basic Auth middleware is applied globally. When empty, the server runs without authentication
+- **Auth**: `AuthConfig` holds `HashMap<String, Credential>`. When users are configured, Basic Auth middleware is applied globally. When empty, the server runs without authentication
+- **Shadow file**: Persistent credential store (`username:$hash$...` format). CLI credentials (`--user`) can be merged in and optionally written back to disk
 
 ## Conventions
 
@@ -73,6 +76,18 @@ RSHS_USERS="admin:secret;viewer:public" rshs ./docs
 - Credentials format: `username:password`, multiple pairs separated by `;`
 - CLI values take precedence over env var values for the same username
 - If no users are configured, the server runs without authentication (backward compatible)
+
+Shadow files provide persistent credential storage in SHA-512 crypt format:
+
+```sh
+rshs -S ./shadow --user admin:secret ./docs
+rshs -S rw:/etc/rshs/shadow -W --user admin:newpass ./docs
+RSHS_SHADOW_FILE=ro:./shadow rshs ./docs
+```
+
+- Shadow file path can be prefixed with `rw:` (default) or `ro:` to control write access
+- `-W` / `--shadow-write` writes CLI credentials into the shadow file after merge
+- Shadow files store passwords hashed with SHA-512 crypt (`$6$...`)
 
 ## Modes
 
@@ -116,3 +131,4 @@ rshs                     # info (or RSHS_LOG if set)
 | `RSHS_USERS`     | Basic Auth credentials                            |
 | `RSHS_LOG`       | Logging level (e.g. `info`)                       |
 | `RSHS_LOG_STYLE` | Log output style (e.g. `auto`, `always`, `never`) |
+| `RSHS_SHADOW_FILE` | Shadow file path with optional `rw:`/`ro:` prefix |
