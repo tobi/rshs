@@ -152,7 +152,7 @@ spec:
             - containerPort: 8080
           env:
             - name: RSHS_SHADOW_FILE
-              value: "ro:/etc/rshs/shadow"
+              value: "/etc/rshs/shadow:ro"
           volumeMounts:
             - name: data
               mountPath: /mnt/data

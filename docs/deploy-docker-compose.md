@@ -31,7 +31,7 @@ docker run --rm -p 8080:8080 \
 
 This writes the hashed credentials to `./rshs/shadow` on the host. On subsequent
 runs, existing credentials are loaded from the shadow file automatically (the image
-sets `RSHS_SHADOW_FILE=rw:/etc/rshs/shadow` by default).
+sets `RSHS_SHADOW_FILE=/etc/rshs/shadow:rw` by default).
 
 ## Docker Compose
 

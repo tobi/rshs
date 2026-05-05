@@ -15,7 +15,7 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
 
     if cli.shadow_write && !shadow.writable {
         log::warn!(
-            "shadow file {} is read-only (ro:), ignoring --shadow-write",
+            "shadow file {} is read-only (:ro), ignoring --shadow-write",
             shadow.path
         );
     }
@@ -83,7 +83,7 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
         }
     } else if shadow.writable && shadow_path.exists() && !is_path_writable(shadow_path) {
         log::warn!(
-            "shadow file {} is declared rw: but file is read-only at OS level",
+            "shadow file {} is declared :rw but file is read-only at OS level",
             shadow.path
         );
     }

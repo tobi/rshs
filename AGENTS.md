@@ -81,11 +81,11 @@ Shadow files provide persistent credential storage in SHA-512 crypt format:
 
 ```sh
 rshs -S ./shadow --user admin:secret ./docs
-rshs -S rw:/etc/rshs/shadow -W --user admin:newpass ./docs
-RSHS_SHADOW_FILE=ro:./shadow rshs ./docs
+rshs -S /etc/rshs/shadow:rw -W --user admin:newpass ./docs
+RSHS_SHADOW_FILE=./shadow:ro rshs ./docs
 ```
 
-- Shadow file path can be prefixed with `rw:` (default) or `ro:` to control write access
+- Shadow file path can be suffixed with `:rw` (default) or `:ro` to control write access
 - `-W` / `--shadow-write` writes CLI credentials into the shadow file after merge
 - Shadow files store passwords hashed with SHA-512 crypt (`$6$...`)
 
@@ -131,4 +131,4 @@ rshs                     # info (or RSHS_LOG if set)
 | `RSHS_USERS`     | Basic Auth credentials                            |
 | `RSHS_LOG`       | Logging level (e.g. `info`)                       |
 | `RSHS_LOG_STYLE` | Log output style (e.g. `auto`, `always`, `never`) |
-| `RSHS_SHADOW_FILE` | Shadow file path with optional `rw:`/`ro:` prefix |
+| `RSHS_SHADOW_FILE` | Shadow file path with optional `:rw`/`:ro` suffix |

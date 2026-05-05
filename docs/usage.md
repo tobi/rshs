@@ -45,16 +45,16 @@ Shadow files provide persistent credential storage with SHA-512 crypt hashing:
 rshs -S ./shadow ./docs
 
 # Read-only shadow file (no writes allowed)
-rshs -S ro:/etc/rshs/shadow ./docs
+rshs -S /etc/rshs/shadow:ro ./docs
 
 # Merge CLI credentials and write to shadow file
-rshs -S rw:./shadow -W --user admin:newpass ./docs
+rshs -S ./shadow:rw -W --user admin:newpass ./docs
 
 # Using environment variable
-RSHS_SHADOW_FILE=ro:./shadow rshs ./docs
+RSHS_SHADOW_FILE=./shadow:ro rshs ./docs
 ```
 
-- Path prefix `rw:` (default) allows writes, `ro:` restricts to read-only
+- Path suffix `:rw` (default) allows writes, `:ro` restricts to read-only
 - `-W` / `--shadow-write` writes CLI credentials into the shadow file after merging
 - Shadow files store passwords as SHA-512 crypt hashes (`$6$...`), compatible with Unix shadow file format
 
@@ -63,7 +63,7 @@ RSHS_SHADOW_FILE=ro:./shadow rshs ./docs
 >
 > ```sh
 > docker run --rm -p 8080:8080 \
->   -e RSHS_SHADOW_FILE=ro:/etc/rshs/shadow \
+>   -e RSHS_SHADOW_FILE=/etc/rshs/shadow:ro \
 >   -v /etc/shadow:/etc/rshs/shadow:ro \
 >   mogeko/rshs
 
@@ -122,8 +122,8 @@ Options:
   -v, --verbose...                   Increase log verbosity (-v = debug, -vv = trace)
   -q, --quiet                        Suppress all log output
   -u, --user <USER:PASS>             Basic Auth credentials in format username:password (can be repeated) [env: RSHS_USERS]
-  -S, --shadow-file <[rw:|ro:]PATH>  Path to shadow file for persistent auth ([rw:|ro:]PATH, default rw) [env: RSHS_SHADOW_FILE=]
-  -W, --shadow-write                 Write CLI credentials into the shadow file (requires --shadow-file rw:)
+  -S, --shadow-file <PATH[:rw|:ro]>  Path to shadow file for persistent auth (PATH[:rw|:ro], default :rw) [env: RSHS_SHADOW_FILE=]
+  -W, --shadow-write                 Write CLI credentials into the shadow file (requires --shadow-file :rw)
   -h, --help                         Print help
   -V, --version                      Print version
 

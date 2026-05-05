@@ -6,7 +6,7 @@ use clap::Parser;
 pub struct ShadowFileArg {
     /// Path to the shadow file
     pub path: String,
-    /// Whether the file is writable (rw: prefix)
+    /// Whether the file is writable (:rw suffix)
     pub writable: bool,
 }
 
@@ -55,16 +55,16 @@ pub struct Cli {
     )]
     pub users: Vec<String>,
 
-    /// Path to shadow file for persistent auth ([rw:|ro:]PATH, default rw)
+    /// Path to shadow file for persistent auth (PATH[:rw|:ro], default :rw)
     #[arg(
         short = 'S',
         long = "shadow-file",
-        value_name = "[rw:|ro:]PATH",
+        value_name = "PATH[:rw|:ro]",
         env = "RSHS_SHADOW_FILE"
     )]
     pub shadow_file: Option<String>,
 
-    /// Write CLI credentials into the shadow file (requires --shadow-file rw:)
+    /// Write CLI credentials into the shadow file (requires --shadow-file :rw)
     #[arg(short = 'W', long = "shadow-write", requires = "shadow_file")]
     pub shadow_write: bool,
 }
@@ -72,12 +72,12 @@ pub struct Cli {
 impl Cli {
     pub fn to_shadow_file_arg(&self) -> Option<ShadowFileArg> {
         self.shadow_file.as_ref().map(|s| {
-            if let Some(path) = s.strip_prefix("rw:") {
+            if let Some(path) = s.strip_suffix(":rw") {
                 ShadowFileArg {
                     path: path.to_string(),
                     writable: true,
                 }
-            } else if let Some(path) = s.strip_prefix("ro:") {
+            } else if let Some(path) = s.strip_suffix(":ro") {
                 ShadowFileArg {
                     path: path.to_string(),
                     writable: false,

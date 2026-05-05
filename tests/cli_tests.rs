@@ -222,7 +222,7 @@ fn test_shadow_file_parse_default_rw() {
 
 #[test]
 fn test_shadow_file_parse_explicit_ro() {
-    let cli = Cli::try_parse_from(["rshs", "--shadow-file", "ro:/etc/rshs/shadow"]).unwrap();
+    let cli = Cli::try_parse_from(["rshs", "--shadow-file", "/etc/rshs/shadow:ro"]).unwrap();
     let arg = cli.to_shadow_file_arg().unwrap();
     assert_eq!(arg.path, "/etc/rshs/shadow");
     assert!(!arg.writable);
@@ -230,7 +230,7 @@ fn test_shadow_file_parse_explicit_ro() {
 
 #[test]
 fn test_shadow_file_parse_rw() {
-    let cli = Cli::try_parse_from(["rshs", "--shadow-file", "rw:/etc/rshs/shadow"]).unwrap();
+    let cli = Cli::try_parse_from(["rshs", "--shadow-file", "/etc/rshs/shadow:rw"]).unwrap();
     let arg = cli.to_shadow_file_arg().unwrap();
     assert_eq!(arg.path, "/etc/rshs/shadow");
     assert!(arg.writable);
@@ -258,7 +258,7 @@ fn test_shadow_write_flag() {
 #[test]
 fn test_shadow_write_short_flags() {
     let cli =
-        Cli::try_parse_from(["rshs", "-S", "rw:/etc/rshs/shadow", "-W", "/tmp/test"]).unwrap();
+        Cli::try_parse_from(["rshs", "-S", "/etc/rshs/shadow:rw", "-W", "/tmp/test"]).unwrap();
     let arg = cli.to_shadow_file_arg().unwrap();
     assert_eq!(arg.path, "/etc/rshs/shadow");
     assert!(arg.writable);
