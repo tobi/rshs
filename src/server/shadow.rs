@@ -11,14 +11,14 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
         return cli_auth;
     };
 
+    let shadow_path = Path::new(&shadow.path);
+
     if cli.shadow_write && !shadow.writable {
         log::warn!(
             "shadow file {} is read-only (ro:), ignoring --shadow-write",
             shadow.path
         );
     }
-
-    let shadow_path = Path::new(&shadow.path);
 
     if let Some(parent) = shadow_path.parent() {
         let parent_str = parent.as_os_str();
@@ -61,22 +61,46 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
         auth_config.merge_cli(&cli_auth);
     }
 
-    if cli.shadow_write && shadow.writable {
-        match auth_config.write_to_shadow_file(shadow_path, false) {
-            Ok(()) => {
-                log::info!(
-                    "Wrote {} users to shadow file {}",
-                    auth_config.user_count(),
-                    shadow.path
-                );
-            }
-            Err(e) => {
-                log::error!("Failed to write shadow file: {e}");
+    if cli.shadow_write {
+        if !is_path_writable(shadow_path) {
+            log::warn!(
+                "shadow file {} is read-only (OS), ignoring --shadow-write",
+                shadow.path
+            );
+        } else {
+            match auth_config.write_to_shadow_file(shadow_path, false) {
+                Ok(()) => {
+                    log::info!(
+                        "Wrote {} users to shadow file {}",
+                        auth_config.user_count(),
+                        shadow.path
+                    );
+                }
+                Err(e) => {
+                    log::error!("Failed to write shadow file: {e}");
+                }
             }
         }
+    } else if shadow.writable && shadow_path.exists() && !is_path_writable(shadow_path) {
+        log::warn!(
+            "shadow file {} is declared rw: but file is read-only at OS level",
+            shadow.path
+        );
     }
 
     auth_config
+}
+
+fn is_path_writable(path: &Path) -> bool {
+    if let Ok(meta) = fs::metadata(path) {
+        !meta.permissions().readonly()
+    } else if let Some(parent) = path.parent() {
+        fs::metadata(parent)
+            .map(|m| !m.permissions().readonly())
+            .unwrap_or(true)
+    } else {
+        true
+    }
 }
 
 fn create_shadow_file(path: &Path) -> std::io::Result<()> {
@@ -85,4 +109,32 @@ fn create_shadow_file(path: &Path) -> std::io::Result<()> {
         .write(true)
         .open(path)?;
     file.set_permissions(fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_is_path_writable_existing_file() {
+        let file = NamedTempFile::new().unwrap();
+        assert!(is_path_writable(file.path()));
+    }
+
+    #[test]
+    fn test_is_path_writable_readonly_file() {
+        let file = NamedTempFile::new().unwrap();
+        let mut perms = fs::metadata(file.path()).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(file.path(), perms).unwrap();
+        assert!(!is_path_writable(file.path()));
+    }
+
+    #[test]
+    fn test_is_path_writable_nonexistent_in_writable_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nonexistent");
+        assert!(is_path_writable(&path));
+    }
 }
