@@ -12,113 +12,59 @@ A lightweight file server with WebDAV support.
 ## Installation
 
 ```sh
-# Docker Hub
 docker pull docker.io/mogeko/rshs:latest
-
-# GitHub Container Registry
+# or
 docker pull ghcr.io/mogeko/rshs:latest
 ```
 
-## Usage
+## Quick Start
 
 ```sh
-# Serve the current directory
-docker run --rm -p 8080:8080 -v .:/mnt/data mogeko/rshs
+# Serve ./data on port 8080
+docker run --rm -p 8080:8080 -v ./data:/mnt/data mogeko/rshs
 
-# Serve a specific directory
-docker run --rm -p 8080:8080 -v /path/to/serve:/mnt/data mogeko/rshs
-
-# Custom host and port
-docker run --rm -p 3000:3000 -v .:/mnt/data mogeko/rshs --port 3000
-```
-
-### Authentication
-
-```sh
 # With authentication
-docker run --rm -p 8080:8080 -v ./private:/mnt/data mogeko/rshs --user admin:secret123
-
-# Multiple users
-docker run --rm -p 8080:8080 -v ./private:/mnt/data \
-  mogeko/rshs --user admin:secret --user viewer:public
-
-# Using environment variables
-docker run --rm -p 3000:3000 \
-  -e RSHS_USERS="admin:secret;viewer:public" \
-  -v .:/mnt/data \
-  mogeko/rshs
+docker run --rm -p 8080:8080 -v ./data:/mnt/data \
+  mogeko/rshs --user admin:secret123
 ```
 
-Credentials format: `username:password`, separated by `;` for multiple users.
-CLI values take precedence over environment variables.
-
-### Access
-
-| Client           | How to access                                                |
-| ---------------- | ------------------------------------------------------------ |
-| Browser          | Open `http://localhost:8080`                                 |
-| macOS Finder     | `Cmd+K` → `http://localhost:8080`                            |
-| Windows Explorer | Map network drive → `http://localhost:8080`                  |
-| Linux davfs2     | `mount.davfs http://localhost:8080 /mnt`                     |
-| curl             | `curl http://localhost:8080` (GET) / `curl -X PROPFIND http://localhost:8080` |
-
-### Logging
+Open `http://localhost:8080` in a browser, or mount as WebDAV:
 
 ```sh
-# Default: info level
-docker run --rm -p 8080:8080 mogeko/rshs
-
-# Debug level
-docker run --rm -p 8080:8080 mogeko/rshs -v
-
-# Trace level (most verbose)
-docker run --rm -p 8080:8080 mogeko/rshs -vv
-
-# Suppress all logs
-docker run --rm -p 8080:8080 mogeko/rshs -q
-
-# Using environment variable for log level
-docker run --rm -p 8080:8080 -e RSHS_LOG="debug" mogeko/rshs
+# Linux (davfs2)
+sudo mount -t davfs http://localhost:8080 /mnt/webdav
+# macOS (Finder)
+Cmd+K → `http://localhost:8080`
+# Windows (Explorer)
+Map Network Drive → `http://localhost:8080`
 ```
 
-Log level priority: `-q` > `-vv` / `-v` > `RSHS_LOG` env var > default `info`.
+## Documentation
 
-## CLI Reference
+| Document                                  | Description                         |
+| ----------------------------------------- | ----------------------------------- |
+| [Usage Guide][usage-guide]                | Full usage, auth, shadow files, CLI |
+| [Docker & Docker Compose][docker-compose] | Docker + docker-compose deployment  |
+| [Kubernetes][kubernetes]                  | K8s deployment, PVC, Ingress        |
 
-```plaintext
-Simple HTTP/WebDAV Server
-
-Usage: rshs [OPTIONS] [ROOT_DIR]
-
-Arguments:
-  [ROOT_DIR]  Root directory to serve [env: RSHS_ROOT_DIR=] [default: .]
-
-Options:
-  -H, --host <HOST>       Host address to bind to [env: RSHS_HOST=] [default: 0.0.0.0]
-  -p, --port <PORT>       Port to bind to [env: RSHS_PORT=] [default: 8080]
-  -v, --verbose...        Increase log verbosity (-v = debug, -vv = trace)
-  -q, --quiet             Suppress all log output
-  -u, --user <USER:PASS>  Basic Auth credentials in format username:password (can be repeated) [env: RSHS_USERS]
-  -h, --help              Print help
-  -V, --version           Print version
-
-Logging environment variables:
-  RSHS_LOG          Logging level filter (e.g. info, rshs=debug)
-                    Only used when no -v/-q flags are given
-  RSHS_LOG_STYLE    Log output style: auto, always, never
-```
+[usage-guide]:./docs/usage.md
+[docker-compose]:./docs/deploy-docker-compose.md
+[kubernetes]:./docs/deploy-k8s.md
 
 ## Environment Variables
 
-| Variable          | Description                   | Default   |
-| ----------------- | ----------------------------- | --------- |
-| `RSHS_ROOT_DIR`   | Root directory                | `.`       |
-| `RSHS_HOST`       | Bind address                  | `0.0.0.0` |
-| `RSHS_PORT`       | Bind port                     | `8080`    |
-| `RSHS_USERS`      | `user:pass;...` pairs         | —         |
-| `RSHS_LOG`        | Log level (e.g. `debug`)      | —         |
-| `RSHS_LOG_STYLE`  | Log output style              | `auto`    |
+| Variable           | Description                | Default   |
+| ------------------ | -------------------------- | --------- |
+| `RSHS_ROOT_DIR`    | Root directory to serve    | `.`       |
+| `RSHS_HOST`        | Bind address               | `0.0.0.0` |
+| `RSHS_PORT`        | Bind port                  | `8080`    |
+| `RSHS_USERS`       | `user:pass;...` auth pairs | —         |
+| `RSHS_SHADOW_FILE` | Shadow file path           | —         |
+| `RSHS_LOG`         | Log level (e.g. `debug`)   | —         |
+| `RSHS_LOG_STYLE`   | Log output style           | `auto`    |
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+MIT License. See [LICENSE](./LICENSE) for details.
+
+

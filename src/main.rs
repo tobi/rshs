@@ -22,7 +22,7 @@ async fn main() -> std::io::Result<()> {
 
     builder.init();
 
-    let auth_config = cli.to_auth_config();
+    let auth_config = rshs::shadow::build_auth_config(&cli);
 
     rshs::start_server(rshs::ServerConfig::new(
         cli.host,
