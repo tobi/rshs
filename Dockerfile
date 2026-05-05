@@ -18,7 +18,9 @@ COPY --from=builder /app/README.md /usr/share/doc/rshs/README.md
 
 WORKDIR /mnt/data/
 
-ENV RSHS_LOG=info RSHS_ROOT_DIR=/mnt/data/
+ENV RSHS_ROOT_DIR=/mnt/data/
+ENV RSHS_SHADOW_FILE=rw:/etc/rshs/shadow
+ENV RSHS_LOG=info
 
 EXPOSE 8080/tcp
 VOLUME /mnt/data/
