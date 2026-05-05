@@ -26,9 +26,6 @@ docker run --rm -p 8080:8080 -v ./data:/mnt/data mogeko/rshs
 # With authentication
 docker run --rm -p 8080:8080 -v ./data:/mnt/data \
   mogeko/rshs --user admin:secret123
-
-# Native binary
-RSHS_ROOT_DIR=./data rshs
 ```
 
 Open `http://localhost:8080` in a browser, or mount as WebDAV:
