@@ -63,6 +63,7 @@ RSHS_SHADOW_FILE=ro:./shadow rshs ./docs
 >
 > ```sh
 > docker run --rm -p 8080:8080 \
+>   -e RSHS_SHADOW_FILE=ro:/etc/rshs/shadow \
 >   -v /etc/shadow:/etc/rshs/shadow:ro \
 >   mogeko/rshs
 
