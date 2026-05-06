@@ -41,15 +41,17 @@ Map Network Drive → `http://localhost:8080`
 
 ## Documentation
 
-| Document                                  | Description                         |
-| ----------------------------------------- | ----------------------------------- |
-| [Usage Guide][usage-guide]                | Full usage, auth, shadow files, CLI |
-| [Docker & Docker Compose][docker-compose] | Docker + docker-compose deployment  |
-| [Kubernetes][kubernetes]                  | K8s deployment, PVC, Ingress        |
+| Document                         | Description                         |
+| -------------------------------- | ----------------------------------- |
+| [Usage Guide][usage-guide]       | Full usage, auth, shadow files, CLI |
+| [Docker Compose][docker-compose] | Docker Compose deployment           |
+| [Podman Quadlet][podman-quadlet] | Podman Quadlet deployment           |
+| [Kubernetes][kubernetes]         | K8s deployment, PVC, Ingress        |
 
-[usage-guide]:./docs/usage.md
-[docker-compose]:./docs/deploy-docker-compose.md
-[kubernetes]:./docs/deploy-k8s.md
+[usage-guide]: ./docs/usage.md
+[docker-compose]: ./docs/deploy-docker-compose.md
+[podman-quadlet]: ./docs/deploy-podman-quadlet.md
+[kubernetes]: ./docs/deploy-k8s.md
 
 ## Environment Variables
 
@@ -66,5 +68,3 @@ Map Network Drive → `http://localhost:8080`
 ## License
 
 MIT License. See [LICENSE](./LICENSE) for details.
-
-
