@@ -12,5 +12,10 @@ pub fn create_dav_handler(root_dir: &Path) -> DavHandler {
 }
 
 pub async fn dav_route(req: DavRequest, dav: web::Data<DavHandler>) -> DavResponse {
+    log::debug!(
+        "WebDAV {} {}",
+        req.request.method().as_str(),
+        req.request.uri().path()
+    );
     dav.handle(req.request).await.into()
 }
