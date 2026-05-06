@@ -3,9 +3,10 @@ pub mod http_server;
 pub mod shadow;
 pub mod webdav;
 
-use actix_web::{App, HttpServer, middleware::Logger, web};
+use actix_web::{App, HttpServer, web};
 use actix_web_httpauth::middleware::HttpAuthentication;
 use std::path::PathBuf;
+use tracing_actix_web::TracingLogger;
 
 use auth_basic::AuthConfig;
 
@@ -33,7 +34,7 @@ pub async fn start_server(config: ServerConfig) -> std::io::Result<()> {
     let addr = format!("{}:{}", config.host, config.port);
     let auth_config = config.auth_config;
 
-    log::info!("Serving {} on http://{}", root_dir.display(), addr);
+    tracing::info!(root_dir = %root_dir.display(), addr = %addr, "starting server");
 
     let dav_handler = webdav::create_dav_handler(&root_dir);
 
@@ -43,7 +44,7 @@ pub async fn start_server(config: ServerConfig) -> std::io::Result<()> {
             let dav = dav_handler.clone();
             let root_dir = PathBuf::from(&root_dir);
             App::new()
-                .wrap(Logger::default())
+                .wrap(TracingLogger::default())
                 .wrap(HttpAuthentication::basic(auth_basic::auth_validator))
                 .app_data(web::Data::new(auth_config))
                 .app_data(web::Data::new(dav))
@@ -60,7 +61,7 @@ pub async fn start_server(config: ServerConfig) -> std::io::Result<()> {
             let dav = dav_handler.clone();
             let root_dir = PathBuf::from(&root_dir);
             App::new()
-                .wrap(Logger::default())
+                .wrap(TracingLogger::default())
                 .app_data(web::Data::new(dav))
                 .app_data(web::Data::new(root_dir))
                 .route("/{path:.*}", web::get().to(http_server::handle))

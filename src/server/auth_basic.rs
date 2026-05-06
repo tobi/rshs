@@ -76,10 +76,10 @@ impl AuthConfig {
                     };
 
                     if hash.is_empty() || !hash.starts_with('$') {
-                        log::warn!(
-                            "shadow file {} line {}: unsupported hash format, skipping",
-                            path.display(),
-                            line_no + 1
+                        tracing::warn!(
+                            path = %path.display(),
+                            line = line_no + 1,
+                            "unsupported hash format, skipping"
                         );
                         continue;
                     }
@@ -90,10 +90,10 @@ impl AuthConfig {
                     );
                 }
                 _ => {
-                    log::warn!(
-                        "shadow file {} line {}: malformed entry, skipping",
-                        path.display(),
-                        line_no + 1
+                    tracing::warn!(
+                        path = %path.display(),
+                        line = line_no + 1,
+                        "malformed entry, skipping"
                     );
                 }
             }
@@ -153,13 +153,15 @@ pub async fn auth_validator(
     let username = credentials.user_id();
 
     if config.validate(username, password) {
-        log::debug!("Auth succeeded for user '{}'", username);
+        tracing::debug!(user = username, outcome = "success");
         Ok(req)
     } else {
-        log::warn!(
-            "Auth failed for user '{}' from {}",
-            username,
-            req.connection_info().peer_addr().unwrap_or("unknown")
+        tracing::warn!(
+            user = username,
+            peer = %req.connection_info()
+                .peer_addr()
+                .unwrap_or("unknown"),
+            outcome = "failure",
         );
         let error = actix_web::error::ErrorUnauthorized(r#"Basic realm="rshs""#);
         Err((error, req))

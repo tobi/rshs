@@ -17,9 +17,11 @@ pub struct ShadowFileArg {
     version = env!("CARGO_PKG_VERSION"),
     after_help = concat!(
         "Logging environment variables:\n",
-        "  RSHS_LOG          Logging level filter (e.g. info, rshs=debug)\n",
+        "  RSHS_LOG          Tracing filter (e.g. info, rshs=debug, rshs[status=500]=trace)\n",
         "                    Only used when no -v/-q flags are given\n",
-        "  RSHS_LOG_STYLE    Log output style: auto, always, never"
+        "                    Supports per-target and per-field filtering\n",
+        "  RSHS_LOG_STYLE    Log style (always, never, auto), controls ANSI color output\n",
+        "                    Defaults to auto (enabled when output is a terminal)\n",
     ),
 )]
 pub struct Cli {
