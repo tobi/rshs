@@ -1,41 +1,6 @@
-# Docker & Docker Compose
+# Docker Compose
 
-## Docker Run
-
-```sh
-# Basic: serve ./data on port 8080
-docker run --rm -p 8080:8080 -v ./data:/mnt/data mogeko/rshs
-
-# With authentication
-docker run --rm -p 8080:8080 \
-  -v ./data:/mnt/data \
-  mogeko/rshs --user admin:secret123
-
-# Custom port and host
-docker run --rm -p 3000:3000 \
-  -v ./data:/mnt/data \
-  mogeko/rshs --host 0.0.0.0 --port 3000
-```
-
-### Persistent Shadow File
-
-Mount a directory for the shadow file so credentials survive container restarts:
-
-```sh
-docker run --rm -p 8080:8080 \
-  -v ./data:/mnt/data \
-  -v ./rshs/shadow:/etc/rshs/shadow \
-  -e RSHS_USERS="admin:secret123" \
-  mogeko/rshs -W
-```
-
-This writes the hashed credentials to `./rshs/shadow` on the host. On subsequent
-runs, existing credentials are loaded from the shadow file automatically (the image
-sets `RSHS_SHADOW_FILE=/etc/rshs/shadow:rw` by default).
-
-## Docker Compose
-
-### Basic
+## Basic
 
 ```yaml
 # docker-compose.yml
@@ -49,7 +14,7 @@ services:
     restart: unless-stopped
 ```
 
-### With Authentication
+## With Authentication
 
 ```yaml
 # docker-compose.yml
@@ -65,29 +30,46 @@ services:
     restart: unless-stopped
 ```
 
-### With Persistent Shadow File
+## With Persistent Shadow File
+
+Generate the shadow file with SHA-512 crypt hashes, then mount it as a
+[Docker secret](https://docs.docker.com/compose/how-tos/use-secrets/):
+
+```sh
+# Generate a hashed password
+openssl passwd -6 "secret123"
+# → $6$xxxxxxxx$yyyyyyyyyyyyyyyyyyyyyyyyyyyy...
+
+# Write the shadow file (one user per line: username:hash)
+echo 'admin:$6$xxxxxxxx$yyyyyyyyyyyyyyyyyyyyyyyyyyyy...' > ./rshs/shadow
+echo 'viewer:$6$aaaaaaaa$bbbbbbbbbbbbbbbbbbbbbb...' >> ./rshs/shadow
+```
 
 ```yaml
 # docker-compose.yml
 services:
   rshs:
-    image: mogeko/rshs:latest
+    image: docker.io/mogeko/rshs:latest
     ports:
       - "8080:8080"
     volumes:
-      - ./rshs/data:/mnt/data
-      - ./rshs/shadow:/etc/rshs/shadow
+      - ./data:/mnt/data
     environment:
-      RSHS_USERS: "admin:secret123;viewer:public"
-    command: ["-W"]
+      RSHS_SHADOW_FILE: /run/secrets/rshs-shadow:ro
+    secrets:
+      - rshs-shadow
     restart: unless-stopped
+
+secrets:
+  rshs-shadow:
+    file: ./rshs/shadow
 ```
 
-On first start, the CLI credentials are hashed and written to `./rshs/shadow`.
-On subsequent starts, remove the `command: ["-W"]` line (or keep it — `-W` is
-harmless if credentials haven't changed).
+Docker Compose mounts secrets into `/run/secrets/<name>` in the container.
+`RSHS_SHADOW_FILE` points to the secret mount with `:ro` (read-only).
+To update credentials, regenerate the shadow file and restart the service.
 
-### Health Check
+## Health Check
 
 ```yaml
 # docker-compose.yml
