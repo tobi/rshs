@@ -55,15 +55,15 @@ Map Network Drive → `http://localhost:8080`
 
 ## Environment Variables
 
-| Variable           | Description                | Default   |
-| ------------------ | -------------------------- | --------- |
-| `RSHS_ROOT_DIR`    | Root directory to serve    | `.`       |
-| `RSHS_HOST`        | Bind address               | `0.0.0.0` |
-| `RSHS_PORT`        | Bind port                  | `8080`    |
-| `RSHS_USERS`       | `user:pass;...` auth pairs | —         |
-| `RSHS_SHADOW_FILE` | Shadow file path           | —         |
-| `RSHS_LOG`         | Log level (e.g. `debug`)   | —         |
-| `RSHS_LOG_STYLE`   | Log output style           | `auto`    |
+| Variable           | Description                                         | Default   |
+| ------------------ | --------------------------------------------------- | --------- |
+| `RSHS_ROOT_DIR`    | Root directory to serve                             | `.`       |
+| `RSHS_HOST`        | Bind address                                        | `0.0.0.0` |
+| `RSHS_PORT`        | Bind port                                           | `8080`    |
+| `RSHS_USERS`       | `user:pass;...` auth pairs                          | —         |
+| `RSHS_SHADOW_FILE` | Shadow file path                                    | —         |
+| `RSHS_LOG`         | Log filter (e.g. `debug`, `rshs[status=500]=trace`) | —         |
+| `RSHS_LOG_STYLE`   | Log output style                                    | `auto`    |
 
 ## License
 

@@ -30,17 +30,19 @@ cargo clippy
 
 ### Dependencies
 
-| Crate                    | Features        | Purpose                    |
-| ------------------------ | --------------- | -------------------------- |
-| `actix-web` 4.13         | —               | HTTP server framework      |
-| `actix-web-httpauth` 0.8 | —               | Basic Auth middleware      |
-| `clap` 4.6               | `derive`, `env` | CLI args + env var support |
-| `tokio` 1.52             | `full`          | Async runtime              |
-| `dav-server` 0.11        | `actix-compat`  | WebDAV protocol handling   |
-| `mime_guess` 2           | —               | MIME type detection        |
-| `log` 0.4                | —               | Logging facade             |
-| `env_logger` 0.11        | —               | Logging backend            |
-| `sha-crypt` 0.4          | —               | SHA-512 crypt hash verification |
+| Crate                    | Features         | Purpose                         |
+| ------------------------ | ---------------- | ------------------------------- |
+| `actix-web` 4.13         | —                | HTTP server framework           |
+| `actix-web-httpauth` 0.8 | —                | Basic Auth middleware           |
+| `clap` 4.6               | `derive`, `env`  | CLI args + env var support      |
+| `tokio` 1.52             | `full`           | Async runtime                   |
+| `dav-server` 0.11        | `actix-compat`   | WebDAV protocol handling        |
+| `mime_guess` 2           | —                | MIME type detection             |
+| `tracing` 0.1            | —                | Structured logging facade       |
+| `tracing-subscriber` 0.3 | `env-filter,fmt` | Log output + filter engine      |
+| `tracing-actix-web` 0.7  | —                | Request-scoped spans            |
+| `tracing-log` 0.2        | —                | Bridge `log`→`tracing`          |
+| `sha-crypt` 0.4          | —                | SHA-512 crypt hash verification |
 
 ### Key Patterns
 
@@ -94,7 +96,7 @@ RSHS_SHADOW_FILE=./shadow:ro rshs ./docs
 The server always runs in HTTP + WebDAV hybrid mode:
 
 ```sh
-rshs ./docs               # Serve files in ./docs
+rshs ./docs                # Serve files in ./docs
 rshs                       # Default: serve current directory
 RSHS_ROOT_DIR=./docs rshs  # Set root via env var
 ```
@@ -104,31 +106,36 @@ RSHS_ROOT_DIR=./docs rshs  # Set root via env var
 
 ## Logging
 
+Uses the `tracing` ecosystem (structured, span-based) with `tracing-subscriber` as the output backend.
+`tracing-log` bridges `log`-based dependency crates (`dav-server`, `actix-web`) into tracing.
+
 Log level is determined by the following priority (highest first):
 
 1. `-q` / `--quiet` — suppress all logs (`off`)
 2. `-vv` / `--verbose --verbose` — trace level
 3. `-v` / `--verbose` — debug level
-4. `RSHS_LOG` env var — arbitrary filter string (e.g. `info`, `rshs=debug`)
+4. `RSHS_LOG` env var — `EnvFilter` string (e.g. `info`, `rshs=debug`, `rshs[status=500]=trace`)
 5. Default — `info` level
 
 ```sh
-rshs -v                  # debug
-rshs -vv                 # trace
-rshs -q                  # silent
-rshs                     # info (or RSHS_LOG if set)
+rshs -v                                 # debug
+rshs -vv                                # trace
+rshs -q                                 # silent
+rshs                                    # info (or RSHS_LOG if set)
+RSHS_LOG="rshs[status=500]=debug" rshs  # only 500 errors at debug
+RSHS_LOG="warn,rshs=debug" rshs         # global warn, rshs debug
 ```
 
-`RSHS_LOG_STYLE` controls log output style (`auto`, `always`, `never`).
+`RSHS_LOG_STYLE` controls ANSI color output (`auto`, `always`, `never`).
 
 # Environment Variables
 
-| Env Var          | Description                                       |
-| ---------------- | ------------------------------------------------- |
-| `RSHS_ROOT_DIR`  | Root directory (default: `.`)                     |
-| `RSHS_HOST`      | Bind address                                      |
-| `RSHS_PORT`      | Bind port                                         |
-| `RSHS_USERS`     | Basic Auth credentials                            |
-| `RSHS_LOG`       | Logging level (e.g. `info`)                       |
-| `RSHS_LOG_STYLE` | Log output style (e.g. `auto`, `always`, `never`) |
+| Env Var            | Description                                       |
+| ------------------ | ------------------------------------------------- |
+| `RSHS_ROOT_DIR`    | Root directory (default: `.`)                     |
+| `RSHS_HOST`        | Bind address                                      |
+| `RSHS_PORT`        | Bind port                                         |
+| `RSHS_USERS`       | Basic Auth credentials                            |
+| `RSHS_LOG`         | Logging level (e.g. `info`)                       |
+| `RSHS_LOG_STYLE`   | Log output style (e.g. `auto`, `always`, `never`) |
 | `RSHS_SHADOW_FILE` | Shadow file path with optional `:rw`/`:ro` suffix |

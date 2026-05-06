@@ -14,9 +14,9 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
     let shadow_path = Path::new(&shadow.path);
 
     if cli.shadow_write && !shadow.writable {
-        log::warn!(
-            "shadow file {} is read-only (:ro), ignoring --shadow-write",
-            shadow.path
+        tracing::warn!(
+            path = %shadow.path,
+            "shadow file is read-only (:ro), ignoring --shadow-write"
         );
     }
 
@@ -24,9 +24,9 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
         let parent_str = parent.as_os_str();
         if !parent_str.is_empty() && !parent.exists() {
             if let Err(e) = fs::create_dir_all(parent) {
-                log::error!("Failed to create directory {}: {e}", parent.display());
+                tracing::error!(path = %parent.display(), error = %e, "Failed to create directory");
             } else {
-                log::info!("Created directory {}", parent.display());
+                tracing::info!(path = %parent.display(), "Created directory");
             }
         }
     }
@@ -35,24 +35,26 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
 
     if !file_exists {
         match create_shadow_file(shadow_path) {
-            Ok(()) => log::info!("Created shadow file {} (mode 600)", shadow.path),
-            Err(e) => log::error!("Failed to create shadow file {}: {e}", shadow.path),
+            Ok(()) => tracing::info!(path = %shadow.path, "Created shadow file (mode 600)"),
+            Err(e) => {
+                tracing::error!(path = %shadow.path, error = %e, "Failed to create shadow file")
+            }
         }
     }
 
     let mut auth_config = match AuthConfig::load_from_shadow_file(shadow_path) {
         Ok(cfg) => {
             if cfg.user_count() > 0 {
-                log::info!(
-                    "Loaded {} users from shadow file {}",
-                    cfg.user_count(),
-                    shadow.path
+                tracing::info!(
+                    count = cfg.user_count(),
+                    path = %shadow.path,
+                    "Loaded users from shadow file"
                 );
             }
             cfg
         }
         Err(e) => {
-            log::error!("{e}");
+            tracing::error!(error = %e, path = %shadow.path, "Failed to load shadow file");
             AuthConfig::new()
         }
     };
@@ -63,28 +65,28 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
 
     if cli.shadow_write {
         if !is_path_writable(shadow_path) {
-            log::warn!(
-                "shadow file {} is read-only (OS), ignoring --shadow-write",
-                shadow.path
+            tracing::warn!(
+                path = %shadow.path,
+                "shadow file is read-only (OS), ignoring --shadow-write"
             );
         } else {
             match auth_config.write_to_shadow_file(shadow_path, false) {
                 Ok(()) => {
-                    log::info!(
-                        "Wrote {} users to shadow file {}",
-                        auth_config.user_count(),
-                        shadow.path
+                    tracing::info!(
+                        count = auth_config.user_count(),
+                        path = %shadow.path,
+                        "Wrote users to shadow file"
                     );
                 }
                 Err(e) => {
-                    log::error!("Failed to write shadow file: {e}");
+                    tracing::error!(error = %e, "Failed to write shadow file");
                 }
             }
         }
     } else if shadow.writable && shadow_path.exists() && !is_path_writable(shadow_path) {
-        log::warn!(
-            "shadow file {} is declared :rw but file is read-only at OS level",
-            shadow.path
+        tracing::warn!(
+            path = %shadow.path,
+            "shadow file is declared :rw but file is read-only at OS level"
         );
     }
 

@@ -66,25 +66,26 @@ RSHS_SHADOW_FILE=./shadow:ro rshs ./docs
 >   -e RSHS_SHADOW_FILE=/etc/rshs/shadow:ro \
 >   -v /etc/shadow:/etc/rshs/shadow:ro \
 >   mogeko/rshs
+> ```
 
 ## Access
 
-| Client           | How to access                                                |
-| ---------------- | ------------------------------------------------------------ |
-| Browser          | Open `http://localhost:8080`                                 |
-| macOS Finder     | `Cmd+K` → `http://localhost:8080`                            |
-| Windows Explorer | Map network drive → `http://localhost:8080`                  |
-| Linux davfs2     | `mount.davfs http://localhost:8080 /mnt`                     |
+| Client           | How to access                                                                 |
+| ---------------- | ----------------------------------------------------------------------------- |
+| Browser          | Open `http://localhost:8080`                                                  |
+| macOS Finder     | `Cmd+K` → `http://localhost:8080`                                             |
+| Windows Explorer | Map network drive → `http://localhost:8080`                                   |
+| Linux davfs2     | `mount.davfs http://localhost:8080 /mnt`                                      |
 | curl             | `curl http://localhost:8080` (GET) / `curl -X PROPFIND http://localhost:8080` |
 
 ## Logging
 
-Log level is determined by the following priority (highest first):
+rshs uses the [`tracing`](https://crates.io/crates/tracing) ecosystem for structured, span-based logging. Log level is determined by the following priority (highest first):
 
 1. `-q` / `--quiet` — suppress all logs (`off`)
 2. `-vv` / `--verbose --verbose` — trace level
 3. `-v` / `--verbose` — debug level
-4. `RSHS_LOG` env var — arbitrary filter string (e.g. `info`, `rshs=debug`)
+4. `RSHS_LOG` env var — filter string (e.g. `info`, `rshs=debug`, `rshs[status=500]=trace`)
 5. Default — `info` level
 
 ```sh
@@ -104,7 +105,33 @@ docker run --rm -p 8080:8080 mogeko/rshs -q
 docker run --rm -p 8080:8080 -e RSHS_LOG="debug" mogeko/rshs
 ```
 
-`RSHS_LOG_STYLE` controls log output style (`auto`, `always`, `never`).
+### Structured Filtering
+
+`RSHS_LOG` supports per-target and per-field filtering via [tracing's `EnvFilter`:](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html)
+
+```sh
+# Only show rshs logs at debug level, everything else at warn
+RSHS_LOG="warn,rshs=debug" rshs ./docs
+
+# Only show 500 errors from rshs at debug level
+RSHS_LOG="rshs[status=500]=debug" rshs ./docs
+
+# Trace only requests for .html files
+RSHS_LOG="rshs[path*=*.html]=trace" rshs ./docs
+```
+
+The following fields are available for filtering:
+
+| Field     | Source                 | Values                              |
+| --------- | ---------------------- | ----------------------------------- |
+| `status`  | HTTP response status   | `200`, `404`, `405`, `500`          |
+| `method`  | HTTP method            | `GET`, `HEAD`, `PROPFIND`, etc.     |
+| `path`    | Request path           | e.g. `/docs/readme.md`              |
+| `user`    | Authenticated username | e.g. `admin`                        |
+| `outcome` | Auth result            | `success`, `failure`                |
+| `err`     | Error tag              | `not_found`, `path_traversal`, etc. |
+
+`RSHS_LOG_STYLE` controls log output ANSI color (`auto`, `always`, `never`).
 
 ## CLI Reference
 
@@ -128,7 +155,9 @@ Options:
   -V, --version                      Print version
 
 Logging environment variables:
-  RSHS_LOG          Logging level filter (e.g. info, rshs=debug)
+  RSHS_LOG          Tracing filter (e.g. info, rshs=debug, rshs[status=500]=trace)
                     Only used when no -v/-q flags are given
-  RSHS_LOG_STYLE    Log output style: auto, always, never
+                    Supports per-target and per-field filtering
+  RSHS_LOG_STYLE    Log style (always, never, auto), controls ANSI color output
+                    Defaults to auto (enabled when output is a terminal)
 ```

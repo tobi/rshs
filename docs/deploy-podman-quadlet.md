@@ -136,6 +136,7 @@ systemctl --user status rshs
 
 > [!TIP]
 > Enable lingering if you want the container to start at boot (before login):
+>
 > ```sh
 > sudo loginctl enable-linger $USER
 > ```

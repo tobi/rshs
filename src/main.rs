@@ -1,26 +1,37 @@
 use clap::Parser;
-use env_logger::{Builder, Env};
+use std::io::{self, IsTerminal};
 use std::path::PathBuf;
+use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let cli = rshs::Cli::parse();
 
-    let mut builder = Builder::from_env(Env::new().write_style("RSHS_LOG_STYLE"));
-
-    if cli.quiet {
-        builder.filter_level(log::LevelFilter::Off);
+    let filter = if cli.quiet {
+        EnvFilter::new("off")
     } else if cli.verbose >= 2 {
-        builder.filter_level(log::LevelFilter::Trace);
+        EnvFilter::new("trace")
     } else if cli.verbose >= 1 {
-        builder.filter_level(log::LevelFilter::Debug);
-    } else if let Ok(filter_str) = std::env::var("RSHS_LOG") {
-        builder.parse_filters(&filter_str);
+        EnvFilter::new("debug")
+    } else if let Ok(f) = std::env::var("RSHS_LOG") {
+        EnvFilter::new(f)
     } else {
-        builder.filter_level(log::LevelFilter::Info);
-    }
+        EnvFilter::new("info")
+    };
 
-    builder.init();
+    let ansi = match std::env::var("RSHS_LOG_STYLE").as_deref() {
+        Ok("always") => true,
+        Ok("never") => false,
+        _ => io::stderr().is_terminal(),
+    };
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_ansi(ansi)
+        .with_writer(io::stderr)
+        .init();
+
+    let _ = tracing_log::LogTracer::init();
 
     let auth_config = rshs::shadow::build_auth_config(&cli);
 
