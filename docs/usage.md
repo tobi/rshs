@@ -122,14 +122,12 @@ RSHS_LOG="rshs[path*=*.html]=trace" rshs ./docs
 
 The following fields are available for filtering:
 
-| Field     | Source                 | Values                              |
-| --------- | ---------------------- | ----------------------------------- |
-| `status`  | HTTP response status   | `200`, `404`, `405`, `500`          |
-| `method`  | HTTP method            | `GET`, `HEAD`, `PROPFIND`, etc.     |
-| `path`    | Request path           | e.g. `/docs/readme.md`              |
-| `user`    | Authenticated username | e.g. `admin`                        |
-| `outcome` | Auth result            | `success`, `failure`                |
-| `err`     | Error tag              | `not_found`, `path_traversal`, etc. |
+| Field    | Source                 | Values                          |
+| -------- | ---------------------- | ------------------------------- |
+| `status` | HTTP response status   | `200`, `404`, `405`, `500`      |
+| `method` | HTTP method            | `GET`, `HEAD`, `PROPFIND`, etc. |
+| `path`   | Request path           | e.g. `/docs/readme.md`          |
+| `user`   | Authenticated username | e.g. `admin`                    |
 
 `RSHS_LOG_STYLE` controls log output ANSI color (`auto`, `always`, `never`).
 

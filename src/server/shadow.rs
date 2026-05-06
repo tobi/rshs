@@ -24,9 +24,9 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
         let parent_str = parent.as_os_str();
         if !parent_str.is_empty() && !parent.exists() {
             if let Err(e) = fs::create_dir_all(parent) {
-                tracing::error!(path = %parent.display(), error = %e, "Failed to create directory");
+                tracing::error!(path = %parent.display(), error = %e, "failed to create directory");
             } else {
-                tracing::info!(path = %parent.display(), "Created directory");
+                tracing::info!(path = %parent.display(), "created directory");
             }
         }
     }
@@ -35,9 +35,9 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
 
     if !file_exists {
         match create_shadow_file(shadow_path) {
-            Ok(()) => tracing::info!(path = %shadow.path, "Created shadow file (mode 600)"),
+            Ok(()) => tracing::info!(path = %shadow.path, "created shadow file (mode 600)"),
             Err(e) => {
-                tracing::error!(path = %shadow.path, error = %e, "Failed to create shadow file")
+                tracing::error!(path = %shadow.path, error = %e, "failed to create shadow file")
             }
         }
     }
@@ -48,13 +48,13 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
                 tracing::info!(
                     count = cfg.user_count(),
                     path = %shadow.path,
-                    "Loaded users from shadow file"
+                    "loaded users from shadow file"
                 );
             }
             cfg
         }
         Err(e) => {
-            tracing::error!(error = %e, path = %shadow.path, "Failed to load shadow file");
+            tracing::error!(error = %e, path = %shadow.path, "failed to load shadow file");
             AuthConfig::new()
         }
     };
@@ -75,11 +75,11 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
                     tracing::info!(
                         count = auth_config.user_count(),
                         path = %shadow.path,
-                        "Wrote users to shadow file"
+                        "wrote users to shadow file"
                     );
                 }
                 Err(e) => {
-                    tracing::error!(error = %e, "Failed to write shadow file");
+                    tracing::error!(error = %e, "failed to write shadow file");
                 }
             }
         }

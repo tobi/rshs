@@ -153,7 +153,7 @@ pub async fn auth_validator(
     let username = credentials.user_id();
 
     if config.validate(username, password) {
-        tracing::debug!(user = username, outcome = "success");
+        tracing::debug!(user = username, "authentication succeeded");
         Ok(req)
     } else {
         tracing::warn!(
@@ -161,7 +161,7 @@ pub async fn auth_validator(
             peer = %req.connection_info()
                 .peer_addr()
                 .unwrap_or("unknown"),
-            outcome = "failure",
+            "authentication failed",
         );
         let error = actix_web::error::ErrorUnauthorized(r#"Basic realm="rshs""#);
         Err((error, req))

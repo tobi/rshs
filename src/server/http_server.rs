@@ -14,7 +14,7 @@ pub async fn handle(req: HttpRequest, root_dir: web::Data<PathBuf>) -> HttpRespo
     let fs_path = match fs_path.canonicalize() {
         Ok(p) => p,
         Err(_) => {
-            tracing::debug!(method = %req.method(), path = request_path, status = 404, err = "not_found");
+            tracing::debug!(method = %req.method(), path = request_path, status = 404, "path not found");
             return HttpResponse::NotFound().finish();
         }
     };
@@ -27,7 +27,7 @@ pub async fn handle(req: HttpRequest, root_dir: web::Data<PathBuf>) -> HttpRespo
             method = %req.method(),
             path = request_path,
             status = 404,
-            err = "path_traversal",
+            "path traversal blocked",
         );
         return HttpResponse::NotFound().finish();
     }
@@ -82,7 +82,7 @@ pub async fn handle(req: HttpRequest, root_dir: web::Data<PathBuf>) -> HttpRespo
                             method = %req.method(),
                             path = request_path,
                             status = 500,
-                            err = "read_file_failed",
+                            "failed to read file",
                         );
                         HttpResponse::InternalServerError().finish()
                     }
@@ -94,7 +94,7 @@ pub async fn handle(req: HttpRequest, root_dir: web::Data<PathBuf>) -> HttpRespo
                 method = %req.method(),
                 path = request_path,
                 status = 405,
-                err = "method_not_allowed",
+                "method not allowed",
             );
             HttpResponse::MethodNotAllowed().finish()
         }
