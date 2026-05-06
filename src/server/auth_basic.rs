@@ -141,6 +141,31 @@ impl AuthConfig {
     }
 }
 
+pub async fn auth_validator(
+    req: actix_web::dev::ServiceRequest,
+    credentials: BasicAuth,
+) -> Result<actix_web::dev::ServiceRequest, (actix_web::Error, actix_web::dev::ServiceRequest)> {
+    let config = req
+        .app_data::<web::Data<AuthConfig>>()
+        .expect("AuthConfig not found in app data");
+
+    let password = credentials.password().unwrap_or("");
+    let username = credentials.user_id();
+
+    if config.validate(username, password) {
+        log::debug!("Auth succeeded for user '{}'", username);
+        Ok(req)
+    } else {
+        log::warn!(
+            "Auth failed for user '{}' from {}",
+            username,
+            req.connection_info().peer_addr().unwrap_or("unknown")
+        );
+        let error = actix_web::error::ErrorUnauthorized(r#"Basic realm="rshs""#);
+        Err((error, req))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,23 +369,5 @@ mod tests {
         config.add_user("admin", "secret");
         assert!(!config.is_empty());
         assert_eq!(config.user_count(), 1);
-    }
-}
-
-pub async fn auth_validator(
-    req: actix_web::dev::ServiceRequest,
-    credentials: BasicAuth,
-) -> Result<actix_web::dev::ServiceRequest, (actix_web::Error, actix_web::dev::ServiceRequest)> {
-    let config = req
-        .app_data::<web::Data<AuthConfig>>()
-        .expect("AuthConfig not found in app data");
-
-    let password = credentials.password().unwrap_or("");
-
-    if config.validate(credentials.user_id(), password) {
-        Ok(req)
-    } else {
-        let error = actix_web::error::ErrorUnauthorized(r#"Basic realm="rshs""#);
-        Err((error, req))
     }
 }

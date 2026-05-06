@@ -9,22 +9,38 @@ pub async fn handle(req: HttpRequest, root_dir: web::Data<PathBuf>) -> HttpRespo
     let rel_path = request_path.trim_start_matches('/');
     let fs_path = root_dir.join(rel_path);
 
+    log::debug!("{} {}", req.method(), request_path);
+
     let fs_path = match fs_path.canonicalize() {
         Ok(p) => p,
-        Err(_) => return HttpResponse::NotFound().finish(),
+        Err(_) => {
+            log::debug!("{} {} -> 404 (not found)", req.method(), request_path);
+            return HttpResponse::NotFound().finish();
+        }
     };
 
     let root_canonical = root_dir
         .canonicalize()
         .unwrap_or_else(|_| (**root_dir).clone());
     if !fs_path.starts_with(&root_canonical) {
+        log::warn!(
+            "{} {} -> 404 (path traversal attempt)",
+            req.method(),
+            request_path
+        );
         return HttpResponse::NotFound().finish();
     }
 
     match *req.method() {
         actix_web::http::Method::GET | actix_web::http::Method::HEAD => {
             if fs_path.is_dir() {
-                let html = generate_dir_listing(&fs_path, request_path);
+                let (html, entry_count) = generate_dir_listing(&fs_path, request_path);
+                log::debug!(
+                    "{} {} -> 200 (dir listing, {} entries)",
+                    req.method(),
+                    request_path,
+                    entry_count
+                );
                 let body_len = html.len();
                 let mut resp = HttpResponse::Ok()
                     .content_type("text/html; charset=utf-8")
@@ -41,6 +57,13 @@ pub async fn handle(req: HttpRequest, root_dir: web::Data<PathBuf>) -> HttpRespo
                     Ok(data) => {
                         let data_len = data.len();
                         let mime = mime_guess::from_path(&fs_path).first_or_octet_stream();
+                        log::debug!(
+                            "{} {} -> 200 ({} {} bytes)",
+                            req.method(),
+                            request_path,
+                            mime.essence_str(),
+                            data_len
+                        );
                         let mut resp = HttpResponse::Ok();
                         resp.content_type(mime.as_ref());
 
@@ -51,19 +74,33 @@ pub async fn handle(req: HttpRequest, root_dir: web::Data<PathBuf>) -> HttpRespo
                             resp.body(data)
                         }
                     }
-                    Err(_) => HttpResponse::InternalServerError().finish(),
+                    Err(_) => {
+                        log::error!(
+                            "{} {} -> 500 (failed to read file)",
+                            req.method(),
+                            request_path
+                        );
+                        HttpResponse::InternalServerError().finish()
+                    }
                 }
             }
         }
-        _ => HttpResponse::MethodNotAllowed().finish(),
+        _ => {
+            log::debug!(
+                "{} {} -> 405 (method not allowed)",
+                req.method(),
+                request_path
+            );
+            HttpResponse::MethodNotAllowed().finish()
+        }
     }
 }
 
-fn generate_dir_listing(dir_path: &std::path::Path, request_path: &str) -> String {
+fn generate_dir_listing(dir_path: &std::path::Path, request_path: &str) -> (String, usize) {
     let entries: Vec<_> = match fs::read_dir(dir_path) {
         Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
         Err(_) => {
-            return "<!DOCTYPE html>\n<html>\n<head>\n<title>Error</title>\n</head>\n<body>\n<h1>Cannot read directory</h1>\n</body>\n</html>\n".to_string();
+            return ("<!DOCTYPE html>\n<html>\n<head>\n<title>Error</title>\n</head>\n<body>\n<h1>Cannot read directory</h1>\n</body>\n</html>\n".to_string(), 0);
         }
     };
 
@@ -107,8 +144,9 @@ fn generate_dir_listing(dir_path: &std::path::Path, request_path: &str) -> Strin
         }
     }
 
+    let entry_count = entries.len();
     html.push_str("</ul>\n<hr>\n</body>\n</html>\n");
-    html
+    (html, entry_count)
 }
 
 fn format_size(bytes: u64) -> String {
@@ -163,13 +201,14 @@ mod tests {
         f.write_all(b"hello").unwrap();
         std::fs::create_dir(dir.path().join("subdir")).unwrap();
 
-        let html = generate_dir_listing(dir.path(), "/");
+        let (html, count) = generate_dir_listing(dir.path(), "/");
 
         assert!(html.contains("<!DOCTYPE html>"));
         assert!(html.contains("<title>Directory listing for /</title>"));
         assert!(html.contains("hello.txt"));
         assert!(html.contains("subdir/"));
         assert!(!html.contains("../"));
+        assert_eq!(count, 2);
     }
 
     #[test]
@@ -178,21 +217,23 @@ mod tests {
         let mut f = std::fs::File::create(dir.path().join("data.bin")).unwrap();
         f.write_all(b"bin").unwrap();
 
-        let html = generate_dir_listing(dir.path(), "/sub/");
+        let (html, count) = generate_dir_listing(dir.path(), "/sub/");
 
         assert!(html.contains("Directory listing for /sub/"));
         assert!(html.contains("../"));
         assert!(html.contains("data.bin"));
+        assert_eq!(count, 1);
     }
 
     #[test]
     fn test_generate_dir_listing_empty_dir() {
         let dir = tempfile::TempDir::new().expect("failed to create temp dir");
 
-        let html = generate_dir_listing(dir.path(), "/empty/");
+        let (html, count) = generate_dir_listing(dir.path(), "/empty/");
 
         assert!(html.contains("Directory listing for /empty/"));
         assert!(html.contains("../"));
+        assert_eq!(count, 0);
     }
 
     #[test]
@@ -202,7 +243,9 @@ mod tests {
         let mut f = std::fs::File::create(dir.path().join("aaa_file.txt")).unwrap();
         f.write_all(b"x").unwrap();
 
-        let html = generate_dir_listing(dir.path(), "/");
+        let (html, count) = generate_dir_listing(dir.path(), "/");
+
+        assert_eq!(count, 2);
 
         let zzz_pos = html.find("zzz_dir").unwrap();
         let aaa_pos = html.find("aaa_file").unwrap();
