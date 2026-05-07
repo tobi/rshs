@@ -1,7 +1,10 @@
 use std::fs;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use actix_web::{HttpRequest, HttpResponse, http::header, web};
+
+use super::time_util::format_modified;
 
 pub async fn handle(req: HttpRequest, root_dir: web::Data<PathBuf>) -> HttpResponse {
     let request_path = req.path();
@@ -102,102 +105,91 @@ pub async fn handle(req: HttpRequest, root_dir: web::Data<PathBuf>) -> HttpRespo
 }
 
 fn generate_dir_listing(dir_path: &std::path::Path, request_path: &str) -> (String, usize) {
-    let entries: Vec<_> = match fs::read_dir(dir_path) {
+    let dir_entries: Vec<_> = match fs::read_dir(dir_path) {
         Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
         Err(_) => {
             return ("<!DOCTYPE html>\n<html>\n<head>\n<title>Error</title>\n</head>\n<body>\n<h1>Cannot read directory</h1>\n</body>\n</html>\n".to_string(), 0);
         }
     };
 
-    let mut entries: Vec<_> = entries
+    let mut entries: Vec<(String, bool, u64, SystemTime)> = dir_entries
         .into_iter()
         .map(|entry| {
             let name = entry.file_name().to_string_lossy().to_string();
             let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            (name, is_dir, size)
+            let modified = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(UNIX_EPOCH);
+            (name, is_dir, size, modified)
         })
         .collect();
 
     entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
+    let display = |e: &(String, bool, u64, SystemTime)| {
+        if e.1 {
+            format!("{}/", e.0)
+        } else {
+            e.0.clone()
+        }
+    };
+
+    let size_label = |e: &(String, bool, u64, SystemTime)| {
+        if e.1 {
+            "-".to_string()
+        } else {
+            e.2.to_string()
+        }
+    };
+
+    let max_name_len = entries.iter().map(|e| display(e).len()).max().unwrap_or(0);
+
+    let max_size_len = entries
+        .iter()
+        .map(|e| size_label(e).len())
+        .max()
+        .unwrap_or(0);
+
+    let name_col = max_name_len + 20;
+
     let mut html = String::new();
     html.push_str("<!DOCTYPE html>\n<html>\n<head>\n");
-    html.push_str(&format!(
-        "<title>Directory listing for {request_path}</title>\n"
-    ));
+    html.push_str(&format!("<title>Index of {request_path}</title>\n"));
     html.push_str("<meta charset=\"utf-8\">\n</head>\n<body>\n");
-    html.push_str(&format!(
-        "<h1>Directory listing for {request_path}</h1>\n<hr>\n<ul>\n"
-    ));
-
+    html.push_str(&format!("<h1>Index of {request_path}</h1>\n<hr>\n<pre>"));
     if request_path != "/" {
-        html.push_str("<li><a href=\"../\">../</a></li>\n");
+        html.push_str("<a href=\"../\">../</a>\n");
     }
 
-    for (name, is_dir, size) in &entries {
-        let encoded_name = name;
-        if *is_dir {
-            html.push_str(&format!(
-                "<li><a href=\"{encoded_name}/\">{encoded_name}/</a></li>\n"
-            ));
+    for entry in &entries {
+        let disp = display(entry);
+        let size_str = size_label(entry);
+        let date_str = format_modified(entry.3);
+        let pad1 = name_col.saturating_sub(disp.len());
+
+        let anchor = if entry.1 {
+            format!("<a href=\"{}/\">{}/</a>", entry.0, entry.0)
         } else {
-            html.push_str(&format!(
-                "<li><a href=\"{encoded_name}\">{encoded_name}</a> ({})</li>\n",
-                format_size(*size)
-            ));
-        }
+            format!("<a href=\"{}\">{}</a>", entry.0, entry.0)
+        };
+
+        html.push_str(&format!(
+            "{anchor}{:pad1$}{date_str}    {:>max_size_len$}\n",
+            "", size_str
+        ));
     }
 
     let entry_count = entries.len();
-    html.push_str("</ul>\n<hr>\n</body>\n</html>\n");
+    html.push_str("</pre>\n<hr>\n</body>\n</html>\n");
     (html, entry_count)
-}
-
-fn format_size(bytes: u64) -> String {
-    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
-    let mut size = bytes as f64;
-    let mut unit_idx = 0;
-    while size >= 1024.0 && unit_idx < UNITS.len() - 1 {
-        size /= 1024.0;
-        unit_idx += 1;
-    }
-    if unit_idx == 0 {
-        format!("{bytes} B")
-    } else {
-        format!("{size:.1} {}", UNITS[unit_idx])
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
-
-    #[test]
-    fn test_format_size_bytes() {
-        assert_eq!(format_size(0), "0 B");
-        assert_eq!(format_size(42), "42 B");
-        assert_eq!(format_size(1023), "1023 B");
-    }
-
-    #[test]
-    fn test_format_size_kb() {
-        assert_eq!(format_size(1024), "1.0 KB");
-        assert_eq!(format_size(1536), "1.5 KB");
-        assert_eq!(format_size(10240), "10.0 KB");
-    }
-
-    #[test]
-    fn test_format_size_mb() {
-        assert_eq!(format_size(1048576), "1.0 MB");
-        assert_eq!(format_size(1572864), "1.5 MB");
-    }
-
-    #[test]
-    fn test_format_size_gb() {
-        assert_eq!(format_size(1073741824), "1.0 GB");
-    }
 
     #[test]
     fn test_generate_dir_listing_structure() {
@@ -209,10 +201,13 @@ mod tests {
         let (html, count) = generate_dir_listing(dir.path(), "/");
 
         assert!(html.contains("<!DOCTYPE html>"));
-        assert!(html.contains("<title>Directory listing for /</title>"));
+        assert!(html.contains("<title>Index of /</title>"));
+        assert!(html.contains("<pre>"));
         assert!(html.contains("hello.txt"));
         assert!(html.contains("subdir/"));
         assert!(!html.contains("../"));
+        assert!(!html.contains("<ul>"));
+        assert!(!html.contains("<li>"));
         assert_eq!(count, 2);
     }
 
@@ -224,7 +219,7 @@ mod tests {
 
         let (html, count) = generate_dir_listing(dir.path(), "/sub/");
 
-        assert!(html.contains("Directory listing for /sub/"));
+        assert!(html.contains("Index of /sub/"));
         assert!(html.contains("../"));
         assert!(html.contains("data.bin"));
         assert_eq!(count, 1);
@@ -236,7 +231,7 @@ mod tests {
 
         let (html, count) = generate_dir_listing(dir.path(), "/empty/");
 
-        assert!(html.contains("Directory listing for /empty/"));
+        assert!(html.contains("Index of /empty/"));
         assert!(html.contains("../"));
         assert_eq!(count, 0);
     }

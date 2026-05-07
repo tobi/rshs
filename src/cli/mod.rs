@@ -1,6 +1,8 @@
 use crate::server::auth_basic::AuthConfig;
 use clap::Parser;
 
+use crate::DEFAULT_LOG_LEVEL;
+
 /// Arguments for shadow file access mode
 #[derive(Debug, Clone)]
 pub struct ShadowFileArg {
@@ -112,7 +114,7 @@ impl Cli {
             "off"
         } else {
             match self.verbose {
-                0 => "info",
+                0 => DEFAULT_LOG_LEVEL,
                 1 => "debug",
                 _ => "trace",
             }

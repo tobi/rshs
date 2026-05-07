@@ -3,6 +3,8 @@ use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
+use rshs::DEFAULT_LOG_LEVEL;
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let cli = rshs::Cli::parse();
@@ -16,7 +18,7 @@ async fn main() -> std::io::Result<()> {
     } else if let Ok(f) = std::env::var("RSHS_LOG") {
         EnvFilter::new(f)
     } else {
-        EnvFilter::new("info")
+        EnvFilter::new(DEFAULT_LOG_LEVEL)
     };
 
     let ansi = match std::env::var("RSHS_LOG_STYLE").as_deref() {

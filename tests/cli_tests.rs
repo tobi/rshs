@@ -150,6 +150,10 @@ fn test_cli_log_level_default() {
     let cli = Cli::try_parse_from(["rshs", "/tmp/test"]).unwrap();
     assert!(!cli.quiet);
     assert_eq!(cli.verbose, 0);
+
+    #[cfg(debug_assertions)]
+    assert_eq!(cli.log_level(), "debug");
+    #[cfg(not(debug_assertions))]
     assert_eq!(cli.log_level(), "info");
 }
 
