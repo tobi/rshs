@@ -21,7 +21,7 @@ async fn test_http_get_dir_root() {
 
     let body = test::read_body(resp).await;
     let body_str = String::from_utf8(body.to_vec()).unwrap();
-    assert!(body_str.contains("Directory listing for /"));
+    assert!(body_str.contains("Index of /"));
     assert!(body_str.contains("hello.txt"));
     assert!(body_str.contains("subdir/"));
     assert!(!body_str.contains("../"));
@@ -179,7 +179,7 @@ async fn test_http_subdir_listing() {
 
     let body = test::read_body(resp).await;
     let body_str = String::from_utf8(body.to_vec()).unwrap();
-    assert!(body_str.contains("Directory listing for /subdir/"));
+    assert!(body_str.contains("Index of /subdir/"));
     assert!(body_str.contains("nested.txt"));
     assert!(body_str.contains("../"));
 }
@@ -236,5 +236,14 @@ async fn test_http_dir_listing_sizes() {
     let body = test::read_body(resp).await;
     let body_str = String::from_utf8(body.to_vec()).unwrap();
 
-    assert!(body_str.contains("13 B"));
+    assert!(
+        body_str
+            .lines()
+            .any(|l| l.contains("hello.txt") && l.ends_with("13"))
+    );
+    assert!(
+        body_str
+            .lines()
+            .any(|l| l.contains("subdir/") && l.contains("-"))
+    );
 }
