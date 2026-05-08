@@ -31,6 +31,12 @@ impl ServerConfig {
     }
 }
 
+fn configure_routes(cfg: &mut web::ServiceConfig) {
+    cfg.route("/{path:.*}", web::get().to(http_server::handle))
+        .route("/{path:.*}", web::head().to(http_server::handle))
+        .default_service(web::to(webdav::dav_route));
+}
+
 pub async fn start_server(config: ServerConfig) -> std::io::Result<()> {
     let root_dir = config.root_dir;
     let addr = format!("{}:{}", config.host, config.port);
@@ -44,7 +50,7 @@ pub async fn start_server(config: ServerConfig) -> std::io::Result<()> {
         HttpServer::new(move || {
             let auth_config = auth_config.clone();
             let dav = dav_handler.clone();
-            let root_dir = PathBuf::from(&root_dir);
+            let root_dir = root_dir.clone();
             App::new()
                 .wrap(TracingLogger::default())
                 .wrap(HttpAuthentication::basic(auth_basic::auth_validator))
@@ -52,9 +58,7 @@ pub async fn start_server(config: ServerConfig) -> std::io::Result<()> {
                 .app_data(web::Data::new(auth_config))
                 .app_data(web::Data::new(dav))
                 .app_data(web::Data::new(root_dir))
-                .route("/{path:.*}", web::get().to(http_server::handle))
-                .route("/{path:.*}", web::head().to(http_server::handle))
-                .default_service(web::to(webdav::dav_route))
+                .configure(configure_routes)
         })
         .bind(&addr)?
         .run()
@@ -62,15 +66,13 @@ pub async fn start_server(config: ServerConfig) -> std::io::Result<()> {
     } else {
         HttpServer::new(move || {
             let dav = dav_handler.clone();
-            let root_dir = PathBuf::from(&root_dir);
+            let root_dir = root_dir.clone();
             App::new()
                 .wrap(TracingLogger::default())
                 .wrap(health_check::HealthCheck)
                 .app_data(web::Data::new(dav))
                 .app_data(web::Data::new(root_dir))
-                .route("/{path:.*}", web::get().to(http_server::handle))
-                .route("/{path:.*}", web::head().to(http_server::handle))
-                .default_service(web::to(webdav::dav_route))
+                .configure(configure_routes)
         })
         .bind(&addr)?
         .run()
