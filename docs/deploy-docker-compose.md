@@ -81,9 +81,12 @@ services:
     volumes:
       - ./data:/mnt/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      test: ["CMD", "curl", "-f", "-H", "x-health-check: true", "http://localhost:8080/"]
       interval: 30s
       timeout: 10s
       retries: 3
     restart: unless-stopped
 ```
+
+The `x-health-check: true` header triggers rshs's health check middleware,
+which returns `200 OK` without touching the file system or requiring auth.

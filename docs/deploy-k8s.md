@@ -105,12 +105,18 @@ spec:
             httpGet:
               path: /
               port: 8080
+              httpHeaders:
+                - name: x-health-check
+                  value: "true"
             initialDelaySeconds: 10
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /
               port: 8080
+              httpHeaders:
+                - name: x-health-check
+                  value: "true"
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
@@ -163,12 +169,18 @@ spec:
             httpGet:
               path: /
               port: 8080
+              httpHeaders:
+                - name: x-health-check
+                  value: "true"
             initialDelaySeconds: 10
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /
               port: 8080
+              httpHeaders:
+                - name: x-health-check
+                  value: "true"
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
@@ -221,12 +233,18 @@ spec:
             httpGet:
               path: /
               port: 8080
+              httpHeaders:
+                - name: x-health-check
+                  value: "true"
             initialDelaySeconds: 10
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /
               port: 8080
+              httpHeaders:
+                - name: x-health-check
+                  value: "true"
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
