@@ -78,6 +78,25 @@ RSHS_SHADOW_FILE=./shadow:ro rshs ./docs
 | Linux davfs2     | `mount.davfs http://localhost:8080 /mnt`                                      |
 | curl             | `curl http://localhost:8080` (GET) / `curl -X PROPFIND http://localhost:8080` |
 
+## Health Check
+
+rshs provides a header-based health check endpoint that avoids path conflicts
+with served files. Any request with `x-health-check: true` header returns
+`200 OK`, regardless of the URL path:
+
+```sh
+# Health check (no auth required)
+curl -H "x-health-check: true" http://localhost:8080/
+# → OK
+
+# Works at any path
+curl -H "x-health-check: true" http://localhost:8080/subdir/deep
+# → OK
+```
+
+The health check runs before authentication, so it always works even when
+auth is enabled. Requests are logged at `debug` level.
+
 ## Logging
 
 rshs uses the [`tracing`](https://crates.io/crates/tracing) ecosystem for structured, span-based logging. Log level is determined by the following priority (highest first):

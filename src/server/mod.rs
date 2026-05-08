@@ -9,6 +9,7 @@ use actix_web_httpauth::middleware::HttpAuthentication;
 use std::path::PathBuf;
 use tracing_actix_web::TracingLogger;
 
+use crate::middleware::health_check;
 use auth_basic::AuthConfig;
 
 #[derive(Clone)]
@@ -47,6 +48,7 @@ pub async fn start_server(config: ServerConfig) -> std::io::Result<()> {
             App::new()
                 .wrap(TracingLogger::default())
                 .wrap(HttpAuthentication::basic(auth_basic::auth_validator))
+                .wrap(health_check::HealthCheck)
                 .app_data(web::Data::new(auth_config))
                 .app_data(web::Data::new(dav))
                 .app_data(web::Data::new(root_dir))
@@ -63,6 +65,7 @@ pub async fn start_server(config: ServerConfig) -> std::io::Result<()> {
             let root_dir = PathBuf::from(&root_dir);
             App::new()
                 .wrap(TracingLogger::default())
+                .wrap(health_check::HealthCheck)
                 .app_data(web::Data::new(dav))
                 .app_data(web::Data::new(root_dir))
                 .route("/{path:.*}", web::get().to(http_server::handle))

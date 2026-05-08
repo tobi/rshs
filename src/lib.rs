@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod middleware;
 pub mod server;
 
 pub use cli::{Cli, ShadowFileArg};

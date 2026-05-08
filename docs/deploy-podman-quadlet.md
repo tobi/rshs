@@ -105,7 +105,7 @@ systemctl --user restart rshs
 Image=docker.io/mogeko/rshs:latest
 PublishPort=8080:8080
 Volume=%h/data:/mnt/data
-HealthCmd=curl -f http://localhost:8080/
+HealthCmd=curl -f -H "x-health-check: true" http://localhost:8080/
 HealthInterval=30s
 HealthRetries=3
 HealthTimeout=10s
@@ -116,6 +116,9 @@ Restart=always
 [Install]
 WantedBy=default.target
 ```
+
+The `x-health-check: true` header triggers rshs's health check middleware,
+which returns `200 OK` without touching the file system or requiring auth.
 
 ## Deploy
 

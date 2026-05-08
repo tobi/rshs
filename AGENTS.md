@@ -19,14 +19,16 @@ cargo clippy
 
 ### Module Map
 
-| Module                | Path                        | Purpose                                                      |
-| --------------------- | --------------------------- | ------------------------------------------------------------ |
-| `cli`                 | `src/cli/mod.rs`            | CLI argument parsing (clap derive)                           |
-| `server`              | `src/server/mod.rs`         | Server orchestration, `ServerConfig`, conditional middleware |
-| `server::auth_basic`  | `src/server/auth_basic.rs`  | Basic Auth credential store and validator                    |
-| `server::webdav`      | `src/server/webdav.rs`      | WebDAV handler (local FS + fake locks)                       |
-| `server::http_server` | `src/server/http_server.rs` | A read-only file server accessible via a browser             |
-| `server::shadow`      | `src/server/shadow.rs`      | Shadow file management (create, load, merge, write)          |
+| Module                      | Path                              | Purpose                                                      |
+| --------------------------- | --------------------------------- | ------------------------------------------------------------ |
+| `cli`                       | `src/cli/mod.rs`                  | CLI argument parsing (clap derive)                           |
+| `middleware`                | `src/middleware/mod.rs`           | Middleware modules                                           |
+| `middleware::health_check`  | `src/middleware/health_check.rs`  | Header-based health check (x-health-check: true)             |
+| `server`                    | `src/server/mod.rs`               | Server orchestration, `ServerConfig`, conditional middleware |
+| `server::auth_basic`        | `src/server/auth_basic.rs`        | Basic Auth credential store and validator                    |
+| `server::webdav`            | `src/server/webdav.rs`            | WebDAV handler (local FS + fake locks)                       |
+| `server::http_server`       | `src/server/http_server.rs`       | A read-only file server accessible via a browser             |
+| `server::shadow`            | `src/server/shadow.rs`            | Shadow file management (create, load, merge, write)          |
 
 ### Dependencies
 
@@ -103,6 +105,21 @@ RSHS_ROOT_DIR=./docs rshs  # Set root via env var
 
 - **Browser**: GET/HEAD → HTML directory listing, file serving
 - **WebDAV client**: PROPFIND/PUT/DELETE/MKCOL… → WebDAV protocol
+
+## Health Check
+
+Header-based health check via the `HealthCheck` middleware (sits outermost in the chain, before auth).
+Any request with header `x-health-check: true` returns `200 OK` with body `OK`,
+regardless of path. Does not require authentication.
+
+```sh
+curl -H "x-health-check: true" http://localhost:8080/
+# → 200 OK, body: OK
+```
+
+- The middleware uses `EitherBody<B>` (same pattern as `actix_cors`) to be body-type-agnostic
+- Placed as outermost `.wrap()` so it runs before `HttpAuthentication` and `TracingLogger`
+- Health check requests are logged at `debug` level: `tracing::debug!(%peer, "health check")`
 
 ## Logging
 
