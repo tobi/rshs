@@ -1,5 +1,6 @@
 use actix_web::web;
 use actix_web_httpauth::extractors::basic::BasicAuth;
+use sha_crypt::{PasswordHasher, PasswordVerifier, ShaCrypt};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -42,7 +43,9 @@ impl AuthConfig {
     pub fn validate(&self, username: &str, password: &str) -> bool {
         match self.users.get(username) {
             Some(Credential::Plaintext(expected)) => expected == password,
-            Some(Credential::Sha512Crypt(hash)) => sha_crypt::sha512_check(password, hash).is_ok(),
+            Some(Credential::Sha512Crypt(hash)) => ShaCrypt::default()
+                .verify_password(password.as_bytes(), hash.as_str())
+                .is_ok(),
             None => false,
         }
     }
@@ -123,10 +126,10 @@ impl AuthConfig {
         for (username, credential) in &self.users {
             let hash = match credential {
                 Credential::Sha512Crypt(h) => h.clone(),
-                Credential::Plaintext(p) => {
-                    sha_crypt::sha512_simple(p, &sha_crypt::Sha512Params::default())
-                        .map_err(|e| format!("cannot hash password: {e:?}"))?
-                }
+                Credential::Plaintext(p) => ShaCrypt::default()
+                    .hash_password(p.as_bytes())
+                    .map_err(|e| format!("cannot hash password: {e}"))?
+                    .to_string(),
             };
             content.push_str(username);
             content.push(':');
@@ -174,7 +177,10 @@ mod tests {
     use tempfile::NamedTempFile;
 
     fn make_hashed_entry(username: &str, password: &str) -> String {
-        let hash = sha_crypt::sha512_simple(password, &sha_crypt::Sha512Params::default()).unwrap();
+        let hash = ShaCrypt::default()
+            .hash_password(password.as_bytes())
+            .unwrap()
+            .to_string();
         format!("{username}:{hash}\n")
     }
 
@@ -189,8 +195,10 @@ mod tests {
 
     #[test]
     fn test_validate_sha512_crypt() {
-        let hash =
-            sha_crypt::sha512_simple("mypassword", &sha_crypt::Sha512Params::default()).unwrap();
+        let hash = ShaCrypt::default()
+            .hash_password("mypassword".as_bytes())
+            .unwrap()
+            .to_string();
         let mut config = AuthConfig::new();
         config
             .users
@@ -201,8 +209,10 @@ mod tests {
 
     #[test]
     fn test_validate_mixed_credentials() {
-        let hash =
-            sha_crypt::sha512_simple("hashedpass", &sha_crypt::Sha512Params::default()).unwrap();
+        let hash = ShaCrypt::default()
+            .hash_password("hashedpass".as_bytes())
+            .unwrap()
+            .to_string();
         let mut config = AuthConfig::new();
         config.add_user("cli_user", "plainpass");
         config

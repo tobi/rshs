@@ -22,7 +22,7 @@ ENV RSHS_ROOT_DIR=/mnt/data/
 ENV RSHS_SHADOW_FILE=/etc/rshs/shadow:rw
 ENV RSHS_LOG=info
 
-EXPOSE 8080/tcp
+EXPOSE 8080/tcp 8443/tcp
 VOLUME /mnt/data/
 
 ENTRYPOINT ["/usr/bin/rshs"]
