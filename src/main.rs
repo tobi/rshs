@@ -1,6 +1,7 @@
-use clap::Parser;
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
+
+use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
 use rshs::DEFAULT_LOG_LEVEL;

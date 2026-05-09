@@ -4,11 +4,9 @@ pub mod handlers;
 pub mod middleware;
 pub mod server;
 
-pub use auth::AuthConfig;
-pub use auth::build_auth_config;
+pub use auth::{AuthConfig, build_auth_config};
 pub use cli::{Cli, ShadowFileArg};
-pub use handlers::file;
-pub use handlers::webdav;
+pub use handlers::{file, webdav};
 pub use server::tls::TlsConfig;
 pub use server::{AppState, ServerConfig, start_server};
 
