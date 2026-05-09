@@ -11,6 +11,11 @@ docker run --rm -p 8080:8080 -v /path/to/serve:/mnt/data mogeko/rshs
 
 # Custom host and port
 docker run --rm -p 3000:3000 -v .:/mnt/data mogeko/rshs --port 3000
+
+# With TLS
+docker run --rm -p 8443:8443 \
+  -v ./certs:/certs -v .:/mnt/data \
+  mogeko/rshs --tls-cert /certs/cert.pem --tls-key /certs/key.pem
 ```
 
 ## Authentication
@@ -68,11 +73,34 @@ RSHS_SHADOW_FILE=./shadow:ro rshs ./docs
 >   mogeko/rshs
 > ```
 
+## TLS / HTTPS
+
+TLS is enabled by providing both a certificate and private key file in PEM format.
+When TLS is active, the default port switches from 8080 to 8443.
+
+```sh
+# Generate a self-signed certificate
+openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem \
+  -days 365 -nodes -subj "/CN=localhost"
+
+# Start with TLS
+rshs --tls-cert cert.pem --tls-key key.pem ./docs
+
+# Using environment variables
+RSHS_TLS_CERT=cert.pem RSHS_TLS_KEY=key.pem rshs ./docs
+
+# Override default port
+rshs --tls-cert cert.pem --tls-key key.pem --port 443 ./docs
+```
+
+- Default port: 8443 (TLS) vs 8080 (plain) — `--port` always overrides
+- HTTP/2 is negotiated via ALPN (`h2` + `http/1.1`)
+
 ## Access
 
 | Client           | How to access                                                                 |
 | ---------------- | ----------------------------------------------------------------------------- |
-| Browser          | Open `http://localhost:8080`                                                  |
+| Browser          | Open `http://localhost:8080` (or `https://localhost:8443` with TLS)           |
 | macOS Finder     | `Cmd+K` → `http://localhost:8080`                                             |
 | Windows Explorer | Map network drive → `http://localhost:8080`                                   |
 | Linux davfs2     | `mount.davfs http://localhost:8080 /mnt`                                      |
@@ -162,7 +190,9 @@ Arguments:
 
 Options:
   -H, --host <HOST>                  Host address to bind to [env: RSHS_HOST=] [default: 0.0.0.0]
-  -p, --port <PORT>                  Port to bind to [env: RSHS_PORT=] [default: 8080]
+  -p, --port <PORT>                  Port to bind to (default: 8080, or 8443 with TLS) [env: RSHS_PORT=]
+      --tls-cert <TLS_CERT>          TLS certificate file path (PEM format) [env: RSHS_TLS_CERT=]
+      --tls-key <TLS_KEY>            TLS private key file path (PEM format) [env: RSHS_TLS_KEY=]
   -v, --verbose...                   Increase log verbosity (-v = debug, -vv = trace)
   -q, --quiet                        Suppress all log output
   -u, --user <USER:PASS>             Basic Auth credentials in format username:password (can be repeated) [env: RSHS_USERS]
@@ -170,6 +200,11 @@ Options:
   -W, --shadow-write                 Write CLI credentials into the shadow file (requires --shadow-file :rw)
   -h, --help                         Print help
   -V, --version                      Print version
+
+TLS environment variables:
+  RSHS_TLS_CERT     Path to TLS certificate file (PEM format)
+  RSHS_TLS_KEY      Path to TLS private key file (PEM format)
+                    When both are set, HTTPS is enabled (default port 8443)
 
 Logging environment variables:
   RSHS_LOG          Tracing filter (e.g. info, rshs=debug, rshs[status=500]=trace)

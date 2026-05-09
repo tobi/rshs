@@ -8,6 +8,7 @@ A lightweight file server with WebDAV support.
 - **Browser**: open directories as HTML pages, browse and view files
 - **WebDAV client**: mount as a remote drive (Finder, Explorer, `davfs`, etc.)
 - **Auth**: optional HTTP Basic Auth for access control
+- **TLS/HTTPS**: built-in support for secure connections with custom certs
 
 ## Installation
 
@@ -22,6 +23,11 @@ docker pull ghcr.io/mogeko/rshs:latest
 ```sh
 # Serve ./data on port 8080
 docker run --rm -p 8080:8080 -v ./data:/mnt/data mogeko/rshs
+
+# With TLS (default port 8443)
+docker run --rm -p 8443:8443 \
+  -v ./certs:/certs -v ./data:/mnt/data \
+  mogeko/rshs --tls-cert /certs/cert.pem --tls-key /certs/key.pem
 
 # With authentication
 docker run --rm -p 8080:8080 -v ./data:/mnt/data \
@@ -59,7 +65,9 @@ Map Network Drive → `http://localhost:8080`
 | ------------------ | --------------------------------------------------- | --------- |
 | `RSHS_ROOT_DIR`    | Root directory to serve                             | `.`       |
 | `RSHS_HOST`        | Bind address                                        | `0.0.0.0` |
-| `RSHS_PORT`        | Bind port                                           | `8080`    |
+| `RSHS_PORT`        | Bind port (8080 plain, 8443 with TLS)               | —         |
+| `RSHS_TLS_CERT`    | TLS certificate file path (PEM)                     | —         |
+| `RSHS_TLS_KEY`     | TLS private key file path (PEM)                     | —         |
 | `RSHS_USERS`       | `user:pass;...` auth pairs                          | —         |
 | `RSHS_SHADOW_FILE` | Shadow file path                                    | —         |
 | `RSHS_LOG`         | Log filter (e.g. `debug`, `rshs[status=500]=trace`) | —         |

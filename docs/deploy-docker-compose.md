@@ -81,7 +81,15 @@ services:
     volumes:
       - ./data:/mnt/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "-H", "x-health-check: true", "http://localhost:8080/"]
+      test:
+        [
+          "CMD",
+          "curl",
+          "-f",
+          "-H",
+          "x-health-check: true",
+          "http://localhost:8080/",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
