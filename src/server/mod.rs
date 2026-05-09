@@ -1,149 +1,103 @@
-pub mod auth_basic;
-pub mod http_server;
-pub mod shadow;
 pub(crate) mod time_util;
 pub mod tls;
-pub mod webdav;
 
+use std::io;
+use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use actix_web::{App, HttpServer, web};
-use actix_web_httpauth::middleware::HttpAuthentication;
-use tracing_actix_web::TracingLogger;
+use axum::middleware as axum_mw;
+use axum::{Router, routing::get};
+use tower_http::trace::TraceLayer;
 
-use crate::middleware::health_check;
-use auth_basic::AuthConfig;
-use tls::TlsConfig;
+use crate::auth::AuthConfig;
+use crate::handlers::{file, webdav};
+use crate::middleware;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub root_dir: Arc<PathBuf>,
+    pub dav_handler: Arc<dav_server::DavHandler>,
+    pub auth_config: Arc<AuthConfig>,
+}
 
 #[derive(Clone)]
 pub struct ServerConfig {
+    pub root_dir: PathBuf,
     pub host: String,
     pub port: u16,
-    pub root_dir: PathBuf,
+    pub tls_config: Option<tls::TlsConfig>,
     pub auth_config: AuthConfig,
-    pub tls_config: Option<TlsConfig>,
 }
 
 impl ServerConfig {
     pub fn new(
+        root_dir: PathBuf,
         host: String,
         port: u16,
-        root_dir: PathBuf,
+        tls_config: Option<tls::TlsConfig>,
         auth_config: AuthConfig,
-        tls_config: Option<TlsConfig>,
     ) -> Self {
         Self {
             root_dir,
             host,
             port,
-            auth_config,
             tls_config,
+            auth_config,
         }
     }
 }
 
-fn configure_routes(cfg: &mut web::ServiceConfig) {
-    cfg.route("/{path:.*}", web::get().to(http_server::handle))
-        .route("/{path:.*}", web::head().to(http_server::handle))
-        .default_service(web::to(webdav::dav_route));
+pub fn app(config: &ServerConfig) -> Router {
+    let auth_config = Arc::new(config.auth_config.clone());
+    let root_dir = Arc::new(config.root_dir.clone());
+    let dav_handler = Arc::new(webdav::create_dav_handler(&config.root_dir));
+
+    let state = Arc::new(AppState {
+        root_dir,
+        dav_handler,
+        auth_config: auth_config.clone(),
+    });
+
+    Router::new()
+        .route("/{*path}", get(file::handle).head(file::handle))
+        .fallback(webdav::dav_route)
+        .layer((TraceLayer::new_for_http(), middleware::health::HealthCheck))
+        .route_layer(axum_mw::from_fn_with_state(
+            auth_config,
+            middleware::auth::auth_middleware,
+        ))
+        .with_state(state)
 }
 
-pub async fn start_server(config: ServerConfig) -> std::io::Result<()> {
-    let root_dir = config.root_dir;
-    let addr = format!("{}:{}", config.host, config.port);
-    let auth_config = config.auth_config;
+pub async fn start_server(config: ServerConfig) -> io::Result<()> {
+    let addr: SocketAddr = format!("{}:{}", config.host, config.port)
+        .parse()
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    let router = app(&config);
 
-    let ls_config = match &config.tls_config {
+    match &config.tls_config {
         Some(tls_config) => {
+            let ls_config = tls_config.load()?;
+            let listener = tls::TlsListener::bind(addr, ls_config).await?;
             tracing::info!(
-                root_dir = %root_dir.display(),
                 addr = %addr,
                 cert = %tls_config.cert_path,
                 key = %tls_config.key_path,
-                "starting server with TLS"
+                "starting HTTPS server"
             );
-            Some(tls_config.load()?)
+            axum::serve(listener, router)
+                .await
+                .map_err(io::Error::other)?;
         }
         None => {
-            tracing::info!(
-                root_dir = %root_dir.display(),
-                addr = %addr,
-                "starting server"
-            );
-            None
-        }
-    };
-
-    let dav_handler = webdav::create_dav_handler(&root_dir);
-
-    match ls_config {
-        Some(ls_config) => {
-            if !auth_config.is_empty() {
-                HttpServer::new(move || {
-                    let auth_config = auth_config.clone();
-                    let dav = dav_handler.clone();
-                    let root_dir = root_dir.clone();
-                    App::new()
-                        .wrap(TracingLogger::default())
-                        .wrap(HttpAuthentication::basic(auth_basic::auth_validator))
-                        .wrap(health_check::HealthCheck)
-                        .app_data(web::Data::new(auth_config))
-                        .app_data(web::Data::new(dav))
-                        .app_data(web::Data::new(root_dir))
-                        .configure(configure_routes)
-                })
-                .bind_rustls_0_23(&addr, ls_config)?
-                .run()
+            let listener = tokio::net::TcpListener::bind(addr).await?;
+            tracing::info!(addr = %addr, "starting HTTP server");
+            axum::serve(listener, router)
                 .await
-            } else {
-                HttpServer::new(move || {
-                    let dav = dav_handler.clone();
-                    let root_dir = root_dir.clone();
-                    App::new()
-                        .wrap(TracingLogger::default())
-                        .wrap(health_check::HealthCheck)
-                        .app_data(web::Data::new(dav))
-                        .app_data(web::Data::new(root_dir))
-                        .configure(configure_routes)
-                })
-                .bind_rustls_0_23(&addr, ls_config)?
-                .run()
-                .await
-            }
-        }
-        None => {
-            if !auth_config.is_empty() {
-                HttpServer::new(move || {
-                    let auth_config = auth_config.clone();
-                    let dav = dav_handler.clone();
-                    let root_dir = root_dir.clone();
-                    App::new()
-                        .wrap(TracingLogger::default())
-                        .wrap(HttpAuthentication::basic(auth_basic::auth_validator))
-                        .wrap(health_check::HealthCheck)
-                        .app_data(web::Data::new(auth_config))
-                        .app_data(web::Data::new(dav))
-                        .app_data(web::Data::new(root_dir))
-                        .configure(configure_routes)
-                })
-                .bind(&addr)?
-                .run()
-                .await
-            } else {
-                HttpServer::new(move || {
-                    let dav = dav_handler.clone();
-                    let root_dir = root_dir.clone();
-                    App::new()
-                        .wrap(TracingLogger::default())
-                        .wrap(health_check::HealthCheck)
-                        .app_data(web::Data::new(dav))
-                        .app_data(web::Data::new(root_dir))
-                        .configure(configure_routes)
-                })
-                .bind(&addr)?
-                .run()
-                .await
-            }
+                .map_err(io::Error::other)?;
         }
     }
+
+    Ok(())
 }

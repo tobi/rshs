@@ -35,17 +35,19 @@ async fn main() -> std::io::Result<()> {
 
     let _ = tracing_log::LogTracer::init();
 
-    let auth_config = rshs::shadow::build_auth_config(&cli);
+    let auth_config = rshs::build_auth_config(&cli);
 
     let port = cli.effective_port();
     let tls_config = cli.to_tls_config();
+    let host = cli.host;
+    let root_dir = PathBuf::from(cli.root_dir);
 
     rshs::start_server(rshs::ServerConfig::new(
-        cli.host,
+        root_dir,
+        host,
         port,
-        PathBuf::from(cli.root_dir),
-        auth_config,
         tls_config,
+        auth_config,
     ))
     .await
 }

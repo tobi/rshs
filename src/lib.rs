@@ -1,14 +1,16 @@
+pub mod auth;
 pub mod cli;
+pub mod handlers;
 pub mod middleware;
 pub mod server;
 
+pub use auth::AuthConfig;
+pub use auth::build_auth_config;
 pub use cli::{Cli, ShadowFileArg};
-pub use server::auth_basic::AuthConfig;
-pub use server::http_server;
-pub use server::shadow;
+pub use handlers::file;
+pub use handlers::webdav;
 pub use server::tls::TlsConfig;
-pub use server::webdav as dav;
-pub use server::{ServerConfig, start_server};
+pub use server::{AppState, ServerConfig, start_server};
 
 #[cfg(debug_assertions)]
 pub const DEFAULT_LOG_LEVEL: &str = "debug";

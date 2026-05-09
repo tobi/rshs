@@ -1,48 +1,57 @@
 mod common;
 
-use actix_web::{http, test, web};
-use common::temp_dir_with_files;
-use rshs;
-use std::path::PathBuf;
+use std::sync::Arc;
 
-#[actix_web::test]
+use axum::{Router, body::Body, extract::Request};
+use common::temp_dir_with_files;
+use tower::ServiceExt;
+
+use rshs::{self, AppState};
+
+fn make_app(dir: &tempfile::TempDir) -> Router {
+    let handler = rshs::webdav::create_dav_handler(dir.path());
+    Router::new()
+        .fallback(rshs::file::handle)
+        .layer(rshs::middleware::health::HealthCheck)
+        .with_state(Arc::new(AppState {
+            root_dir: Arc::new(dir.path().to_path_buf()),
+            dav_handler: Arc::new(handler),
+            auth_config: Arc::new(rshs::AuthConfig::new()),
+        }))
+}
+
+#[tokio::test]
 async fn test_health_check_returns_ok() {
     let dir = temp_dir_with_files();
-    let app = test::init_service(
-        actix_web::App::new()
-            .wrap(rshs::middleware::health_check::HealthCheck)
-            .app_data(web::Data::new(PathBuf::from(dir.path())))
-            .default_service(web::to(rshs::http_server::handle)),
-    )
-    .await;
+    let app = make_app(&dir);
 
-    let req = test::TestRequest::get()
+    let req = Request::builder()
+        .method(axum::http::Method::GET)
         .uri("/")
-        .insert_header(("x-health-check", "true"))
-        .to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), http::StatusCode::OK);
+        .header("x-health-check", "true")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
 
-    let body = test::read_body(resp).await;
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     assert_eq!(body.as_ref(), b"OK");
 }
 
-#[actix_web::test]
+#[tokio::test]
 async fn test_health_check_content_type() {
     let dir = temp_dir_with_files();
-    let app = test::init_service(
-        actix_web::App::new()
-            .wrap(rshs::middleware::health_check::HealthCheck)
-            .app_data(web::Data::new(PathBuf::from(dir.path())))
-            .default_service(web::to(rshs::http_server::handle)),
-    )
-    .await;
+    let app = make_app(&dir);
 
-    let req = test::TestRequest::get()
+    let req = Request::builder()
+        .method(axum::http::Method::GET)
         .uri("/")
-        .insert_header(("x-health-check", "true"))
-        .to_request();
-    let resp = test::call_service(&app, req).await;
+        .header("x-health-check", "true")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
     assert!(
         resp.headers()
             .get("content-type")
@@ -53,91 +62,84 @@ async fn test_health_check_content_type() {
     );
 }
 
-#[actix_web::test]
+#[tokio::test]
 async fn test_health_check_without_header_passes_through() {
     let dir = temp_dir_with_files();
-    let app = test::init_service(
-        actix_web::App::new()
-            .wrap(rshs::middleware::health_check::HealthCheck)
-            .app_data(web::Data::new(PathBuf::from(dir.path())))
-            .default_service(web::to(rshs::http_server::handle)),
-    )
-    .await;
+    let app = make_app(&dir);
 
-    let req = test::TestRequest::get().uri("/hello.txt").to_request();
-    let resp = test::call_service(&app, req).await;
+    let req = Request::builder()
+        .method(axum::http::Method::GET)
+        .uri("/hello.txt")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
     assert!(resp.status().is_success());
 
-    let body = test::read_body(resp).await;
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     assert_eq!(body.as_ref(), b"Hello, World!");
 }
 
-#[actix_web::test]
+#[tokio::test]
 async fn test_health_check_with_wrong_header_value_passes_through() {
     let dir = temp_dir_with_files();
-    let app = test::init_service(
-        actix_web::App::new()
-            .wrap(rshs::middleware::health_check::HealthCheck)
-            .app_data(web::Data::new(PathBuf::from(dir.path())))
-            .default_service(web::to(rshs::http_server::handle)),
-    )
-    .await;
+    let app = make_app(&dir);
 
-    let req = test::TestRequest::get()
+    let req = Request::builder()
+        .method(axum::http::Method::GET)
         .uri("/hello.txt")
-        .insert_header(("x-health-check", "false"))
-        .to_request();
-    let resp = test::call_service(&app, req).await;
+        .header("x-health-check", "false")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
     assert!(resp.status().is_success());
 
-    let body = test::read_body(resp).await;
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     assert_eq!(body.as_ref(), b"Hello, World!");
 }
 
-#[actix_web::test]
+#[tokio::test]
 async fn test_health_check_with_head_method() {
     let dir = temp_dir_with_files();
-    let app = test::init_service(
-        actix_web::App::new()
-            .wrap(rshs::middleware::health_check::HealthCheck)
-            .app_data(web::Data::new(PathBuf::from(dir.path())))
-            .default_service(web::to(rshs::http_server::handle)),
-    )
-    .await;
+    let app = make_app(&dir);
 
-    let req = test::TestRequest::default()
-        .method(http::Method::HEAD)
+    let req = Request::builder()
+        .method(axum::http::Method::HEAD)
         .uri("/")
-        .insert_header(("x-health-check", "true"))
-        .to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), http::StatusCode::OK);
+        .header("x-health-check", "true")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
 }
 
-#[actix_web::test]
+#[tokio::test]
 async fn test_is_health_check_function() {
-    use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
+    use axum::http::header::{HeaderMap, HeaderName, HeaderValue};
 
     let mut headers = HeaderMap::new();
-    assert!(!rshs::middleware::health_check::is_health_check(&headers));
+    assert!(!rshs::middleware::health::is_health_check(&headers));
 
     headers.insert(
         HeaderName::from_static("x-health-check"),
         HeaderValue::from_static("true"),
     );
-    assert!(rshs::middleware::health_check::is_health_check(&headers));
+    assert!(rshs::middleware::health::is_health_check(&headers));
 
     let mut headers = HeaderMap::new();
     headers.insert(
         HeaderName::from_static("x-health-check"),
         HeaderValue::from_static("false"),
     );
-    assert!(!rshs::middleware::health_check::is_health_check(&headers));
+    assert!(!rshs::middleware::health::is_health_check(&headers));
 
     let mut headers = HeaderMap::new();
     headers.insert(
         HeaderName::from_static("x-health-check"),
         HeaderValue::from_static("1"),
     );
-    assert!(!rshs::middleware::health_check::is_health_check(&headers));
+    assert!(!rshs::middleware::health::is_health_check(&headers));
 }

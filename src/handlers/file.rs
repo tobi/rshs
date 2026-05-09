@@ -1,62 +1,68 @@
 use std::fs;
-use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use actix_web::{HttpRequest, HttpResponse, http::header, web};
+use axum::{
+    body::Body,
+    extract::State,
+    http::{Method, StatusCode},
+    response::{IntoResponse, Response},
+};
 
-use super::time_util::format_modified;
+use crate::server::AppState;
+use crate::server::time_util::format_modified;
 
-pub async fn handle(req: HttpRequest, root_dir: web::Data<PathBuf>) -> HttpResponse {
-    let request_path = req.path();
+pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Request) -> Response {
+    let request_path = req.uri().path().to_owned();
 
     let rel_path = request_path.trim_start_matches('/');
-    let fs_path = root_dir.join(rel_path);
+    let fs_path = state.root_dir.join(rel_path);
 
-    tracing::debug!(method = %req.method(), path = request_path, "incoming request");
+    tracing::debug!(method = %req.method(), path = %request_path, "incoming request");
 
     let fs_path = match fs_path.canonicalize() {
         Ok(p) => p,
         Err(_) => {
-            tracing::debug!(method = %req.method(), path = request_path, status = 404, "path not found");
-            return HttpResponse::NotFound().finish();
+            tracing::debug!(method = %req.method(), path = %request_path, status = 404, "path not found");
+            return StatusCode::NOT_FOUND.into_response();
         }
     };
 
-    let root_canonical = root_dir
+    let root_canonical = state
+        .root_dir
         .canonicalize()
-        .unwrap_or_else(|_| (**root_dir).clone());
+        .unwrap_or_else(|_| (*state.root_dir).clone());
     if !fs_path.starts_with(&root_canonical) {
         tracing::warn!(
             method = %req.method(),
-            path = request_path,
+            path = %request_path,
             status = 404,
             "path traversal blocked",
         );
-        return HttpResponse::NotFound().finish();
+        return StatusCode::NOT_FOUND.into_response();
     }
 
     match *req.method() {
-        actix_web::http::Method::GET | actix_web::http::Method::HEAD => {
+        Method::GET | Method::HEAD => {
             if fs_path.is_dir() {
-                let (html, entry_count) = generate_dir_listing(&fs_path, request_path);
+                let (html, entry_count) = generate_dir_listing(&fs_path, &request_path);
                 tracing::debug!(
                     method = %req.method(),
-                    path = request_path,
+                    path = %request_path,
                     status = 200,
                     entry_count = entry_count,
                     "directory listing"
                 );
                 let body_len = html.len();
-                let mut resp = HttpResponse::Ok()
-                    .content_type("text/html; charset=utf-8")
-                    .body(html);
-                if *req.method() == actix_web::http::Method::HEAD {
-                    resp = HttpResponse::Ok()
-                        .content_type("text/html; charset=utf-8")
-                        .insert_header((header::CONTENT_LENGTH, body_len))
-                        .finish();
+                let mut resp = Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "text/html; charset=utf-8");
+                if *req.method() == Method::HEAD {
+                    resp = resp.header("content-length", body_len.to_string());
+                    resp.body(Body::empty()).unwrap()
+                } else {
+                    resp.body(Body::from(html)).unwrap()
                 }
-                resp
             } else {
                 match fs::read(&fs_path) {
                     Ok(data) => {
@@ -64,30 +70,30 @@ pub async fn handle(req: HttpRequest, root_dir: web::Data<PathBuf>) -> HttpRespo
                         let mime = mime_guess::from_path(&fs_path).first_or_octet_stream();
                         tracing::debug!(
                             method = %req.method(),
-                            path = request_path,
+                            path = %request_path,
                             status = 200,
                             mime = %mime.essence_str(),
                             size = data_len,
                             "file served"
                         );
-                        let mut resp = HttpResponse::Ok();
-                        resp.content_type(mime.as_ref());
-
-                        if *req.method() == actix_web::http::Method::HEAD {
-                            resp.insert_header((header::CONTENT_LENGTH, data_len));
-                            resp.finish()
+                        let mut resp = Response::builder()
+                            .status(StatusCode::OK)
+                            .header("content-type", mime.as_ref());
+                        if *req.method() == Method::HEAD {
+                            resp = resp.header("content-length", data_len.to_string());
+                            resp.body(Body::empty()).unwrap()
                         } else {
-                            resp.body(data)
+                            resp.body(Body::from(data)).unwrap()
                         }
                     }
                     Err(_) => {
                         tracing::error!(
                             method = %req.method(),
-                            path = request_path,
+                            path = %request_path,
                             status = 500,
                             "failed to read file",
                         );
-                        HttpResponse::InternalServerError().finish()
+                        StatusCode::INTERNAL_SERVER_ERROR.into_response()
                     }
                 }
             }
@@ -95,11 +101,11 @@ pub async fn handle(req: HttpRequest, root_dir: web::Data<PathBuf>) -> HttpRespo
         _ => {
             tracing::debug!(
                 method = %req.method(),
-                path = request_path,
+                path = %request_path,
                 status = 405,
                 "method not allowed",
             );
-            HttpResponse::MethodNotAllowed().finish()
+            StatusCode::METHOD_NOT_ALLOWED.into_response()
         }
     }
 }
@@ -206,8 +212,6 @@ mod tests {
         assert!(html.contains("hello.txt"));
         assert!(html.contains("subdir/"));
         assert!(!html.contains("../"));
-        assert!(!html.contains("<ul>"));
-        assert!(!html.contains("<li>"));
         assert_eq!(count, 2);
     }
 

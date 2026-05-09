@@ -1,8 +1,12 @@
 use std::io::BufReader;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 use std::{fs::File, io};
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use sha2::{Digest, Sha256};
+use tokio_rustls::TlsAcceptor;
 
 #[derive(Debug, Clone)]
 pub struct TlsConfig {
@@ -95,11 +99,56 @@ impl TlsConfig {
             .with_no_client_auth()
             .with_single_cert(certs, key)
         {
-            Ok(config) => Ok(config),
+            Ok(mut config) => {
+                config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+                Ok(config)
+            }
             Err(e) => {
                 tracing::error!(error = %e, "failed to build TLS server config");
                 Err(io::Error::new(io::ErrorKind::InvalidData, e))
             }
         }
+    }
+}
+
+pub struct TlsListener {
+    inner: tokio::net::TcpListener,
+    acceptor: TlsAcceptor,
+}
+
+impl TlsListener {
+    pub async fn bind(addr: SocketAddr, ls_config: rustls::ServerConfig) -> io::Result<Self> {
+        let inner = tokio::net::TcpListener::bind(addr).await?;
+        let acceptor = TlsAcceptor::from(Arc::new(ls_config));
+        Ok(Self { inner, acceptor })
+    }
+}
+
+impl axum::serve::Listener for TlsListener {
+    type Io = tokio_rustls::server::TlsStream<tokio::net::TcpStream>;
+    type Addr = SocketAddr;
+
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        loop {
+            let (stream, addr) = match self.inner.accept().await {
+                Ok(tup) => tup,
+                Err(e) => {
+                    tracing::error!("accept error: {e}");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
+            match self.acceptor.accept(stream).await {
+                Ok(tls_stream) => return (tls_stream, addr),
+                Err(e) => {
+                    tracing::debug!(%addr, error = %e, "TLS handshake failed");
+                    continue;
+                }
+            }
+        }
+    }
+
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.inner.local_addr()
     }
 }
