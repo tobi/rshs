@@ -1640,7 +1640,7 @@ dependencies = [
 
 [[package]]
 name = "rshs"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "actix-web",
  "actix-web-httpauth",
