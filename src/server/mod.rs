@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::middleware as axum_mw;
-use axum::{Router, routing::get};
+use axum::{Router, extract::State, http::Method, routing::any};
 use tower_http::trace::TraceLayer;
 
 use crate::auth::AuthConfig;
@@ -48,6 +48,16 @@ impl ServerConfig {
     }
 }
 
+async fn dispatch(
+    State(state): State<Arc<AppState>>,
+    req: axum::extract::Request,
+) -> axum::response::Response {
+    match *req.method() {
+        Method::GET | Method::HEAD => file::handle(State(state), req).await,
+        _ => webdav::dav_route(State(state), req).await,
+    }
+}
+
 pub fn app(config: &ServerConfig) -> Router {
     let auth_config = Arc::new(config.auth_config.clone());
     let root_dir = Arc::new(config.root_dir.clone());
@@ -60,13 +70,13 @@ pub fn app(config: &ServerConfig) -> Router {
     });
 
     Router::new()
-        .route("/{*path}", get(file::handle).head(file::handle))
-        .fallback(webdav::dav_route)
-        .layer((TraceLayer::new_for_http(), middleware::health::HealthCheck))
-        .route_layer(axum_mw::from_fn_with_state(
+        .fallback(any(dispatch))
+        .layer(TraceLayer::new_for_http())
+        .layer(axum_mw::from_fn_with_state(
             auth_config,
             middleware::auth::auth_middleware,
         ))
+        .layer(middleware::health::HealthCheck)
         .with_state(state)
 }
 
