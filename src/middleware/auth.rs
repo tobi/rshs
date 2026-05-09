@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axum::{http::StatusCode, middleware::Next, response::Response};
+use axum::{body::Body, http::StatusCode, middleware::Next, response::Response};
 use base64::{Engine as _, engine::general_purpose};
 
 use crate::auth::AuthConfig;
@@ -9,7 +9,7 @@ pub async fn auth_middleware(
     axum::extract::State(auth_config): axum::extract::State<Arc<AuthConfig>>,
     req: axum::extract::Request,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Result<Response, Response> {
     if auth_config.is_empty() {
         return Ok(next.run(req).await);
     }
@@ -39,6 +39,10 @@ fn parse_basic_auth(headers: &axum::http::HeaderMap) -> Option<(String, String)>
     Some((user.to_string(), pass.to_string()))
 }
 
-fn unauthorized() -> StatusCode {
-    StatusCode::UNAUTHORIZED
+fn unauthorized() -> Response {
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header("www-authenticate", r#"Basic realm="rshs""#)
+        .body(Body::empty())
+        .unwrap()
 }
