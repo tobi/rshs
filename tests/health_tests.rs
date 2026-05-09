@@ -9,9 +9,9 @@ use tower::ServiceExt;
 use rshs::{self, AppState};
 
 fn make_app(dir: &tempfile::TempDir) -> Router {
-    let handler = rshs::webdav::create_dav_handler(dir.path());
+    let handler = rshs::handlers::webdav::create_dav_handler(dir.path());
     Router::new()
-        .fallback(rshs::file::handle)
+        .fallback(rshs::handlers::file::handle)
         .layer(rshs::middleware::health::HealthCheck)
         .with_state(Arc::new(AppState {
             root_dir: Arc::new(dir.path().to_path_buf()),

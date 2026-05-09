@@ -1,4 +1,3 @@
-pub(crate) mod time_util;
 pub mod tls;
 
 use std::io;
@@ -88,8 +87,7 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
 
     match &config.tls_config {
         Some(tls_config) => {
-            let ls_config = tls_config.load()?;
-            let listener = tls::TlsListener::bind(addr, ls_config).await?;
+            let listener = tls::TlsListener::bind(addr, tls_config.load()?).await?;
             tracing::info!(
                 addr = %addr,
                 cert = %tls_config.cert_path,

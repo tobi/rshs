@@ -10,7 +10,7 @@ use axum::{
 };
 
 use crate::server::AppState;
-use crate::server::time_util::format_modified;
+use crate::utils::time::format_modified;
 
 pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Request) -> Response {
     let request_path = req.uri().path().to_owned();
