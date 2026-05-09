@@ -1,4 +1,5 @@
 use crate::server::auth_basic::AuthConfig;
+use crate::server::tls::TlsConfig;
 use clap::Parser;
 
 use crate::DEFAULT_LOG_LEVEL;
@@ -23,7 +24,7 @@ pub struct ShadowFileArg {
         "                    Only used when no -v/-q flags are given\n",
         "                    Supports per-target and per-field filtering\n",
         "  RSHS_LOG_STYLE    Log style (always, never, auto), controls ANSI color output\n",
-        "                    Defaults to auto (enabled when output is a terminal)\n",
+        "                    Defaults to auto (enabled when output is a terminal)",
     ),
 )]
 pub struct Cli {
@@ -35,9 +36,17 @@ pub struct Cli {
     #[arg(short = 'H', long, default_value = "0.0.0.0", env = "RSHS_HOST")]
     pub host: String,
 
-    /// Port to bind to
-    #[arg(short, long, default_value = "8080", env = "RSHS_PORT")]
-    pub port: u16,
+    /// Port to bind to (default: 8080, or 8443 with TLS)
+    #[arg(short, long, env = "RSHS_PORT")]
+    pub port: Option<u16>,
+
+    /// TLS certificate file path (PEM format)
+    #[arg(long = "tls-cert", env = "RSHS_TLS_CERT", requires = "tls_key")]
+    pub tls_cert: Option<String>,
+
+    /// TLS private key file path (PEM format)
+    #[arg(long = "tls-key", env = "RSHS_TLS_KEY", requires = "tls_cert")]
+    pub tls_key: Option<String>,
 
     /// Increase log verbosity (-v = debug, -vv = trace)
     #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count, conflicts_with = "quiet")]
@@ -74,6 +83,18 @@ pub struct Cli {
 }
 
 impl Cli {
+    pub fn effective_port(&self) -> u16 {
+        self.port
+            .unwrap_or(if self.tls_cert.is_some() { 8443 } else { 8080 })
+    }
+
+    pub fn to_tls_config(&self) -> Option<TlsConfig> {
+        match (&self.tls_cert, &self.tls_key) {
+            (Some(cert), Some(key)) => Some(TlsConfig::new(cert.clone(), key.clone())),
+            _ => None,
+        }
+    }
+
     pub fn to_shadow_file_arg(&self) -> Option<ShadowFileArg> {
         self.shadow_file.as_ref().map(|s| {
             if let Some(path) = s.strip_suffix(":rw") {
