@@ -201,11 +201,6 @@ Options:
   -h, --help                         Print help
   -V, --version                      Print version
 
-TLS environment variables:
-  RSHS_TLS_CERT     Path to TLS certificate file (PEM format)
-  RSHS_TLS_KEY      Path to TLS private key file (PEM format)
-                    When both are set, HTTPS is enabled (default port 8443)
-
 Logging environment variables:
   RSHS_LOG          Tracing filter (e.g. info, rshs=debug, rshs[status=500]=trace)
                     Only used when no -v/-q flags are given
