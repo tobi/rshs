@@ -1,4 +1,3 @@
-use std::fs;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -20,7 +19,7 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Requ
 
     tracing::debug!(method = %req.method(), path = %request_path, "incoming request");
 
-    let fs_path = match fs_path.canonicalize() {
+    let fs_path = match tokio::fs::canonicalize(&fs_path).await {
         Ok(p) => p,
         Err(_) => {
             tracing::debug!(method = %req.method(), path = %request_path, status = 404, "path not found");
@@ -28,11 +27,8 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Requ
         }
     };
 
-    let root_canonical = state
-        .root_dir
-        .canonicalize()
-        .unwrap_or_else(|_| (*state.root_dir).clone());
-    if !fs_path.starts_with(&root_canonical) {
+    let root_canonical = &state.root_canonical;
+    if !fs_path.starts_with(root_canonical.as_ref()) {
         tracing::warn!(
             method = %req.method(),
             path = %request_path,
@@ -44,8 +40,11 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Requ
 
     match *req.method() {
         Method::GET | Method::HEAD => {
-            if fs_path.is_dir() {
-                let (html, entry_count) = generate_dir_listing(&fs_path, &request_path);
+            if match tokio::fs::metadata(&fs_path).await {
+                Ok(m) => m.is_dir(),
+                Err(_) => false,
+            } {
+                let (html, entry_count) = generate_dir_listing(&fs_path, &request_path).await;
                 tracing::debug!(
                     method = %req.method(),
                     path = %request_path,
@@ -64,7 +63,7 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Requ
                     resp.body(Body::from(html)).unwrap()
                 }
             } else {
-                match fs::read(&fs_path) {
+                match tokio::fs::read(&fs_path).await {
                     Ok(data) => {
                         let data_len = data.len();
                         let mime = mime_guess::from_path(&fs_path).first_or_octet_stream();
@@ -110,27 +109,31 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Requ
     }
 }
 
-fn generate_dir_listing(dir_path: &std::path::Path, request_path: &str) -> (String, usize) {
-    let dir_entries: Vec<_> = match fs::read_dir(dir_path) {
-        Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
+async fn generate_dir_listing(dir_path: &std::path::Path, request_path: &str) -> (String, usize) {
+    let mut read_dir = match tokio::fs::read_dir(dir_path).await {
+        Ok(rd) => rd,
         Err(_) => {
             return ("<!DOCTYPE html>\n<html>\n<head>\n<title>Error</title>\n</head>\n<body>\n<h1>Cannot read directory</h1>\n</body>\n</html>\n".to_string(), 0);
         }
     };
 
-    let mut entries: Vec<(String, bool, u64, SystemTime)> = dir_entries
-        .into_iter()
-        .map(|entry| {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            let modified = entry
-                .metadata()
-                .and_then(|m| m.modified())
-                .unwrap_or(UNIX_EPOCH);
-            (name, is_dir, size, modified)
-        })
-        .collect();
+    let mut entries: Vec<(String, bool, u64, SystemTime)> = Vec::new();
+    loop {
+        let entry = match read_dir.next_entry().await {
+            Ok(Some(e)) => e,
+            Ok(None) => break,
+            Err(_) => continue,
+        };
+        let name = entry.file_name().to_string_lossy().to_string();
+        let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
+        let metadata = entry.metadata().await.ok();
+        let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let modified = metadata
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .unwrap_or(UNIX_EPOCH);
+        entries.push((name, is_dir, size, modified));
+    }
 
     entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
@@ -197,14 +200,14 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    #[test]
-    fn test_generate_dir_listing_structure() {
+    #[tokio::test]
+    async fn test_generate_dir_listing_structure() {
         let dir = tempfile::TempDir::new().expect("failed to create temp dir");
         let mut f = std::fs::File::create(dir.path().join("hello.txt")).unwrap();
         f.write_all(b"hello").unwrap();
         std::fs::create_dir(dir.path().join("subdir")).unwrap();
 
-        let (html, count) = generate_dir_listing(dir.path(), "/");
+        let (html, count) = generate_dir_listing(dir.path(), "/").await;
 
         assert!(html.contains("<!DOCTYPE html>"));
         assert!(html.contains("<title>Index of /</title>"));
@@ -215,13 +218,13 @@ mod tests {
         assert_eq!(count, 2);
     }
 
-    #[test]
-    fn test_generate_dir_listing_subdir_has_parent_link() {
+    #[tokio::test]
+    async fn test_generate_dir_listing_subdir_has_parent_link() {
         let dir = tempfile::TempDir::new().expect("failed to create temp dir");
         let mut f = std::fs::File::create(dir.path().join("data.bin")).unwrap();
         f.write_all(b"bin").unwrap();
 
-        let (html, count) = generate_dir_listing(dir.path(), "/sub/");
+        let (html, count) = generate_dir_listing(dir.path(), "/sub/").await;
 
         assert!(html.contains("Index of /sub/"));
         assert!(html.contains("../"));
@@ -229,25 +232,25 @@ mod tests {
         assert_eq!(count, 1);
     }
 
-    #[test]
-    fn test_generate_dir_listing_empty_dir() {
+    #[tokio::test]
+    async fn test_generate_dir_listing_empty_dir() {
         let dir = tempfile::TempDir::new().expect("failed to create temp dir");
 
-        let (html, count) = generate_dir_listing(dir.path(), "/empty/");
+        let (html, count) = generate_dir_listing(dir.path(), "/empty/").await;
 
         assert!(html.contains("Index of /empty/"));
         assert!(html.contains("../"));
         assert_eq!(count, 0);
     }
 
-    #[test]
-    fn test_generate_dir_listing_dirs_before_files() {
+    #[tokio::test]
+    async fn test_generate_dir_listing_dirs_before_files() {
         let dir = tempfile::TempDir::new().expect("failed to create temp dir");
         std::fs::create_dir(dir.path().join("zzz_dir")).unwrap();
         let mut f = std::fs::File::create(dir.path().join("aaa_file.txt")).unwrap();
         f.write_all(b"x").unwrap();
 
-        let (html, count) = generate_dir_listing(dir.path(), "/");
+        let (html, count) = generate_dir_listing(dir.path(), "/").await;
 
         assert_eq!(count, 2);
 

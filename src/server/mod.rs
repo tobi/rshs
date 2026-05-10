@@ -16,6 +16,7 @@ use crate::middleware;
 #[derive(Clone)]
 pub struct AppState {
     pub root_dir: Arc<PathBuf>,
+    pub root_canonical: Arc<PathBuf>,
     pub dav_handler: Arc<dav_server::DavHandler>,
     pub auth_config: Arc<AuthConfig>,
 }
@@ -60,10 +61,14 @@ async fn dispatch(
 pub fn app(config: &ServerConfig) -> Router {
     let auth_config = Arc::new(config.auth_config.clone());
     let root_dir = Arc::new(config.root_dir.clone());
+    let root_canonical = Arc::new(
+        std::fs::canonicalize(&config.root_dir).unwrap_or_else(|_| config.root_dir.clone()),
+    );
     let dav_handler = Arc::new(webdav::create_dav_handler(&config.root_dir));
 
     let state = Arc::new(AppState {
         root_dir,
+        root_canonical,
         dav_handler,
         auth_config: auth_config.clone(),
     });

@@ -19,7 +19,12 @@ rustls = "0.23"
 rustls-pemfile = "2.2"
 sha-crypt = { version = "0.6", features = ["getrandom"] }
 sha2 = "0.11"
-tokio = { version = "1.52", features = ["rt-multi-thread", "net", "macros"] }
+tokio = { version = "1.52", features = [
+    "macros",
+    "net",
+    "rt-multi-thread",
+    "fs",
+] }
 tokio-rustls = "0.26"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace"] }

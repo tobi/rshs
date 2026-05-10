@@ -49,29 +49,36 @@ src/
 
 ### Dependencies
 
-| Crate                    | Features                     | Purpose                            |
-| ------------------------ | ---------------------------- | ---------------------------------- |
-| `axum` 0.8               | `http2`                      | HTTP server framework              |
-| `tokio` 1.52             | `rt-multi-thread,net,macros` | Async runtime                      |
-| `tower` 0.5              | —                            | Middleware traits (Layer, Service) |
-| `tower-http` 0.6         | `trace`                      | Request tracing middleware         |
-| `tokio-rustls` 0.26      | —                            | TLS acceptor for axum              |
-| `rustls` 0.23            | —                            | TLS protocol implementation        |
-| `rustls-pemfile` 2.2     | —                            | PEM certificate/key parsing        |
-| `sha2` 0.11              | —                            | Certificate fingerprint            |
-| `clap` 4.6               | `derive`, `env`              | CLI args + env var support         |
-| `dav-server` 0.11        | —                            | WebDAV protocol handling           |
-| `mime_guess` 2           | —                            | MIME type detection                |
-| `base64` 0.22            | —                            | Basic Auth header decoding         |
-| `sha-crypt` 0.6          | `getrandom`                  | SHA-512 crypt hash verification    |
-| `tracing` 0.1            | —                            | Structured logging facade          |
-| `tracing-subscriber` 0.3 | `env-filter`, `fmt`          | Log output + filter engine         |
-| `tracing-log` 0.2        | —                            | Bridge `log` → `tracing`           |
+| Crate                    | Features                        | Purpose                            |
+| ------------------------ | ------------------------------- | ---------------------------------- |
+| `axum` 0.8               | `http2`                         | HTTP server framework              |
+| `tokio` 1.52             | `rt-multi-thread,net,macros,fs` | Async runtime                      |
+| `tower` 0.5              | —                               | Middleware traits (Layer, Service) |
+| `tower-http` 0.6         | `trace`                         | Request tracing middleware         |
+| `tokio-rustls` 0.26      | —                               | TLS acceptor for axum              |
+| `rustls` 0.23            | —                               | TLS protocol implementation        |
+| `rustls-pemfile` 2.2     | —                               | PEM certificate/key parsing        |
+| `sha2` 0.11              | —                               | Certificate fingerprint            |
+| `clap` 4.6               | `derive`, `env`                 | CLI args + env var support         |
+| `dav-server` 0.11        | —                               | WebDAV protocol handling           |
+| `mime_guess` 2           | —                               | MIME type detection                |
+| `base64` 0.22            | —                               | Basic Auth header decoding         |
+| `sha-crypt` 0.6          | `getrandom`                     | SHA-512 crypt hash verification    |
+| `tracing` 0.1            | —                               | Structured logging facade          |
+| `tracing-subscriber` 0.3 | `env-filter`, `fmt`             | Log output + filter engine         |
+| `tracing-log` 0.2        | —                               | Bridge `log` → `tracing`           |
 
 ### Key Patterns
 
 - **App state**: Shared state via `AppState` struct wrapped in `Arc`, accessed by handlers
-  via `axum::extract::State<Arc<AppState>>`. Router built with `.with_state(Arc::new(state))`.
+  via `axum::extract::State<Arc<AppState>>`. Fields: `root_dir` (serve root path),
+  `root_canonical` (cached canonical form for path traversal checks), `dav_handler`
+  (WebDAV handler), `auth_config`. Router built with `.with_state(Arc::new(state))`.
+- **File I/O**: Hot-path file operations (GET/HEAD serving, directory listing) use
+  `tokio::fs` to offload blocking syscalls from async worker threads onto the blocking
+  thread pool. Startup-only I/O (TLS cert/key loading, shadow file reads) uses
+  synchronous `std::fs` since it runs before the server accepts connections and does
+  not compete for worker threads.
 - **Middleware via tower Layer**: Middleware is applied with `Router::layer(L)`. Tower Layers
   compose from inside out — the last `.layer()` in the chain runs first.
 - **Middleware order**: `HealthCheck` (outermost) → `Auth` → `TraceLayer` → handler.

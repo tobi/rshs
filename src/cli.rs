@@ -1,6 +1,7 @@
+use clap::Parser;
+
 use crate::auth::AuthConfig;
 use crate::server::tls::TlsConfig;
-use clap::Parser;
 
 use crate::DEFAULT_LOG_LEVEL;
 

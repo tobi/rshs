@@ -1,9 +1,9 @@
-use sha_crypt::{PasswordHasher, PasswordVerifier, ShaCrypt};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+
+use sha_crypt::{PasswordHasher, PasswordVerifier, ShaCrypt};
 
 use crate::cli::Cli;
 
@@ -57,13 +57,11 @@ impl AuthConfig {
     }
 
     pub fn load_from_shadow_file(path: &Path) -> Result<Self, String> {
-        let file = fs::File::open(path)
-            .map_err(|e| format!("cannot open shadow file {}: {e}", path.display()))?;
-        let reader = BufReader::new(file);
+        let content = fs::read_to_string(path)
+            .map_err(|e| format!("cannot read shadow file {}: {e}", path.display()))?;
         let mut config = AuthConfig::new();
 
-        for (line_no, line) in reader.lines().enumerate() {
-            let line = line.map_err(|e| format!("cannot read shadow file: {e}"))?;
+        for (line_no, line) in content.lines().enumerate() {
             let line = line.trim();
 
             if line.is_empty() {
