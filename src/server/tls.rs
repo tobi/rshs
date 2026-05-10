@@ -1,8 +1,8 @@
-use std::io::BufReader;
+use std::fs::File;
+use std::io::{self, BufReader};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{fs::File, io};
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use sha2::{Digest, Sha256};
