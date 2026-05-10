@@ -1,25 +1,40 @@
 mod common;
 
-use actix_web::{App, http, test, web};
-use common::temp_dir_with_files;
-use rshs;
-use std::path::PathBuf;
+use std::sync::Arc;
 
-#[actix_web::test]
+use axum::{Router, body::Body, extract::Request};
+use common::temp_dir_with_files;
+use tower::ServiceExt;
+
+use rshs::{self, AppState};
+
+fn make_app(dir: &tempfile::TempDir) -> Router {
+    let handler = rshs::handlers::webdav::create_dav_handler(dir.path());
+    Router::new()
+        .fallback(rshs::handlers::file::handle)
+        .with_state(Arc::new(AppState {
+            root_dir: Arc::new(dir.path().to_path_buf()),
+            dav_handler: Arc::new(handler),
+            auth_config: Arc::new(rshs::AuthConfig::new()),
+        }))
+}
+
+#[tokio::test]
 async fn test_http_get_dir_root() {
     let dir = temp_dir_with_files();
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(PathBuf::from(dir.path())))
-            .default_service(web::to(rshs::http_server::handle)),
-    )
-    .await;
+    let app = make_app(&dir);
 
-    let req = test::TestRequest::get().uri("/").to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), http::StatusCode::OK);
+    let req = Request::builder()
+        .method(axum::http::Method::GET)
+        .uri("/")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
 
-    let body = test::read_body(resp).await;
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str = String::from_utf8(body.to_vec()).unwrap();
     assert!(body_str.contains("Index of /"));
     assert!(body_str.contains("hello.txt"));
@@ -27,18 +42,17 @@ async fn test_http_get_dir_root() {
     assert!(!body_str.contains("../"));
 }
 
-#[actix_web::test]
+#[tokio::test]
 async fn test_http_get_file_content() {
     let dir = temp_dir_with_files();
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(PathBuf::from(dir.path())))
-            .default_service(web::to(rshs::http_server::handle)),
-    )
-    .await;
+    let app = make_app(&dir);
 
-    let req = test::TestRequest::get().uri("/hello.txt").to_request();
-    let resp = test::call_service(&app, req).await;
+    let req = Request::builder()
+        .method(axum::http::Method::GET)
+        .uri("/hello.txt")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
     assert!(resp.status().is_success());
     assert!(
         resp.headers()
@@ -49,168 +63,162 @@ async fn test_http_get_file_content() {
             .contains("text/plain")
     );
 
-    let body = test::read_body(resp).await;
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     assert_eq!(body.as_ref(), b"Hello, World!");
 }
 
-#[actix_web::test]
+#[tokio::test]
 async fn test_http_head_file() {
     let dir = temp_dir_with_files();
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(PathBuf::from(dir.path())))
-            .default_service(web::to(rshs::http_server::handle)),
-    )
-    .await;
+    let app = make_app(&dir);
 
-    let req = test::TestRequest::default()
-        .method(http::Method::HEAD)
+    let req = Request::builder()
+        .method(axum::http::Method::HEAD)
         .uri("/hello.txt")
-        .to_request();
-    let resp = test::call_service(&app, req).await;
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
     assert!(resp.status().is_success());
     assert!(resp.headers().contains_key("content-length"));
 
-    let body = test::read_body(resp).await;
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     assert!(body.is_empty());
 }
 
-#[actix_web::test]
+#[tokio::test]
 async fn test_http_head_dir() {
     let dir = temp_dir_with_files();
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(PathBuf::from(dir.path())))
-            .default_service(web::to(rshs::http_server::handle)),
-    )
-    .await;
+    let app = make_app(&dir);
 
-    let req = test::TestRequest::default()
-        .method(http::Method::HEAD)
+    let req = Request::builder()
+        .method(axum::http::Method::HEAD)
         .uri("/")
-        .to_request();
-    let resp = test::call_service(&app, req).await;
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
     assert!(resp.status().is_success());
     assert!(resp.headers().contains_key("content-length"));
 
-    let body = test::read_body(resp).await;
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     assert!(body.is_empty());
 }
 
-#[actix_web::test]
+#[tokio::test]
 async fn test_http_not_found() {
     let dir = temp_dir_with_files();
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(PathBuf::from(dir.path())))
-            .default_service(web::to(rshs::http_server::handle)),
-    )
-    .await;
+    let app = make_app(&dir);
 
-    let req = test::TestRequest::get()
+    let req = Request::builder()
+        .method(axum::http::Method::GET)
         .uri("/nonexistent.txt")
-        .to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
 }
 
-#[actix_web::test]
+#[tokio::test]
 async fn test_http_method_not_allowed() {
     let dir = temp_dir_with_files();
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(PathBuf::from(dir.path())))
-            .default_service(web::to(rshs::http_server::handle)),
-    )
-    .await;
+    let app = make_app(&dir);
 
-    let req = test::TestRequest::post().uri("/hello.txt").to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), http::StatusCode::METHOD_NOT_ALLOWED);
-
-    let req = test::TestRequest::default()
-        .method(http::Method::PUT)
+    let req = Request::builder()
+        .method(axum::http::Method::POST)
         .uri("/hello.txt")
-        .to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), http::StatusCode::METHOD_NOT_ALLOWED);
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::METHOD_NOT_ALLOWED);
 
-    let req = test::TestRequest::default()
-        .method(http::Method::DELETE)
+    let req = Request::builder()
+        .method(axum::http::Method::PUT)
         .uri("/hello.txt")
-        .to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), http::StatusCode::METHOD_NOT_ALLOWED);
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::METHOD_NOT_ALLOWED);
+
+    let req = Request::builder()
+        .method(axum::http::Method::DELETE)
+        .uri("/hello.txt")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::METHOD_NOT_ALLOWED);
 }
 
-#[actix_web::test]
+#[tokio::test]
 async fn test_http_nested_file() {
     let dir = temp_dir_with_files();
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(PathBuf::from(dir.path())))
-            .default_service(web::to(rshs::http_server::handle)),
-    )
-    .await;
+    let app = make_app(&dir);
 
-    let req = test::TestRequest::get()
+    let req = Request::builder()
+        .method(axum::http::Method::GET)
         .uri("/subdir/nested.txt")
-        .to_request();
-    let resp = test::call_service(&app, req).await;
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
     assert!(resp.status().is_success());
 
-    let body = test::read_body(resp).await;
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     assert_eq!(body.as_ref(), b"Nested file");
 }
 
-#[actix_web::test]
+#[tokio::test]
 async fn test_http_subdir_listing() {
     let dir = temp_dir_with_files();
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(PathBuf::from(dir.path())))
-            .default_service(web::to(rshs::http_server::handle)),
-    )
-    .await;
+    let app = make_app(&dir);
 
-    let req = test::TestRequest::get().uri("/subdir/").to_request();
-    let resp = test::call_service(&app, req).await;
+    let req = Request::builder()
+        .method(axum::http::Method::GET)
+        .uri("/subdir/")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
     assert!(resp.status().is_success());
 
-    let body = test::read_body(resp).await;
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str = String::from_utf8(body.to_vec()).unwrap();
     assert!(body_str.contains("Index of /subdir/"));
     assert!(body_str.contains("nested.txt"));
     assert!(body_str.contains("../"));
 }
 
-#[actix_web::test]
+#[tokio::test]
 async fn test_http_path_traversal_blocked() {
     let dir = temp_dir_with_files();
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(PathBuf::from(dir.path())))
-            .default_service(web::to(rshs::http_server::handle)),
-    )
-    .await;
+    let app = make_app(&dir);
 
-    let req = test::TestRequest::get().uri("/../outside.txt").to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
+    let req = Request::builder()
+        .method(axum::http::Method::GET)
+        .uri("/../outside.txt")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
 }
 
-#[actix_web::test]
+#[tokio::test]
 async fn test_http_mime_type_guess() {
     let dir = temp_dir_with_files();
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(PathBuf::from(dir.path())))
-            .default_service(web::to(rshs::http_server::handle)),
-    )
-    .await;
+    let app = make_app(&dir);
 
-    let req = test::TestRequest::get().uri("/hello.txt").to_request();
-    let resp = test::call_service(&app, req).await;
+    let req = Request::builder()
+        .method(axum::http::Method::GET)
+        .uri("/hello.txt")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
     assert!(
         resp.headers()
             .get("content-type")
@@ -221,19 +229,20 @@ async fn test_http_mime_type_guess() {
     );
 }
 
-#[actix_web::test]
+#[tokio::test]
 async fn test_http_dir_listing_sizes() {
     let dir = temp_dir_with_files();
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(PathBuf::from(dir.path())))
-            .default_service(web::to(rshs::http_server::handle)),
-    )
-    .await;
+    let app = make_app(&dir);
 
-    let req = test::TestRequest::get().uri("/").to_request();
-    let resp = test::call_service(&app, req).await;
-    let body = test::read_body(resp).await;
+    let req = Request::builder()
+        .method(axum::http::Method::GET)
+        .uri("/")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let body_str = String::from_utf8(body.to_vec()).unwrap();
 
     assert!(

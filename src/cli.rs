@@ -1,4 +1,4 @@
-use crate::server::auth_basic::AuthConfig;
+use crate::auth::AuthConfig;
 use crate::server::tls::TlsConfig;
 use clap::Parser;
 

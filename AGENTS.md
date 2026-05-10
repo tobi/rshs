@@ -19,40 +19,74 @@ cargo clippy
 
 ### Module Map
 
-| Module                      | Path                              | Purpose                                                      |
-| --------------------------- | --------------------------------- | ------------------------------------------------------------ |
-| `cli`                       | `src/cli/mod.rs`                  | CLI argument parsing (clap derive)                           |
-| `middleware`                | `src/middleware/mod.rs`           | Middleware modules                                           |
-| `middleware::health_check`  | `src/middleware/health_check.rs`  | Header-based health check (x-health-check: true)             |
-| `server`                    | `src/server/mod.rs`               | Server orchestration, `ServerConfig`, conditional middleware |
-| `server::auth_basic`        | `src/server/auth_basic.rs`        | Basic Auth credential store and validator                    |
-| `server::webdav`            | `src/server/webdav.rs`            | WebDAV handler (local FS + fake locks)                       |
-| `server::http_server`       | `src/server/http_server.rs`       | A read-only file server accessible via a browser             |
-| `server::shadow`            | `src/server/shadow.rs`            | Shadow file management (create, load, merge, write)          |
+```
+src/
+  main.rs                       # Entry point: CLI parse, logging init, start server
+  lib.rs                        # Module declarations, public re-exports
+
+  cli.rs                        # clap-derived CLI args (Cli, ShadowFileArg)
+
+  auth.rs                       # AuthConfig, Credential, shadow file mgmt, auth middleware
+
+  handlers/
+    mod.rs
+    file.rs                     # GET/HEAD handler (directory listing + file serving)
+    webdav.rs                   # WebDAV protocol handler
+
+  middleware/
+    mod.rs
+    health.rs                   # Health check middleware (tower Layer)
+    auth.rs                     # Basic Auth middleware (auto-skips when no users configured)
+
+  server/
+    mod.rs                      # AppState, ServerConfig, Router construction, serve
+    tls.rs                      # TlsConfig (PEM + fingerprint + ALPN), TlsListener
+
+  utils/
+    mod.rs
+    time.rs                     # Calendar formatting for directory listings
+```
 
 ### Dependencies
 
-| Crate                    | Features         | Purpose                         |
-| ------------------------ | ---------------- | ------------------------------- |
-| `actix-web` 4.13         | —                | HTTP server framework           |
-| `actix-web-httpauth` 0.8 | —                | Basic Auth middleware           |
-| `clap` 4.6               | `derive`, `env`  | CLI args + env var support      |
-| `tokio` 1.52             | `full`           | Async runtime                   |
-| `dav-server` 0.11        | `actix-compat`   | WebDAV protocol handling        |
-| `mime_guess` 2           | —                | MIME type detection             |
-| `tracing` 0.1            | —                | Structured logging facade       |
-| `tracing-subscriber` 0.3 | `env-filter,fmt` | Log output + filter engine      |
-| `tracing-actix-web` 0.7  | —                | Request-scoped spans            |
-| `tracing-log` 0.2        | —                | Bridge `log`→`tracing`          |
-| `sha-crypt` 0.4          | —                | SHA-512 crypt hash verification |
+| Crate                    | Features                     | Purpose                            |
+| ------------------------ | ---------------------------- | ---------------------------------- |
+| `axum` 0.8               | `http2`                      | HTTP server framework              |
+| `tokio` 1.52             | `rt-multi-thread,net,macros` | Async runtime                      |
+| `tower` 0.5              | —                            | Middleware traits (Layer, Service) |
+| `tower-http` 0.6         | `trace`                      | Request tracing middleware         |
+| `tokio-rustls` 0.26      | —                            | TLS acceptor for axum              |
+| `rustls` 0.23            | —                            | TLS protocol implementation        |
+| `rustls-pemfile` 2.2     | —                            | PEM certificate/key parsing        |
+| `sha2` 0.11              | —                            | Certificate fingerprint            |
+| `clap` 4.6               | `derive`, `env`              | CLI args + env var support         |
+| `dav-server` 0.11        | —                            | WebDAV protocol handling           |
+| `mime_guess` 2           | —                            | MIME type detection                |
+| `base64` 0.22            | —                            | Basic Auth header decoding         |
+| `sha-crypt` 0.6          | `getrandom`                  | SHA-512 crypt hash verification    |
+| `tracing` 0.1            | —                            | Structured logging facade          |
+| `tracing-subscriber` 0.3 | `env-filter`, `fmt`          | Log output + filter engine         |
+| `tracing-log` 0.2        | —                            | Bridge `log` → `tracing`           |
 
 ### Key Patterns
 
-- **Clone-before-move**: Clone values before `move ||` closures to capture owned data
-- **Conditional middleware**: In actix-web, `App::wrap()` changes the concrete `ServiceFactory` type, so conditional middleware requires separate `HttpServer::new()` paths in `if`/`else` branches — do NOT reassign `App` to the same variable
-- **App data**: Shared state (`DavHandler`, `AuthConfig`) passed via `web::Data<T>`
-- **Auth**: `AuthConfig` holds `HashMap<String, Credential>`. When users are configured, Basic Auth middleware is applied globally. When empty, the server runs without authentication
-- **Shadow file**: Persistent credential store (`username:$hash$...` format). CLI credentials (`--user`) can be merged in and optionally written back to disk
+- **App state**: Shared state via `AppState` struct wrapped in `Arc`, accessed by handlers
+  via `axum::extract::State<Arc<AppState>>`. Router built with `.with_state(Arc::new(state))`.
+- **Middleware via tower Layer**: Middleware is applied with `Router::layer(L)`. Tower Layers
+  compose from inside out — the last `.layer()` in the chain runs first.
+- **Middleware order**: `HealthCheck` (outermost) → `Auth` → `TraceLayer` → handler.
+  HealthCheck intercepts `x-health-check: true` before auth. Auth middleware auto-skips when
+  no users are configured (`auth_config.is_empty()`).
+- **Single catch-all handler**: `.fallback(any(dispatch))` routes all requests through a single
+  `dispatch` function that branches by HTTP method: `GET`/`HEAD` → `handlers::file::handle`,
+  everything else → `handlers::webdav::dav_route`.
+- **Auth**: `AuthConfig` holds `HashMap<String, Credential>`. Auth middleware is always present
+  in the chain but becomes a no-op when `is_empty()`. 401 responses include
+  `WWW-Authenticate: Basic realm="rshs"` for browser password dialog support.
+- **Shadow file**: Persistent credential store (`username:$hash$...` format).
+  CLI credentials (`--user`) can be merged in and optionally written back to disk.
+- **TLS**: `TlsListener` implements `axum::serve::Listener` wrapping a `tokio-rustls` acceptor.
+  Both HTTP and HTTPS branches call `axum::serve(listener, router)` — fully symmetric.
 
 ## Conventions
 
@@ -93,6 +127,21 @@ RSHS_SHADOW_FILE=./shadow:ro rshs ./docs
 - `-W` / `--shadow-write` writes CLI credentials into the shadow file after merge
 - Shadow files store passwords hashed with SHA-512 crypt (`$6$...`)
 
+## TLS
+
+TLS/HTTPS is enabled by providing both a certificate and private key file in PEM format:
+
+```sh
+rshs --tls-cert cert.pem --tls-key key.pem ./docs
+RSHS_TLS_CERT=cert.pem RSHS_TLS_KEY=key.pem rshs ./docs
+```
+
+- Default port switches from 8080 to 8443 when TLS is enabled (unless `--port` is explicitly set)
+- Certificate SHA-256 fingerprint is logged at startup (colon-separated uppercase hex)
+- HTTP/2 negotiation enabled via ALPN (`h2` + `http/1.1`)
+- PEM loading failures are logged at `error` level before exiting
+- TLS is _not_ auto-detected — both cert and key must be explicitly provided
+
 ## Modes
 
 The server always runs in HTTP + WebDAV hybrid mode:
@@ -117,14 +166,14 @@ curl -H "x-health-check: true" http://localhost:8080/
 # → 200 OK, body: OK
 ```
 
-- The middleware uses `EitherBody<B>` (same pattern as `actix_cors`) to be body-type-agnostic
-- Placed as outermost `.wrap()` so it runs before `HttpAuthentication` and `TracingLogger`
+- The middleware uses `tower::Layer` pattern for body-type-agnostic interception
+- Placed as outermost `.layer()` so it runs before auth and tracing
 - Health check requests are logged at `debug` level: `tracing::debug!(%peer, "health check")`
 
 ## Logging
 
 Uses the `tracing` ecosystem (structured, span-based) with `tracing-subscriber` as the output backend.
-`tracing-log` bridges `log`-based dependency crates (`dav-server`, `actix-web`) into tracing.
+`tracing-log` bridges `log`-based dependency crates (`dav-server`) into tracing.
 
 Log level is determined by the following priority (highest first):
 
@@ -152,6 +201,8 @@ RSHS_LOG="warn,rshs=debug" rshs         # global warn, rshs debug
 | `RSHS_ROOT_DIR`    | Root directory (default: `.`)                     |
 | `RSHS_HOST`        | Bind address                                      |
 | `RSHS_PORT`        | Bind port                                         |
+| `RSHS_TLS_CERT`    | TLS certificate file path (PEM format)            |
+| `RSHS_TLS_KEY`     | TLS private key file path (PEM format)            |
 | `RSHS_USERS`       | Basic Auth credentials                            |
 | `RSHS_LOG`         | Logging level (e.g. `info`)                       |
 | `RSHS_LOG_STYLE`   | Log output style (e.g. `auto`, `always`, `never`) |
