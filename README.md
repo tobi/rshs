@@ -9,6 +9,7 @@ A lightweight file server with WebDAV support.
 - **WebDAV client**: mount as a remote drive (Finder, Explorer, `davfs`, etc.)
 - **Auth**: optional HTTP Basic Auth for access control
 - **TLS/HTTPS**: built-in support for secure connections with custom certs
+- **HTTP/2**: automatic HTTP/2 support when using TLS (ALPN negotiation)
 
 ## Installation
 
