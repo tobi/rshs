@@ -7,9 +7,11 @@ A lightweight file server with WebDAV support.
 
 - **Browser**: open directories as HTML pages, browse and view files
 - **WebDAV client**: mount as a remote drive (Finder, Explorer, `davfs`, etc.)
+- **WebDAV locks**: in-memory lock support for concurrent access (WebDAV class 2)
 - **Auth**: optional HTTP Basic Auth for access control
 - **TLS/HTTPS**: built-in support for secure connections with custom certs
 - **HTTP/2**: automatic HTTP/2 support when using TLS (ALPN negotiation)
+- **WebDAV conformance**: 95.7% on the litmus test suite ([report][litmus-report])
 
 ## Installation
 
@@ -48,17 +50,19 @@ Map Network Drive → `http://localhost:8080`
 
 ## Documentation
 
-| Document                         | Description                         |
-| -------------------------------- | ----------------------------------- |
-| [Usage Guide][usage-guide]       | Full usage, auth, shadow files, CLI |
-| [Docker Compose][docker-compose] | Docker Compose deployment           |
-| [Podman Quadlet][podman-quadlet] | Podman Quadlet deployment           |
-| [Kubernetes][kubernetes]         | K8s deployment, PVC, Ingress        |
+| Document                            | Description                         |
+| ----------------------------------- | ----------------------------------- |
+| [Usage Guide][usage-guide]          | Full usage, auth, shadow files, CLI |
+| [Docker Compose][docker-compose]    | Docker Compose deployment           |
+| [Podman Quadlet][podman-quadlet]    | Podman Quadlet deployment           |
+| [Kubernetes][kubernetes]            | K8s deployment, PVC, Ingress        |
+| [Litmus Test Report][litmus-report] | WebDAV conformance test results     |
 
 [usage-guide]: ./docs/usage.md
 [docker-compose]: ./docs/deploy-docker-compose.md
 [podman-quadlet]: ./docs/deploy-podman-quadlet.md
 [kubernetes]: ./docs/deploy-k8s.md
+[litmus-report]: ./docs/litmus-test-report.md
 
 ## Environment Variables
 

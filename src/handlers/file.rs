@@ -7,6 +7,7 @@ use axum::{
     http::{Method, StatusCode},
     response::{IntoResponse, Response},
 };
+use percent_encoding::percent_decode_str;
 
 use crate::server::AppState;
 use crate::utils::time::format_modified;
@@ -14,8 +15,8 @@ use crate::utils::time::format_modified;
 pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
-    let rel_path = request_path.trim_start_matches('/');
-    let fs_path = state.root_dir.join(rel_path);
+    let decoded = percent_decode_str(&request_path).decode_utf8_lossy();
+    let fs_path = state.root_dir.join(decoded.trim_start_matches('/'));
 
     tracing::debug!(method = %req.method(), path = %request_path, "incoming request");
 
@@ -28,7 +29,7 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Requ
     };
 
     let root_canonical = &state.root_canonical;
-    if !fs_path.starts_with(root_canonical.as_ref()) {
+    if !fs_path.starts_with(root_canonical.as_path()) {
         tracing::warn!(
             method = %req.method(),
             path = %request_path,
