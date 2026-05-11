@@ -15,6 +15,7 @@ base64 = "0.22"
 clap = { version = "4.6", features = ["derive", "env"] }
 dav-server = "0.11"
 mime_guess = "2.0"
+percent-encoding = "2.3"
 rustls = "0.23"
 rustls-pemfile = "2.2"
 sha-crypt = { version = "0.6", features = ["getrandom"] }

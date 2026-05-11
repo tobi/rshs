@@ -1254,6 +1254,7 @@ dependencies = [
  "clap",
  "dav-server",
  "mime_guess",
+ "percent-encoding",
  "rustls",
  "rustls-pemfile",
  "sha-crypt",
