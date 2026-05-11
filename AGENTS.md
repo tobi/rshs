@@ -31,7 +31,7 @@ src/
   handlers/
     mod.rs
     file.rs                     # GET/HEAD handler (directory listing + file serving)
-    webdav.rs                   # WebDAV protocol handler
+    webdav.rs                   # WebDAV protocol handler (MemLs lock system)
 
   middleware/
     mod.rs
@@ -62,6 +62,7 @@ src/
 | `clap` 4.6               | `derive`, `env`                 | CLI args + env var support         |
 | `dav-server` 0.11        | —                               | WebDAV protocol handling           |
 | `mime_guess` 2           | —                               | MIME type detection                |
+| `percent-encoding` 2     | —                               | URI percent-encode/decode          |
 | `base64` 0.22            | —                               | Basic Auth header decoding         |
 | `sha-crypt` 0.6          | `getrandom`                     | SHA-512 crypt hash verification    |
 | `tracing` 0.1            | —                               | Structured logging facade          |
@@ -87,6 +88,12 @@ src/
 - **Single catch-all handler**: `.fallback(any(dispatch))` routes all requests through a single
   `dispatch` function that branches by HTTP method: `GET`/`HEAD` → `handlers::file::handle`,
   everything else → `handlers::webdav::dav_route`.
+- **URI percent-decoding**: `file::handle` percent-decodes the request URI path via
+  `percent_encoding::percent_decode_str` before filesystem access. This ensures GET/HEAD
+  paths match those created by WebDAV operations (which decode internally).
+- **Lock system**: `memls::MemLs` provides in-memory lock support for the WebDAV handler,
+  enabling proper lock enforcement (token validation, owner checks). Locks are ephemeral
+  (lost on restart) but sufficient for standard WebDAV client compatibility.
 - **Auth**: `AuthConfig` holds `HashMap<String, Credential>`. Auth middleware is always present
   in the chain but becomes a no-op when `is_empty()`. 401 responses include
   `WWW-Authenticate: Basic realm="rshs"` for browser password dialog support.
@@ -108,6 +115,8 @@ src/
 - External crates in tests reference via the `rshs` crate (not by relative module paths)
 - Use `#[cfg(test)]` for test-only code in the library crate
 - Add or update tests for the code you change, even if nobody asked
+- WebDAV conformance is verified with [litmus](http://www.webdav.org/neon/litmus/); results
+  are documented in [`docs/litmus-test-report.md`](docs/litmus-test-report.md)
 
 ## Authentication
 

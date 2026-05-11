@@ -106,6 +106,19 @@ rshs --tls-cert cert.pem --tls-key key.pem --port 443 ./docs
 | Linux davfs2     | `mount.davfs http://localhost:8080 /mnt`                                      |
 | curl             | `curl http://localhost:8080` (GET) / `curl -X PROPFIND http://localhost:8080` |
 
+## WebDAV Features
+
+rshs supports WebDAV Class 2 with in-memory locking:
+
+- **Lock/Unlock**: LOCK and UNLOCK with token validation
+- **Lock enforcement**: Modification operations (PUT, DELETE, etc.) are rejected if locked by another principal
+- **Lock discovery**: PROPFIND with `lockdiscovery` property
+- **Conditional requests**: `If` header enforcement for lock tokens
+- **Copy/Move**: COPY and MOVE with proper destination handling
+
+Locks are ephemeral (lost on server restart) and stored in memory. Full litmus conformance
+results are available in the [Litmus Test Report](./litmus-test-report.md).
+
 ## Health Check
 
 rshs provides a header-based health check endpoint that avoids path conflicts
