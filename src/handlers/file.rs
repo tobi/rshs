@@ -28,7 +28,7 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Requ
     };
 
     let root_canonical = &state.root_canonical;
-    if !fs_path.starts_with(root_canonical.as_ref()) {
+    if !fs_path.starts_with(root_canonical.as_path()) {
         tracing::warn!(
             method = %req.method(),
             path = %request_path,

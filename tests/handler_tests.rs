@@ -10,13 +10,13 @@ use rshs::{self, AppState};
 
 fn make_app(dir: &tempfile::TempDir) -> Router {
     let handler = rshs::handlers::webdav::create_dav_handler(dir.path());
-    let path = Arc::new(dir.path().to_path_buf());
+    let path = dir.path().to_path_buf();
     Router::new()
         .fallback(rshs::handlers::webdav::dav_route)
         .with_state(Arc::new(AppState {
             root_dir: path.clone(),
-            root_canonical: path.canonicalize().map(Arc::new).unwrap_or_else(|_| path),
-            dav_handler: Arc::new(handler),
+            root_canonical: path.canonicalize().unwrap_or_else(|_| path),
+            dav_handler: handler,
             auth_config: Arc::new(rshs::AuthConfig::new()),
         }))
 }

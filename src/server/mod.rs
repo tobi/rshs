@@ -1,12 +1,14 @@
 pub mod tls;
 
-use std::io;
+use std::fs;
+use std::io::{self, Error, ErrorKind};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::middleware as axum_mw;
 use axum::{Router, extract::State, http::Method, routing::any};
+use dav_server::DavHandler;
 use tower_http::trace::TraceLayer;
 
 use crate::auth::AuthConfig;
@@ -15,9 +17,9 @@ use crate::middleware;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub root_dir: Arc<PathBuf>,
-    pub root_canonical: Arc<PathBuf>,
-    pub dav_handler: Arc<dav_server::DavHandler>,
+    pub root_dir: PathBuf,
+    pub root_canonical: PathBuf,
+    pub dav_handler: DavHandler,
     pub auth_config: Arc<AuthConfig>,
 }
 
@@ -59,25 +61,19 @@ async fn dispatch(
 }
 
 pub fn app(config: &ServerConfig) -> Router {
-    let auth_config = Arc::new(config.auth_config.clone());
-    let root_dir = Arc::new(config.root_dir.clone());
-    let root_canonical = Arc::new(
-        std::fs::canonicalize(&config.root_dir).unwrap_or_else(|_| config.root_dir.clone()),
-    );
-    let dav_handler = Arc::new(webdav::create_dav_handler(&config.root_dir));
-
     let state = Arc::new(AppState {
-        root_dir,
-        root_canonical,
-        dav_handler,
-        auth_config: auth_config.clone(),
+        root_dir: config.root_dir.clone(),
+        root_canonical: fs::canonicalize(&config.root_dir)
+            .unwrap_or_else(|_| config.root_dir.clone()),
+        dav_handler: webdav::create_dav_handler(&config.root_dir),
+        auth_config: Arc::new(config.auth_config.clone()),
     });
 
     Router::new()
         .fallback(any(dispatch))
         .layer(TraceLayer::new_for_http())
         .layer(axum_mw::from_fn_with_state(
-            auth_config,
+            state.auth_config.clone(),
             middleware::auth::auth_middleware,
         ))
         .layer(middleware::health::HealthCheck)
@@ -87,7 +83,7 @@ pub fn app(config: &ServerConfig) -> Router {
 pub async fn start_server(config: ServerConfig) -> io::Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.host, config.port)
         .parse()
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
     let router = app(&config);
 
     match &config.tls_config {
@@ -99,16 +95,12 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
                 key = %tls_config.key_path,
                 "starting HTTPS server"
             );
-            axum::serve(listener, router)
-                .await
-                .map_err(io::Error::other)?;
+            axum::serve(listener, router).await.map_err(Error::other)?;
         }
         None => {
             let listener = tokio::net::TcpListener::bind(addr).await?;
             tracing::info!(addr = %addr, "starting HTTP server");
-            axum::serve(listener, router)
-                .await
-                .map_err(io::Error::other)?;
+            axum::serve(listener, router).await.map_err(Error::other)?;
         }
     }
 
