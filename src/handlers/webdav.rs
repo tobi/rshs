@@ -10,7 +10,7 @@ use crate::server::AppState;
 
 pub fn create_dav_handler(root_dir: &std::path::Path) -> DavHandler {
     DavHandler::builder()
-        .filesystem(LocalFs::new(root_dir, false, false, false))
+        .filesystem(LocalFs::new(root_dir, true, false, false))
         .locksystem(FakeLs::new())
         .build_handler()
 }
