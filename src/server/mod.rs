@@ -90,9 +90,7 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
         Some(tls_config) => {
             let listener = tls::TlsListener::bind(addr, tls_config.load()?).await?;
             tracing::info!(
-                addr = %addr,
-                cert = %tls_config.cert_path,
-                key = %tls_config.key_path,
+                addr = %addr, cert = %tls_config.cert_path, key = %tls_config.key_path,
                 "starting HTTPS server"
             );
             axum::serve(listener, router).await.map_err(Error::other)?;

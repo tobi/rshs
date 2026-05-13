@@ -8,6 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use percent_encoding::percent_decode_str;
+use tokio_util::io::ReaderStream;
 
 use crate::server::AppState;
 use crate::utils::time::format_modified;
@@ -18,93 +19,66 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Requ
     let decoded = percent_decode_str(&request_path).decode_utf8_lossy();
     let fs_path = state.root_dir.join(decoded.trim_start_matches('/'));
 
-    tracing::debug!(method = %req.method(), path = %request_path, "incoming request");
-
     let fs_path = match tokio::fs::canonicalize(&fs_path).await {
         Ok(p) => p,
         Err(_) => {
-            tracing::debug!(method = %req.method(), path = %request_path, status = 404, "path not found");
+            tracing::debug!("canonicalize failed");
             return StatusCode::NOT_FOUND.into_response();
         }
     };
 
     let root_canonical = &state.root_canonical;
     if !fs_path.starts_with(root_canonical.as_path()) {
-        tracing::warn!(
-            method = %req.method(),
-            path = %request_path,
-            status = 404,
-            "path traversal blocked",
-        );
+        tracing::warn!("path traversal blocked");
         return StatusCode::NOT_FOUND.into_response();
     }
 
     match *req.method() {
         Method::GET | Method::HEAD => {
-            if match tokio::fs::metadata(&fs_path).await {
-                Ok(m) => m.is_dir(),
-                Err(_) => false,
-            } {
-                let (html, entry_count) = generate_dir_listing(&fs_path, &request_path).await;
-                tracing::debug!(
-                    method = %req.method(),
-                    path = %request_path,
-                    status = 200,
-                    entry_count = entry_count,
-                    "directory listing"
-                );
-                let body_len = html.len();
-                let mut resp = Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "text/html; charset=utf-8");
-                if *req.method() == Method::HEAD {
-                    resp = resp.header("content-length", body_len.to_string());
-                    resp.body(Body::empty()).unwrap()
-                } else {
-                    resp.body(Body::from(html)).unwrap()
+            let meta = match tokio::fs::metadata(&fs_path).await {
+                Ok(m) => m,
+                Err(_) => {
+                    tracing::debug!("metadata failed");
+                    return StatusCode::NOT_FOUND.into_response();
                 }
+            };
+
+            if meta.is_dir() {
+                let (html, entry_count) = generate_dir_listing(&fs_path, &request_path).await;
+                tracing::debug!(entry_count = entry_count, "directory listing");
+                let resp = Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "text/html; charset=utf-8")
+                    .header("content-length", html.len());
+                if *req.method() == Method::HEAD {
+                    return resp.body(Body::empty()).unwrap();
+                }
+                resp.body(Body::from(html)).unwrap()
             } else {
-                match tokio::fs::read(&fs_path).await {
-                    Ok(data) => {
-                        let data_len = data.len();
-                        let mime = mime_guess::from_path(&fs_path).first_or_octet_stream();
-                        tracing::debug!(
-                            method = %req.method(),
-                            path = %request_path,
-                            status = 200,
-                            mime = %mime.essence_str(),
-                            size = data_len,
-                            "file served"
-                        );
-                        let mut resp = Response::builder()
-                            .status(StatusCode::OK)
-                            .header("content-type", mime.as_ref());
-                        if *req.method() == Method::HEAD {
-                            resp = resp.header("content-length", data_len.to_string());
-                            resp.body(Body::empty()).unwrap()
-                        } else {
-                            resp.body(Body::from(data)).unwrap()
-                        }
+                let file_size = meta.len();
+                let mime = mime_guess::from_path(&fs_path).first_or_octet_stream();
+                tracing::debug!(mime = %mime.essence_str(), size = file_size, "file served");
+                let resp = Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", mime.as_ref())
+                    .header("content-length", file_size);
+                if *req.method() == Method::HEAD {
+                    return resp.body(Body::empty()).unwrap();
+                }
+                match tokio::fs::File::open(&fs_path).await {
+                    Ok(file) => {
+                        let stream = ReaderStream::new(file);
+                        resp.body(Body::from_stream(stream)).unwrap()
                     }
-                    Err(_) => {
-                        tracing::error!(
-                            method = %req.method(),
-                            path = %request_path,
-                            status = 500,
-                            "failed to read file",
-                        );
+                    Err(e) => {
+                        tracing::error!(error = %e, "open failed");
                         StatusCode::INTERNAL_SERVER_ERROR.into_response()
                     }
                 }
             }
         }
         _ => {
-            tracing::debug!(
-                method = %req.method(),
-                path = %request_path,
-                status = 405,
-                "method not allowed",
-            );
+            tracing::debug!("method not allowed");
             StatusCode::METHOD_NOT_ALLOWED.into_response()
         }
     }
