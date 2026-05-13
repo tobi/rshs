@@ -8,6 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use percent_encoding::percent_decode_str;
+use tokio_util::io::ReaderStream;
 
 use crate::server::AppState;
 use crate::utils::time::format_modified;
@@ -64,34 +65,49 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Requ
                     resp.body(Body::from(html)).unwrap()
                 }
             } else {
-                match tokio::fs::read(&fs_path).await {
-                    Ok(data) => {
-                        let data_len = data.len();
+                match tokio::fs::File::open(&fs_path).await {
+                    Ok(file) => {
+                        let metadata = match file.metadata().await {
+                            Ok(m) => m,
+                            Err(e) => {
+                                tracing::error!(
+                                    method = %req.method(),
+                                    path = %request_path,
+                                    status = 500,
+                                    error = %e,
+                                    "failed to read file metadata",
+                                );
+                                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                            }
+                        };
+                        let file_size = metadata.len();
                         let mime = mime_guess::from_path(&fs_path).first_or_octet_stream();
                         tracing::debug!(
                             method = %req.method(),
                             path = %request_path,
                             status = 200,
                             mime = %mime.essence_str(),
-                            size = data_len,
+                            size = file_size,
                             "file served"
                         );
-                        let mut resp = Response::builder()
+                        let resp = Response::builder()
                             .status(StatusCode::OK)
-                            .header("content-type", mime.as_ref());
+                            .header("content-type", mime.as_ref())
+                            .header("content-length", file_size.to_string());
                         if *req.method() == Method::HEAD {
-                            resp = resp.header("content-length", data_len.to_string());
                             resp.body(Body::empty()).unwrap()
                         } else {
-                            resp.body(Body::from(data)).unwrap()
+                            let stream = ReaderStream::new(file);
+                            resp.body(Body::from_stream(stream)).unwrap()
                         }
                     }
-                    Err(_) => {
+                    Err(e) => {
                         tracing::error!(
                             method = %req.method(),
                             path = %request_path,
                             status = 500,
-                            "failed to read file",
+                            error = %e,
+                            "failed to open file",
                         );
                         StatusCode::INTERNAL_SERVER_ERROR.into_response()
                     }
