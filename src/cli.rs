@@ -17,8 +17,7 @@ pub struct ShadowFileArg {
 /// Simple HTTP/WebDAV Server
 #[derive(Parser)]
 #[command(
-    name = "rshs",
-    version = env!("CARGO_PKG_VERSION"),
+    name = "rshs", version = env!("CARGO_PKG_VERSION"),
     after_help = concat!(
         "Logging environment variables:\n",
         "  RSHS_LOG          Tracing filter (e.g. info, rshs=debug, rshs[status=500]=trace)\n",

@@ -78,9 +78,7 @@ impl AuthConfig {
 
                     if hash.is_empty() || !hash.starts_with('$') {
                         tracing::warn!(
-                            path = %path.display(),
-                            line = line_no + 1,
-                            "unsupported hash format, skipping"
+                            path = %path.display(), line = line_no + 1, "unsupported hash format, skipping"
                         );
                         continue;
                     }
@@ -92,9 +90,7 @@ impl AuthConfig {
                 }
                 _ => {
                     tracing::warn!(
-                        path = %path.display(),
-                        line = line_no + 1,
-                        "malformed entry, skipping"
+                        path = %path.display(), line = line_no + 1, "malformed entry, skipping"
                     );
                 }
             }
@@ -153,8 +149,7 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
 
     if cli.shadow_write && !shadow.writable {
         tracing::warn!(
-            path = %shadow.path,
-            "shadow file is read-only (:ro), ignoring --shadow-write"
+            path = %shadow.path, "shadow file is read-only (:ro), ignoring --shadow-write"
         );
     }
 
@@ -184,9 +179,7 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
         Ok(cfg) => {
             if cfg.user_count() > 0 {
                 tracing::info!(
-                    count = cfg.user_count(),
-                    path = %shadow.path,
-                    "loaded users from shadow file"
+                    count = cfg.user_count(), path = %shadow.path, "loaded users from shadow file"
                 );
             }
             cfg
@@ -204,16 +197,13 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
     if cli.shadow_write {
         if !is_path_writable(shadow_path) {
             tracing::warn!(
-                path = %shadow.path,
-                "shadow file is read-only (OS), ignoring --shadow-write"
+                path = %shadow.path, "shadow file is read-only (OS), ignoring --shadow-write"
             );
         } else {
             match auth_config.write_to_shadow_file(shadow_path, false) {
                 Ok(()) => {
                     tracing::info!(
-                        count = auth_config.user_count(),
-                        path = %shadow.path,
-                        "wrote users to shadow file"
+                        count = auth_config.user_count(), path = %shadow.path, "wrote users to shadow file"
                     );
                 }
                 Err(e) => {
@@ -223,8 +213,7 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
         }
     } else if shadow.writable && shadow_path.exists() && !is_path_writable(shadow_path) {
         tracing::warn!(
-            path = %shadow.path,
-            "shadow file is declared :rw but file is read-only at OS level"
+            path = %shadow.path, "shadow file is declared :rw but file is read-only at OS level"
         );
     }
 
