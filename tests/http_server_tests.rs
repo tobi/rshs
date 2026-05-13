@@ -15,7 +15,7 @@ fn make_app(dir: &tempfile::TempDir) -> Router {
         .fallback(rshs::handlers::file::handle)
         .with_state(Arc::new(AppState {
             root_dir: path.clone(),
-            root_canonical: path.canonicalize().unwrap_or_else(|_| path),
+            root_canonical: path.canonicalize().unwrap_or(path),
             dav_handler: handler,
             auth_config: Arc::new(rshs::AuthConfig::new()),
         }))

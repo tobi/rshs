@@ -16,7 +16,7 @@ fn make_app(dir: &tempfile::TempDir) -> Router {
         .layer(rshs::middleware::health::HealthCheck)
         .with_state(Arc::new(AppState {
             root_dir: path.clone(),
-            root_canonical: path.canonicalize().unwrap_or_else(|_| path),
+            root_canonical: path.canonicalize().unwrap_or(path),
             dav_handler: handler,
             auth_config: Arc::new(rshs::AuthConfig::new()),
         }))

@@ -116,8 +116,8 @@ fn test_cli_to_auth_config_skips_malformed() {
     let cli = Cli::try_parse_from(["rshs", "--user", "bob", "--user", "alice:pass", "/tmp/test"])
         .unwrap();
     let auth = cli.to_auth_config();
-    assert_eq!(auth.validate("alice", "pass"), true);
-    assert_eq!(auth.is_empty(), false);
+    assert!(auth.validate("alice", "pass"));
+    assert!(!auth.is_empty());
 }
 
 #[test]
