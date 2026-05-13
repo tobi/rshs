@@ -42,10 +42,15 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Requ
 
     match *req.method() {
         Method::GET | Method::HEAD => {
-            if match tokio::fs::metadata(&fs_path).await {
-                Ok(m) => m.is_dir(),
-                Err(_) => false,
-            } {
+            let meta = match tokio::fs::metadata(&fs_path).await {
+                Ok(m) => m,
+                Err(_) => {
+                    tracing::debug!(method = %req.method(), path = %request_path, status = 404, "path not found");
+                    return StatusCode::NOT_FOUND.into_response();
+                }
+            };
+
+            if meta.is_dir() {
                 let (html, entry_count) = generate_dir_listing(&fs_path, &request_path).await;
                 tracing::debug!(
                     method = %req.method(),
@@ -65,41 +70,27 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Requ
                     resp.body(Body::from(html)).unwrap()
                 }
             } else {
+                let file_size = meta.len();
+                let mime = mime_guess::from_path(&fs_path).first_or_octet_stream();
+                tracing::debug!(
+                    method = %req.method(),
+                    path = %request_path,
+                    status = 200,
+                    mime = %mime.essence_str(),
+                    size = file_size,
+                    "file served"
+                );
+                let resp = Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", mime.as_ref())
+                    .header("content-length", file_size.to_string());
+                if *req.method() == Method::HEAD {
+                    return resp.body(Body::empty()).unwrap();
+                }
                 match tokio::fs::File::open(&fs_path).await {
                     Ok(file) => {
-                        let metadata = match file.metadata().await {
-                            Ok(m) => m,
-                            Err(e) => {
-                                tracing::error!(
-                                    method = %req.method(),
-                                    path = %request_path,
-                                    status = 500,
-                                    error = %e,
-                                    "failed to read file metadata",
-                                );
-                                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-                            }
-                        };
-                        let file_size = metadata.len();
-                        let mime = mime_guess::from_path(&fs_path).first_or_octet_stream();
-                        tracing::debug!(
-                            method = %req.method(),
-                            path = %request_path,
-                            status = 200,
-                            mime = %mime.essence_str(),
-                            size = file_size,
-                            "file served"
-                        );
-                        let resp = Response::builder()
-                            .status(StatusCode::OK)
-                            .header("content-type", mime.as_ref())
-                            .header("content-length", file_size.to_string());
-                        if *req.method() == Method::HEAD {
-                            resp.body(Body::empty()).unwrap()
-                        } else {
-                            let stream = ReaderStream::new(file);
-                            resp.body(Body::from_stream(stream)).unwrap()
-                        }
+                        let stream = ReaderStream::new(file);
+                        resp.body(Body::from_stream(stream)).unwrap()
                     }
                     Err(e) => {
                         tracing::error!(
