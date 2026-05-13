@@ -59,16 +59,14 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Requ
                     entry_count = entry_count,
                     "directory listing"
                 );
-                let body_len = html.len();
-                let mut resp = Response::builder()
+                let resp = Response::builder()
                     .status(StatusCode::OK)
-                    .header("content-type", "text/html; charset=utf-8");
+                    .header("content-type", "text/html; charset=utf-8")
+                    .header("content-length", html.len());
                 if *req.method() == Method::HEAD {
-                    resp = resp.header("content-length", body_len.to_string());
-                    resp.body(Body::empty()).unwrap()
-                } else {
-                    resp.body(Body::from(html)).unwrap()
+                    return resp.body(Body::empty()).unwrap();
                 }
+                resp.body(Body::from(html)).unwrap()
             } else {
                 let file_size = meta.len();
                 let mime = mime_guess::from_path(&fs_path).first_or_octet_stream();
@@ -83,7 +81,7 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Requ
                 let resp = Response::builder()
                     .status(StatusCode::OK)
                     .header("content-type", mime.as_ref())
-                    .header("content-length", file_size.to_string());
+                    .header("content-length", file_size);
                 if *req.method() == Method::HEAD {
                     return resp.body(Body::empty()).unwrap();
                 }
