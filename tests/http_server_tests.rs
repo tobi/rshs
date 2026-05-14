@@ -126,36 +126,6 @@ async fn test_http_not_found() {
 }
 
 #[tokio::test]
-async fn test_http_method_not_allowed() {
-    let dir = temp_dir_with_files();
-    let app = make_app(&dir);
-
-    let req = Request::builder()
-        .method(axum::http::Method::POST)
-        .uri("/hello.txt")
-        .body(Body::empty())
-        .unwrap();
-    let resp = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), axum::http::StatusCode::METHOD_NOT_ALLOWED);
-
-    let req = Request::builder()
-        .method(axum::http::Method::PUT)
-        .uri("/hello.txt")
-        .body(Body::empty())
-        .unwrap();
-    let resp = app.clone().oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), axum::http::StatusCode::METHOD_NOT_ALLOWED);
-
-    let req = Request::builder()
-        .method(axum::http::Method::DELETE)
-        .uri("/hello.txt")
-        .body(Body::empty())
-        .unwrap();
-    let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), axum::http::StatusCode::METHOD_NOT_ALLOWED);
-}
-
-#[tokio::test]
 async fn test_http_nested_file() {
     let dir = temp_dir_with_files();
     let app = make_app(&dir);

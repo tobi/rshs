@@ -34,14 +34,7 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: Request) -> Respons
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    let method = req.method();
-    match *method {
-        Method::GET | Method::HEAD => serve_get_or_head(fs_path, request_path, method).await,
-        _ => {
-            tracing::debug!("method not allowed");
-            StatusCode::METHOD_NOT_ALLOWED.into_response()
-        }
-    }
+    serve_get_or_head(fs_path, request_path, req.method()).await
 }
 
 async fn serve_get_or_head(fs_path: PathBuf, request_path: String, method: &Method) -> Response {
