@@ -1,9 +1,10 @@
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{
     body::Body,
-    extract::State,
+    extract::{Request, State},
     http::{Method, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -13,7 +14,7 @@ use tokio_util::io::ReaderStream;
 use crate::server::AppState;
 use crate::utils::time::format_modified;
 
-pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Request) -> Response {
+pub async fn handle(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
     let decoded = percent_decode_str(&request_path).decode_utf8_lossy();
@@ -33,58 +34,54 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: axum::extract::Requ
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    match *req.method() {
-        Method::GET | Method::HEAD => {
-            let meta = match tokio::fs::metadata(&fs_path).await {
-                Ok(m) => m,
-                Err(_) => {
-                    tracing::debug!("metadata failed");
-                    return StatusCode::NOT_FOUND.into_response();
-                }
-            };
+    serve_get_or_head(fs_path, request_path, req.method()).await
+}
 
-            if meta.is_dir() {
-                let (html, entry_count) = generate_dir_listing(&fs_path, &request_path).await;
-                tracing::debug!(entry_count = entry_count, "directory listing");
-                let resp = Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "text/html; charset=utf-8")
-                    .header("content-length", html.len());
-                if *req.method() == Method::HEAD {
-                    return resp.body(Body::empty()).unwrap();
-                }
-                resp.body(Body::from(html)).unwrap()
-            } else {
-                let file_size = meta.len();
-                let mime = mime_guess::from_path(&fs_path).first_or_octet_stream();
-                tracing::debug!(mime = %mime.essence_str(), size = file_size, "file served");
-                let resp = Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", mime.as_ref())
-                    .header("content-length", file_size);
-                if *req.method() == Method::HEAD {
-                    return resp.body(Body::empty()).unwrap();
-                }
-                match tokio::fs::File::open(&fs_path).await {
-                    Ok(file) => {
-                        let stream = ReaderStream::new(file);
-                        resp.body(Body::from_stream(stream)).unwrap()
-                    }
-                    Err(e) => {
-                        tracing::error!(error = %e, "open failed");
-                        StatusCode::INTERNAL_SERVER_ERROR.into_response()
-                    }
-                }
-            }
+async fn serve_get_or_head(fs_path: PathBuf, request_path: String, method: &Method) -> Response {
+    let meta = match tokio::fs::metadata(&fs_path).await {
+        Ok(m) => m,
+        Err(_) => {
+            tracing::debug!("metadata failed");
+            return StatusCode::NOT_FOUND.into_response();
         }
-        _ => {
-            tracing::debug!("method not allowed");
-            StatusCode::METHOD_NOT_ALLOWED.into_response()
+    };
+
+    if meta.is_dir() {
+        let (html, entry_count) = generate_dir_listing(&fs_path, &request_path).await;
+        tracing::debug!(entry_count = entry_count, "directory listing");
+        let resp = Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/html; charset=utf-8")
+            .header("content-length", html.len());
+        if method == Method::HEAD {
+            return resp.body(Body::empty()).unwrap();
+        }
+        resp.body(Body::from(html)).unwrap()
+    } else {
+        let file_size = meta.len();
+        let mime = mime_guess::from_path(&fs_path).first_or_octet_stream();
+        tracing::debug!(mime = %mime.essence_str(), size = file_size, "file served");
+        let resp = Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", mime.as_ref())
+            .header("content-length", file_size);
+        if method == Method::HEAD {
+            return resp.body(Body::empty()).unwrap();
+        }
+        match tokio::fs::File::open(&fs_path).await {
+            Ok(file) => {
+                let stream = ReaderStream::new(file);
+                resp.body(Body::from_stream(stream)).unwrap()
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "open failed");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
         }
     }
 }
 
-async fn generate_dir_listing(dir_path: &std::path::Path, request_path: &str) -> (String, usize) {
+async fn generate_dir_listing(dir_path: &Path, request_path: &str) -> (String, usize) {
     let mut read_dir = match tokio::fs::read_dir(dir_path).await {
         Ok(rd) => rd,
         Err(_) => {
