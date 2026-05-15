@@ -28,15 +28,17 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: Request) -> Respons
 async fn serve_get_or_head(fs_path: PathBuf, request_path: String, method: &Method) -> Response {
     let meta = match tokio::fs::metadata(&fs_path).await {
         Ok(m) => m,
-        Err(_) => {
-            tracing::debug!("metadata failed");
+        Err(e) => {
+            tracing::debug!(error = %e, "metadata failed");
             return StatusCode::NOT_FOUND.into_response();
         }
     };
 
     if meta.is_dir() {
         let (html, entry_count) = generate_dir_listing(&fs_path, &request_path).await;
-        tracing::debug!(entry_count = entry_count, "directory listing");
+        tracing::debug!(
+            path = %fs_path.display(), entry_count = entry_count, "directory listing"
+        );
         let resp = Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "text/html; charset=utf-8")
@@ -48,7 +50,9 @@ async fn serve_get_or_head(fs_path: PathBuf, request_path: String, method: &Meth
     } else {
         let file_size = meta.len();
         let mime = mime_guess::from_path(&fs_path).first_or_octet_stream();
-        tracing::debug!(mime = %mime.essence_str(), size = file_size, "file served");
+        tracing::debug!(
+            path = %fs_path.display(), mime = %mime.essence_str(), size = file_size, "file served"
+        );
         let resp = Response::builder()
             .status(StatusCode::OK)
             .header("content-type", mime.as_ref())
@@ -62,7 +66,7 @@ async fn serve_get_or_head(fs_path: PathBuf, request_path: String, method: &Meth
                 resp.body(Body::from_stream(stream)).unwrap()
             }
             Err(e) => {
-                tracing::error!(error = %e, "open failed");
+                tracing::error!(error = %e, path = %fs_path.display(), "open failed");
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()
             }
         }
