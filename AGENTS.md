@@ -30,8 +30,9 @@ src/
 
   handlers/
     mod.rs
-    file.rs                     # GET/HEAD handler (directory listing + file serving)
-    webdav.rs                   # WebDAV protocol handler (MemLs lock system)
+    serve.rs                    # GET/HEAD handler (directory listing + file serving)
+    native_http.rs              # PUT handler (native-http feature), WIP: DELETE, OPTIONS
+    webdav.rs                   # dav-server fallback for non-native WebDAV methods
 
   middleware/
     mod.rs
@@ -44,6 +45,7 @@ src/
 
   utils/
     mod.rs
+    path.rs                     # Percent-decode + path resolution (resolve_existing, resolve_write_target)
     time.rs                     # Calendar formatting for directory listings
 ```
 
@@ -60,7 +62,8 @@ src/
 | `rustls-pemfile` 2.2     | —                               | PEM certificate/key parsing        |
 | `sha2` 0.11              | —                               | Certificate fingerprint            |
 | `clap` 4.6               | `derive`, `env`                 | CLI args + env var support         |
-| `dav-server` 0.11        | —                               | WebDAV protocol handling           |
+| `dav-server` 0.11        | —                               | WebDAV fallback (legacy)           |
+| `futures-util` 0.3       | —                               | Stream combinators (TryStreamExt)  |
 | `mime_guess` 2           | —                               | MIME type detection                |
 | `percent-encoding` 2     | —                               | URI percent-encode/decode          |
 | `base64` 0.22            | —                               | Basic Auth header decoding         |
@@ -85,12 +88,15 @@ src/
 - **Middleware order**: `HealthCheck` (outermost) → `Auth` → `TraceLayer` → handler.
   HealthCheck intercepts `x-health-check: true` before auth. Auth middleware auto-skips when
   no users are configured (`auth_config.is_empty()`).
-- **Single catch-all handler**: `.fallback(any(dispatch))` routes all requests through a single
-  `dispatch` function that branches by HTTP method: `GET`/`HEAD` → `handlers::file::handle`,
-  everything else → `handlers::webdav::dav_route`.
-- **URI percent-decoding**: `file::handle` percent-decodes the request URI path via
-  `percent_encoding::percent_decode_str` before filesystem access. This ensures GET/HEAD
-  paths match those created by WebDAV operations (which decode internally).
+- **Request dispatch**: `.fallback(any(dispatch))` routes all requests through a single
+  `dispatch` function that branches by HTTP method:
+  `GET`/`HEAD` → `serve::handle`,
+  `PUT` → `native_http::handle_put` (when `native-http` feature enabled),
+  everything else → `webdav::dav_route` (dav-server fallback).
+- **Path resolution**: `utils::path` provides two functions:
+  - `resolve_existing()` — canonicalize + traversal check for read ops (GET/HEAD)
+  - `resolve_write_target()` — segment check + traversal guard for write ops (PUT, future DELETE)
+    Both percent-decode the URI path via `percent_encoding::percent_decode_str`.
 - **Lock system**: `memls::MemLs` provides in-memory lock support for the WebDAV handler,
   enabling proper lock enforcement (token validation, owner checks). Locks are ephemeral
   (lost on restart) but sufficient for standard WebDAV client compatibility.
@@ -101,6 +107,56 @@ src/
   CLI credentials (`--user`) can be merged in and optionally written back to disk.
 - **TLS**: `TlsListener` implements `axum::serve::Listener` wrapping a `tokio-rustls` acceptor.
   Both HTTP and HTTPS branches call `axum::serve(listener, router)` — fully symmetric.
+
+## Native WebDAV Refactoring
+
+Gradual migration to replace `dav-server` with self-developed native handlers.
+Progress is gated by Cargo features. When all native features are enabled,
+`dav-server` is removed entirely.
+
+### Features
+
+| Feature         | Status      | Methods covered                        |
+| --------------- | ----------- | -------------------------------------- |
+| `native-http`   | In progress | PUT ✓, DELETE (next), OPTIONS (next)   |
+| `native-webdav` | Planned     | PROPFIND, MKCOL, COPY, MOVE, PROPPATCH |
+| `native-locks`  | Planned     | LOCK, UNLOCK + lock state management   |
+
+### Module Evolution
+
+```
+Current                           Final
+src/handlers/                      src/handlers/
+  serve.rs      # GET/HEAD           serve.rs      # GET/HEAD
+  native_http.rs  # PUT              http.rs       # PUT/DELETE/OPTIONS
+  webdav.rs     # fallback           webdav.rs     # PROPFIND/MKCOL/COPY/MOVE
+  native_webdav.rs  (planned)        locks.rs      # LOCK/UNLOCK
+  native_locks.rs   (planned)
+```
+
+### Remaining Steps
+
+1. **DELETE**: `native_http.rs` `handle_delete()` — path resolution → `tokio::fs::remove_file()` → 204 No Content
+2. **OPTIONS**: `native_http.rs` `handle_options()` — return `Allow` header listing supported methods
+3. **PROPFIND**: new `native-webdav` feature + `native_webdav.rs` — `Depth: 0/1/infinity`, directory enumeration, XML response
+4. **MKCOL**: `native_webdav.rs` — `tokio::fs::create_dir()`
+5. **COPY/MOVE**: `native_webdav.rs` — file copy/move with `tokio::fs`
+6. **PROPPATCH**: `native_webdav.rs` — property setting
+7. **LOCK/UNLOCK**: new `native-locks` feature + `native_locks.rs` — lock token management + enforcement in write handlers
+8. **Cleanup**: remove `dav-server` dep, drop `AppState.dav_handler`, strip `native_` prefix
+
+### Body Streaming Pattern
+
+PUT handler uses `StreamReader` + `tokio::io::copy` for zero-copy streaming from HTTP body to file:
+
+```rust
+let stream = body.into_data_stream()
+    .map_err(std::io::Error::other);
+let mut reader = StreamReader::new(stream);
+let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
+```
+
+`TryStreamExt::map_err` bridges `axum::Error` → `io::Error` for `StreamReader` compatibility.
 
 ## Conventions
 

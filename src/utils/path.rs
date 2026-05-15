@@ -1,0 +1,126 @@
+use std::path::{Path, PathBuf};
+
+use percent_encoding::percent_decode_str;
+
+/// Resolve a path for read operations (GET/HEAD).
+/// Canonicalizes and verifies the target is within the root directory.
+/// Returns `None` if the path doesn't exist or is outside the root.
+pub async fn resolve_existing(
+    root_dir: &Path,
+    root_canonical: &Path,
+    request_path: &str,
+) -> Option<PathBuf> {
+    let decoded = percent_decode_str(request_path).decode_utf8_lossy();
+    let fs_path = root_dir.join(decoded.trim_start_matches('/'));
+
+    let fs_path = tokio::fs::canonicalize(&fs_path).await.ok()?;
+
+    if !fs_path.starts_with(root_canonical) {
+        return None;
+    }
+
+    Some(fs_path)
+}
+
+/// Resolve a path for write operations (PUT, DELETE, MKCOL).
+/// The target may not exist yet — validates path safety via segment checks.
+/// Returns `None` if the path contains traversal attempts.
+pub fn resolve_write_target(root_dir: &Path, request_path: &str) -> Option<PathBuf> {
+    let decoded = percent_decode_str(request_path).decode_utf8_lossy();
+    let trimmed = decoded.trim_start_matches('/');
+
+    if trimmed.is_empty() || trimmed.ends_with('/') {
+        return None;
+    }
+
+    for segment in trimmed.split('/') {
+        if segment == ".." || segment == "." {
+            return None;
+        }
+    }
+
+    Some(root_dir.join(trimmed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[tokio::test]
+    async fn test_resolve_existing_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut f = std::fs::File::create(dir.path().join("test.txt")).unwrap();
+        f.write_all(b"hello").unwrap();
+        let canonical = dir.path().canonicalize().unwrap();
+
+        let result = resolve_existing(dir.path(), &canonical, "/test.txt").await;
+        assert!(result.is_some());
+        assert!(result.unwrap().ends_with("test.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_existing_nonexistent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let canonical = dir.path().canonicalize().unwrap();
+
+        let result = resolve_existing(dir.path(), &canonical, "/nonexistent.txt").await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_existing_traversal_blocked() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let canonical = dir.path().canonicalize().unwrap();
+
+        let result = resolve_existing(dir.path(), &canonical, "/../../../etc/passwd").await;
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_resolve_write_target_normal() {
+        let dir = Path::new("/tmp/myserve");
+        let result = resolve_write_target(dir, "/test.txt");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), PathBuf::from("/tmp/myserve/test.txt"));
+    }
+
+    #[test]
+    fn test_resolve_write_target_nested() {
+        let dir = Path::new("/tmp/myserve");
+        let result = resolve_write_target(dir, "/subdir/test.txt");
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap(),
+            PathBuf::from("/tmp/myserve/subdir/test.txt")
+        );
+    }
+
+    #[test]
+    fn test_resolve_write_target_traversal_dotdot() {
+        let dir = Path::new("/tmp/myserve");
+        let result = resolve_write_target(dir, "/../etc/passwd");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_resolve_write_target_traversal_dot() {
+        let dir = Path::new("/tmp/myserve");
+        let result = resolve_write_target(dir, "/./file.txt");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_resolve_write_target_empty() {
+        let dir = Path::new("/tmp/myserve");
+        let result = resolve_write_target(dir, "/");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_resolve_write_target_dir_path() {
+        let dir = Path::new("/tmp/myserve");
+        let result = resolve_write_target(dir, "/subdir/");
+        assert!(result.is_none());
+    }
+}

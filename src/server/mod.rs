@@ -12,7 +12,9 @@ use dav_server::DavHandler;
 use tower_http::trace::TraceLayer;
 
 use crate::auth::AuthConfig;
-use crate::handlers::{file, webdav};
+#[cfg(feature = "native-http")]
+use crate::handlers::native_http;
+use crate::handlers::{serve, webdav};
 use crate::middleware;
 
 #[derive(Clone)]
@@ -55,7 +57,9 @@ async fn dispatch(
     req: axum::extract::Request,
 ) -> axum::response::Response {
     match *req.method() {
-        Method::GET | Method::HEAD => file::handle(State(state), req).await,
+        Method::GET | Method::HEAD => serve::handle(State(state), req).await,
+        #[cfg(feature = "native-http")]
+        Method::PUT => native_http::handle_put(State(state), req).await,
         _ => webdav::dav_route(State(state), req).await,
     }
 }

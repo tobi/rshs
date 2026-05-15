@@ -3,7 +3,7 @@ name = "rshs"
 version = "0.6.2"
 description = "A lightweight HTTP + WebDAV file server"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.87"
 authors = ["Zheng Junyi <zhengjunyi@live.com>"]
 readme = "README.md"
 license = "MIT"
@@ -11,12 +11,18 @@ repository = "https://github.com/mogeko/rshs"
 keywords = ["http", "webdav", "file-server", "axum"]
 categories = ["web-programming::http-server"]
 
+[features]
+default = []
+native = ["native-http"]
+native-http = []
+
 
 [dependencies]
 axum = { version = "0.8", features = ["http2"] }
 base64 = "0.22"
 clap = { version = "4.6", features = ["derive", "env"] }
 dav-server = "0.11"
+futures-util = "0.3"
 mime_guess = "2.0"
 percent-encoding = "2.3"
 rustls = "0.23"
