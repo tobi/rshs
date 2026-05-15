@@ -12,7 +12,7 @@ fn make_app(dir: &tempfile::TempDir) -> Router {
     let handler = rshs::handlers::webdav::create_dav_handler(dir.path());
     let path = dir.path().to_path_buf();
     Router::new()
-        .fallback(rshs::handlers::file::handle)
+        .fallback(rshs::handlers::serve::handle)
         .layer(rshs::middleware::health::HealthCheck)
         .with_state(Arc::new(AppState {
             root_dir: path.clone(),
