@@ -173,6 +173,7 @@ mod tests {
                 dead_props: Arc::new(tokio::sync::RwLock::new(
                     crate::webdav::DeadPropertyStore::new(),
                 )),
+                locks: Arc::new(tokio::sync::RwLock::new(crate::webdav::LockStore::new())),
             }))
     }
 

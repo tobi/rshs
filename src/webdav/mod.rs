@@ -18,8 +18,8 @@ pub static M_MKCOL: Method = LazyLock::new(|| HttpMethod::from_bytes(b"MKCOL").u
 pub static M_COPY: Method = LazyLock::new(|| HttpMethod::from_bytes(b"COPY").unwrap());
 pub static M_MOVE: Method = LazyLock::new(|| HttpMethod::from_bytes(b"MOVE").unwrap());
 pub static M_PROPPATCH: Method = LazyLock::new(|| HttpMethod::from_bytes(b"PROPPATCH").unwrap());
-pub static _M_LOCK: Method = LazyLock::new(|| HttpMethod::from_bytes(b"LOCK").unwrap());
-pub static _M_UNLOCK: Method = LazyLock::new(|| HttpMethod::from_bytes(b"UNLOCK").unwrap());
+pub static M_LOCK: Method = LazyLock::new(|| HttpMethod::from_bytes(b"LOCK").unwrap());
+pub static M_UNLOCK: Method = LazyLock::new(|| HttpMethod::from_bytes(b"UNLOCK").unwrap());
 
 pub type DeadPropertyStore = HashMap<PathBuf, HashMap<String, String>>;
 
@@ -51,6 +51,70 @@ pub struct PropEntry {
     pub content_type: Option<String>,
     pub dead_props: Option<HashMap<String, String>>,
     pub canonical_path: Option<PathBuf>,
+    pub active_locks: Option<Vec<LockInfo>>,
+}
+
+pub type LockStore = HashMap<PathBuf, Vec<LockInfo>>;
+
+#[derive(Debug, Clone)]
+pub struct LockInfo {
+    pub token: String,
+    pub scope: LockScope,
+    pub owner: Option<String>,
+    pub timeout: Option<std::time::Duration>,
+    pub created: SystemTime,
+    pub depth: Depth,
+}
+
+#[derive(Debug, Clone)]
+pub enum LockScope {
+    Exclusive,
+}
+
+pub fn generate_lock_token() -> String {
+    use std::hash::{Hash, Hasher};
+    use std::time::UNIX_EPOCH;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    nanos.hash(&mut h);
+    format!("opaquelocktoken:{:016x}", h.finish())
+}
+
+pub fn parse_if_header(headers: &HeaderMap) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let value = match headers.get("if").and_then(|v| v.to_str().ok()) {
+        Some(v) => v,
+        None => return tokens,
+    };
+    for part in value.split('(') {
+        let inner = part.trim_end_matches(')').trim();
+        let token = inner.trim_matches('<').trim_matches('>').trim();
+        if !token.is_empty() {
+            tokens.push(token.to_string());
+        }
+    }
+    tokens
+}
+
+pub fn parse_lock_token_header(headers: &HeaderMap) -> Option<String> {
+    let value = headers.get("lock-token")?.to_str().ok()?;
+    value
+        .trim_matches('<')
+        .trim_matches('>')
+        .trim()
+        .to_string()
+        .into()
+}
+
+pub fn parse_timeout(headers: &HeaderMap) -> Option<std::time::Duration> {
+    let value = headers.get("timeout")?.to_str().ok()?;
+    let seconds = value
+        .strip_prefix("Second-")
+        .and_then(|s| s.parse::<u64>().ok())?;
+    Some(std::time::Duration::from_secs(seconds))
 }
 
 pub fn parse_depth(headers: &HeaderMap) -> Depth {

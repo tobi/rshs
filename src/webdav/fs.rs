@@ -28,6 +28,7 @@ fn make_entry(
         content_type: None,
         dead_props: None,
         canonical_path: canonical,
+        active_locks: None,
     }
 }
 

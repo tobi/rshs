@@ -174,6 +174,7 @@ mod tests {
                 dav_handler: crate::handlers::dav_fallback::create_dav_handler(&root),
                 auth_config: Arc::new(AuthConfig::new()),
                 dead_props: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+                locks: Arc::new(tokio::sync::RwLock::new(crate::webdav::LockStore::new())),
             }))
     }
 
@@ -292,6 +293,7 @@ mod tests {
                 dav_handler: crate::handlers::dav_fallback::create_dav_handler(&root),
                 auth_config: Arc::new(AuthConfig::new()),
                 dead_props: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+                locks: Arc::new(tokio::sync::RwLock::new(crate::webdav::LockStore::new())),
             }))
     }
 

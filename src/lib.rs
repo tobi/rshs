@@ -4,7 +4,7 @@ pub mod handlers;
 pub mod middleware;
 pub mod server;
 pub mod utils;
-#[cfg(feature = "native-webdav")]
+#[cfg(any(feature = "native-webdav", feature = "native-locks"))]
 pub mod webdav;
 
 pub use auth::{AuthConfig, build_auth_config};

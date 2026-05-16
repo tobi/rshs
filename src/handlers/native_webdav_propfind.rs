@@ -42,12 +42,17 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: Request) -> Respons
     let mut entries = webdav::fs::collect_entries(&fs_path, &request_path, depth).await;
 
     let dead_store = state.dead_props.read().await;
+    let lock_store = state.locks.read().await;
     for entry in &mut entries {
         if let Some(ref cp) = entry.canonical_path {
             entry.dead_props = dead_store.get(cp).cloned();
+            if let Some(locks) = lock_store.get(cp) {
+                entry.active_locks = Some(locks.clone());
+            }
         }
     }
     drop(dead_store);
+    drop(lock_store);
 
     let xml = webdav::xml::build_multistatus(&entries, &prop_request);
 
@@ -84,6 +89,7 @@ mod tests {
                 dead_props: Arc::new(tokio::sync::RwLock::new(
                     crate::webdav::DeadPropertyStore::new(),
                 )),
+                locks: Arc::new(tokio::sync::RwLock::new(crate::webdav::LockStore::new())),
             }))
     }
 

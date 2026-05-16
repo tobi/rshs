@@ -6,6 +6,8 @@ pub mod native_http_delete;
 pub mod native_http_options;
 #[cfg(feature = "native-http")]
 pub mod native_http_put;
+#[cfg(feature = "native-locks")]
+pub mod native_locks;
 #[cfg(feature = "native-webdav")]
 pub mod native_webdav_copy_move;
 #[cfg(feature = "native-webdav")]

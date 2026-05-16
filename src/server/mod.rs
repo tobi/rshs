@@ -12,6 +12,8 @@ use dav_server::DavHandler;
 use tower_http::trace::TraceLayer;
 
 use crate::auth::AuthConfig;
+#[cfg(feature = "native-locks")]
+use crate::handlers::native_locks;
 use crate::handlers::{dav_fallback, http_get_head};
 #[cfg(feature = "native-http")]
 use crate::handlers::{native_http_delete, native_http_options, native_http_put};
@@ -20,7 +22,7 @@ use crate::handlers::{
     native_webdav_copy_move, native_webdav_mkcol, native_webdav_propfind, native_webdav_proppatch,
 };
 use crate::middleware;
-#[cfg(feature = "native-webdav")]
+#[cfg(any(feature = "native-webdav", feature = "native-locks"))]
 use crate::webdav;
 
 #[derive(Clone)]
@@ -30,6 +32,7 @@ pub struct AppState {
     pub dav_handler: DavHandler,
     pub auth_config: Arc<AuthConfig>,
     pub dead_props: Arc<tokio::sync::RwLock<crate::webdav::DeadPropertyStore>>,
+    pub locks: Arc<tokio::sync::RwLock<crate::webdav::LockStore>>,
 }
 
 #[derive(Clone)]
@@ -100,6 +103,14 @@ async fn dispatch(
     if method == *webdav::M_PROPPATCH {
         return native_webdav_proppatch::handle(State(state), req).await;
     }
+    #[cfg(feature = "native-locks")]
+    if method == *webdav::M_LOCK {
+        return native_locks::handle_lock(State(state), req).await;
+    }
+    #[cfg(feature = "native-locks")]
+    if method == *webdav::M_UNLOCK {
+        return native_locks::handle_unlock(State(state), req).await;
+    }
 
     dav_fallback::dav_route(State(state), req).await
 }
@@ -114,6 +125,7 @@ pub fn app(config: &ServerConfig) -> Router {
         dead_props: Arc::new(tokio::sync::RwLock::new(
             crate::webdav::DeadPropertyStore::new(),
         )),
+        locks: Arc::new(tokio::sync::RwLock::new(crate::webdav::LockStore::new())),
     });
 
     Router::new()
@@ -122,6 +134,10 @@ pub fn app(config: &ServerConfig) -> Router {
         .layer(axum_mw::from_fn_with_state(
             state.auth_config.clone(),
             middleware::auth::auth_middleware,
+        ))
+        .layer(axum_mw::from_fn_with_state(
+            state.clone(),
+            middleware::lock::lock_enforce,
         ))
         .layer(middleware::health::HealthCheck)
         .with_state(state)

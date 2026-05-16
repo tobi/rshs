@@ -13,8 +13,9 @@ categories = ["web-programming::http-server"]
 
 [features]
 default = []
-native = ["native-http", "native-webdav"]
+native = ["native-http", "native-locks", "native-webdav"]
 native-http = []
+native-locks = []
 native-webdav = []
 
 

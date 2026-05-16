@@ -204,7 +204,15 @@ fn write_propstat_200(writer: &mut Writer<Cursor<Vec<u8>>>, entry: &PropEntry, p
                 ))));
             }
             "lockdiscovery" => {
-                w(Event::Empty(BytesStart::new(format!(
+                w(Event::Start(BytesStart::new(format!(
+                    "{DAV_PREFIX}lockdiscovery"
+                ))));
+                if let Some(ref locks) = entry.active_locks {
+                    for lock in locks {
+                        write_activelock(&mut w, lock);
+                    }
+                }
+                w(Event::End(BytesEnd::new(format!(
                     "{DAV_PREFIX}lockdiscovery"
                 ))));
             }
@@ -305,6 +313,57 @@ fn write_propname(writer: &mut Writer<Cursor<Vec<u8>>>, props: &[&str]) {
     w(Event::Text(BytesText::new("HTTP/1.1 200 OK")));
     w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}status"))));
     w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}propstat"))));
+}
+
+fn write_activelock(w: &mut impl FnMut(Event<'_>), lock: &super::LockInfo) {
+    w(Event::Start(BytesStart::new(format!(
+        "{DAV_PREFIX}activelock"
+    ))));
+
+    w(Event::Start(BytesStart::new(format!(
+        "{DAV_PREFIX}lockscope"
+    ))));
+    w(Event::Empty(BytesStart::new(format!(
+        "{DAV_PREFIX}exclusive"
+    ))));
+    w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}lockscope"))));
+
+    w(Event::Start(BytesStart::new(format!(
+        "{DAV_PREFIX}locktype"
+    ))));
+    w(Event::Empty(BytesStart::new(format!("{DAV_PREFIX}write"))));
+    w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}locktype"))));
+
+    w(Event::Start(BytesStart::new(format!("{DAV_PREFIX}depth"))));
+    w(Event::Text(BytesText::new("0")));
+    w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}depth"))));
+
+    if let Some(ref owner) = lock.owner {
+        w(Event::Start(BytesStart::new(format!("{DAV_PREFIX}owner"))));
+        w(Event::Text(BytesText::new(owner)));
+        w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}owner"))));
+    }
+
+    if let Some(d) = lock.timeout {
+        w(Event::Start(BytesStart::new(format!(
+            "{DAV_PREFIX}timeout"
+        ))));
+        w(Event::Text(BytesText::new(&format!(
+            "Second-{}",
+            d.as_secs()
+        ))));
+        w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}timeout"))));
+    }
+
+    w(Event::Start(BytesStart::new(format!(
+        "{DAV_PREFIX}locktoken"
+    ))));
+    w(Event::Start(BytesStart::new(format!("{DAV_PREFIX}href"))));
+    w(Event::Text(BytesText::new(&lock.token)));
+    w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}href"))));
+    w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}locktoken"))));
+
+    w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}activelock"))));
 }
 
 fn write_dead_propstat(
