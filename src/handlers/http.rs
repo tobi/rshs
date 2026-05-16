@@ -2,24 +2,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::{
-    body::Body,
-    extract::{Request, State},
-    http::{Method, StatusCode},
-    response::{IntoResponse, Response},
-};
-#[cfg(feature = "native-http")]
+use axum::body::Body;
+use axum::extract::{Request, State};
+use axum::http::{Method, StatusCode};
+use axum::response::{IntoResponse, Response};
 use futures_util::TryStreamExt;
-#[cfg(feature = "native-http")]
 use tokio::io::AsyncWriteExt;
-use tokio_util::io::ReaderStream;
-#[cfg(feature = "native-http")]
-use tokio_util::io::StreamReader;
+use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::server::AppState;
-#[cfg(feature = "native-http")]
-use crate::utils::path;
-use crate::utils::path::resolve_existing;
+use crate::utils::path::{self, resolve_existing};
 use crate::utils::time::format_modified;
 
 // ---------------------------------------------------------------------------
@@ -177,7 +169,6 @@ async fn generate_dir_listing(dir_path: &Path, request_path: &str) -> (String, u
 // PUT (native-http)
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "native-http")]
 pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
@@ -264,7 +255,6 @@ pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Res
 // DELETE (native-http)
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "native-http")]
 pub async fn handle_delete(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
@@ -322,7 +312,6 @@ pub async fn handle_delete(State(state): State<Arc<AppState>>, req: Request) -> 
 // OPTIONS (native-http)
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "native-http")]
 pub async fn handle_options() -> Response {
     Response::builder()
         .status(StatusCode::OK)
@@ -409,7 +398,6 @@ mod tests {
 
     // -- PUT tests -----------------------------------------------------------
 
-    #[cfg(feature = "native-http")]
     fn make_app_put(dir: &tempfile::TempDir) -> Router {
         let root = dir.path().to_path_buf();
         let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
@@ -419,14 +407,12 @@ mod tests {
             .with_state(Arc::new(AppState {
                 root_dir: root.clone(),
                 root_canonical: canonical,
-                dav_handler: crate::handlers::dav_fallback::create_dav_handler(&root),
                 auth_config: Arc::new(AuthConfig::new()),
                 dead_props: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
                 locks: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             }))
     }
 
-    #[cfg(feature = "native-http")]
     #[tokio::test]
     async fn test_put_creates_new_file() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -446,7 +432,6 @@ mod tests {
         assert_eq!(content, "hello put");
     }
 
-    #[cfg(feature = "native-http")]
     #[tokio::test]
     async fn test_put_overwrites_existing_file() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -466,7 +451,6 @@ mod tests {
         assert_eq!(content, "new content");
     }
 
-    #[cfg(feature = "native-http")]
     #[tokio::test]
     async fn test_put_empty_body() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -485,7 +469,6 @@ mod tests {
         assert!(content.is_empty());
     }
 
-    #[cfg(feature = "native-http")]
     #[tokio::test]
     async fn test_put_creates_parent_dirs() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -504,7 +487,6 @@ mod tests {
         assert_eq!(content, "nested");
     }
 
-    #[cfg(feature = "native-http")]
     #[tokio::test]
     async fn test_put_rejects_root_dir() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -520,7 +502,6 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
     }
 
-    #[cfg(feature = "native-http")]
     #[tokio::test]
     async fn test_put_rejects_dir_path() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -536,7 +517,6 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
     }
 
-    #[cfg(feature = "native-http")]
     #[tokio::test]
     async fn test_put_rejects_traversal() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -554,7 +534,6 @@ mod tests {
 
     // -- DELETE tests --------------------------------------------------------
 
-    #[cfg(feature = "native-http")]
     fn make_app_delete(dir: &tempfile::TempDir) -> Router {
         let root = dir.path().to_path_buf();
         let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
@@ -564,14 +543,12 @@ mod tests {
             .with_state(Arc::new(AppState {
                 root_dir: root.clone(),
                 root_canonical: canonical,
-                dav_handler: crate::handlers::dav_fallback::create_dav_handler(&root),
                 auth_config: Arc::new(AuthConfig::new()),
                 dead_props: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
                 locks: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             }))
     }
 
-    #[cfg(feature = "native-http")]
     #[tokio::test]
     async fn test_delete_existing_file() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -589,7 +566,6 @@ mod tests {
         assert!(!dir.path().join("remove_me.txt").exists());
     }
 
-    #[cfg(feature = "native-http")]
     #[tokio::test]
     async fn test_delete_nonexistent() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -605,7 +581,6 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
     }
 
-    #[cfg(feature = "native-http")]
     #[tokio::test]
     async fn test_delete_directory() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -626,7 +601,6 @@ mod tests {
         assert!(!subdir.exists());
     }
 
-    #[cfg(feature = "native-http")]
     #[tokio::test]
     async fn test_delete_root_rejected() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -642,7 +616,6 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
     }
 
-    #[cfg(feature = "native-http")]
     #[tokio::test]
     async fn test_delete_dir_trailing_slash() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -662,7 +635,6 @@ mod tests {
         assert!(!subdir.exists());
     }
 
-    #[cfg(feature = "native-http")]
     #[tokio::test]
     async fn test_delete_rejects_traversal() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -680,7 +652,6 @@ mod tests {
 
     // -- OPTIONS tests -------------------------------------------------------
 
-    #[cfg(feature = "native-http")]
     #[tokio::test]
     async fn test_options_returns_ok() {
         let resp = super::handle_options().await;
@@ -702,7 +673,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "native-http")]
     #[tokio::test]
     async fn test_options_has_content_length_zero() {
         let resp = super::handle_options().await;
@@ -715,7 +685,6 @@ mod tests {
         assert_eq!(cl, "0");
     }
 
-    #[cfg(feature = "native-http")]
     #[tokio::test]
     async fn test_options_body_empty() {
         let resp = super::handle_options().await;

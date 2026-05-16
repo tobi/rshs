@@ -9,14 +9,12 @@ use tower::ServiceExt;
 use rshs::{self, AppState};
 
 fn make_app(dir: &tempfile::TempDir) -> Router {
-    let handler = rshs::handlers::dav_fallback::create_dav_handler(dir.path());
     let path = dir.path().to_path_buf();
     Router::new()
         .fallback(rshs::handlers::http::handle_get_head)
         .with_state(Arc::new(AppState {
             root_dir: path.clone(),
             root_canonical: path.canonicalize().unwrap_or(path),
-            dav_handler: handler,
             auth_config: Arc::new(rshs::AuthConfig::new()),
             dead_props: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             locks: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),

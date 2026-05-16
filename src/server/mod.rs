@@ -7,23 +7,23 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::middleware as axum_mw;
-use axum::{Router, extract::State, http::Method, routing::any};
-use dav_server::DavHandler;
+use axum::response::IntoResponse;
+use axum::{
+    Router,
+    extract::State,
+    http::{Method, StatusCode},
+    routing::any,
+};
 use tower_http::trace::TraceLayer;
 
 use crate::auth::AuthConfig;
-#[cfg(feature = "native-locks")]
-use crate::handlers::locks;
-#[cfg(feature = "native-webdav")]
-use crate::handlers::webdav as webdav_handler;
-use crate::handlers::{dav_fallback, http};
+use crate::handlers::{http, locks, webdav as webdav_handler};
 use crate::middleware;
 
 #[derive(Clone)]
 pub struct AppState {
     pub root_dir: PathBuf,
     pub root_canonical: PathBuf,
-    pub dav_handler: DavHandler,
     pub auth_config: Arc<AuthConfig>,
     pub dead_props: Arc<tokio::sync::RwLock<crate::webdav::DeadPropertyStore>>,
     pub locks: Arc<tokio::sync::RwLock<crate::webdav::LockStore>>,
@@ -65,48 +65,38 @@ async fn dispatch(
     if method == Method::GET || method == Method::HEAD {
         return http::handle_get_head(State(state), req).await;
     }
-    #[cfg(feature = "native-http")]
     if method == Method::PUT {
         return http::handle_put(State(state), req).await;
     }
-    #[cfg(feature = "native-http")]
     if method == Method::DELETE {
         return http::handle_delete(State(state), req).await;
     }
-    #[cfg(feature = "native-http")]
     if method == Method::OPTIONS {
         return http::handle_options().await;
     }
-    #[cfg(feature = "native-webdav")]
     if method == *crate::webdav::M_PROPFIND {
         return webdav_handler::handle_propfind(State(state), req).await;
     }
-    #[cfg(feature = "native-webdav")]
     if method == *crate::webdav::M_MKCOL {
         return webdav_handler::handle_mkcol(State(state), req).await;
     }
-    #[cfg(feature = "native-webdav")]
     if method == *crate::webdav::M_COPY {
         return webdav_handler::handle_copy(State(state), req).await;
     }
-    #[cfg(feature = "native-webdav")]
     if method == *crate::webdav::M_MOVE {
         return webdav_handler::handle_move(State(state), req).await;
     }
-    #[cfg(feature = "native-webdav")]
     if method == *crate::webdav::M_PROPPATCH {
         return webdav_handler::handle_proppatch(State(state), req).await;
     }
-    #[cfg(feature = "native-locks")]
     if method == *crate::webdav::M_LOCK {
         return locks::handle_lock(State(state), req).await;
     }
-    #[cfg(feature = "native-locks")]
     if method == *crate::webdav::M_UNLOCK {
         return locks::handle_unlock(State(state), req).await;
     }
 
-    dav_fallback::dav_route(State(state), req).await
+    StatusCode::NOT_IMPLEMENTED.into_response()
 }
 
 pub fn app(config: &ServerConfig) -> Router {
@@ -114,7 +104,6 @@ pub fn app(config: &ServerConfig) -> Router {
         root_dir: config.root_dir.clone(),
         root_canonical: fs::canonicalize(&config.root_dir)
             .unwrap_or_else(|_| config.root_dir.clone()),
-        dav_handler: dav_fallback::create_dav_handler(&config.root_dir),
         auth_config: Arc::new(config.auth_config.clone()),
         dead_props: Arc::new(tokio::sync::RwLock::new(
             crate::webdav::DeadPropertyStore::new(),

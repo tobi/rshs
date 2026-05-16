@@ -1,12 +1,10 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
-use axum::{
-    body::{self, Body},
-    extract::{Request, State},
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
+use axum::body::{self, Body};
+use axum::extract::{Request, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 
@@ -249,7 +247,6 @@ mod tests {
             .with_state(Arc::new(AppState {
                 root_dir: root.clone(),
                 root_canonical: canonical,
-                dav_handler: crate::handlers::dav_fallback::create_dav_handler(&root),
                 auth_config: Arc::new(AuthConfig::new()),
                 dead_props: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
                 locks: Arc::new(tokio::sync::RwLock::new(crate::webdav::LockStore::new())),
@@ -264,7 +261,6 @@ mod tests {
             .with_state(Arc::new(AppState {
                 root_dir: root.clone(),
                 root_canonical: canonical,
-                dav_handler: crate::handlers::dav_fallback::create_dav_handler(&root),
                 auth_config: Arc::new(AuthConfig::new()),
                 dead_props: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
                 locks: Arc::new(tokio::sync::RwLock::new(crate::webdav::LockStore::new())),
@@ -360,7 +356,6 @@ mod tests {
         let state = Arc::new(AppState {
             root_dir: root.clone(),
             root_canonical: canonical,
-            dav_handler: crate::handlers::dav_fallback::create_dav_handler(&root),
             auth_config: Arc::new(AuthConfig::new()),
             dead_props: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             locks: Arc::new(tokio::sync::RwLock::new(crate::webdav::LockStore::new())),
