@@ -30,11 +30,19 @@ src/
 
   handlers/
     mod.rs
-    serve.rs                    # GET/HEAD handler (directory listing + file serving)
-    native_put.rs               # PUT handler (native-http feature)
-    native_delete.rs            # DELETE handler (native-http feature)
-    native_options.rs           # OPTIONS handler (native-http feature)
-    webdav.rs                   # dav-server fallback for non-native WebDAV methods
+    http_get_head.rs            # GET/HEAD handler (directory listing + file serving)
+    native_http_put.rs          # PUT handler (native-http feature)
+    native_http_delete.rs       # DELETE handler (native-http feature)
+    native_http_options.rs      # OPTIONS handler (native-http feature)
+    native_webdav_propfind.rs   # PROPFIND handler (native-webdav feature)
+    native_webdav_mkcol.rs      # MKCOL handler (native-webdav feature)
+    native_webdav_copy_move.rs  # COPY/MOVE handler (native-webdav feature)
+    dav_fallback.rs             # dav-server fallback for non-native methods
+
+  webdav/
+    mod.rs                      # WebDAV Method constants (LazyLock), types, parse helpers
+    xml.rs                      # Multistatus XML generation (PROPFIND response)
+    fs.rs                       # Filesystem traversal + href encoding
 
   middleware/
     mod.rs
@@ -93,14 +101,18 @@ src/
   no users are configured (`auth_config.is_empty()`).
 - **Request dispatch**: `.fallback(any(dispatch))` routes all requests through a single
   `dispatch` function that branches by HTTP method:
-  `GET`/`HEAD` → `serve::handle`,
-  `PUT` → `native_put::handle_put` (when `native-http` feature enabled),
-  `DELETE` → `native_delete::handle_delete` (when `native-http` feature enabled),
-  `OPTIONS` → `native_options::handle_options` (when `native-http` feature enabled),
-  everything else → `webdav::dav_route` (dav-server fallback).
+  `GET`/`HEAD` → `http_get_head::handle`,
+  `PUT` → `native_http_put::handle` (when `native-http` feature enabled),
+  `DELETE` → `native_http_delete::handle` (when `native-http` feature enabled),
+  `OPTIONS` → `native_http_options::handle` (when `native-http` feature enabled),
+  `PROPFIND` → `native_webdav_propfind::handle` (when `native-webdav` feature enabled),
+  `MKCOL` → `native_webdav_mkcol::handle` (when `native-webdav` feature enabled),
+  `COPY` → `native_webdav_copy_move::handle_copy` (when `native-webdav` feature enabled),
+  `MOVE` → `native_webdav_copy_move::handle_move` (when `native-webdav` feature enabled),
+  everything else → `dav_fallback::dav_route`.
 - **Path resolution**: `utils::path` provides two functions:
   - `resolve_existing()` — canonicalize + traversal check for read ops (GET/HEAD) and delete ops (DELETE)
-  - `resolve_write_target()` — segment check + traversal guard for write ops (PUT, future MKCOL)
+  - `resolve_write_target()` — segment check + traversal guard for write ops (PUT/DELETE/MKCOL)
     Both percent-decode the URI path via `percent_encoding::percent_decode_str`.
 - **Lock system**: `memls::MemLs` provides in-memory lock support for the WebDAV handler,
   enabling proper lock enforcement (token validation, owner checks). Locks are ephemeral
@@ -121,23 +133,25 @@ Progress is gated by Cargo features. When all native features are enabled,
 
 ### Features
 
-| Feature         | Status      | Methods covered                        |
-| --------------- | ----------- | -------------------------------------- |
-| `native-http`   | In progress | PUT ✓, DELETE ✓, OPTIONS ✓             |
-| `native-webdav` | Planned     | PROPFIND, MKCOL, COPY, MOVE, PROPPATCH |
-| `native-locks`  | Planned     | LOCK, UNLOCK + lock state management   |
+| Feature         | Status      | Methods covered                                       |
+| --------------- | ----------- | ----------------------------------------------------- |
+| `native-http`   | In progress | PUT ✓, DELETE ✓, OPTIONS ✓                            |
+| `native-webdav` | In progress | PROPFIND ✓, MKCOL ✓, COPY ✓, MOVE ✓, PROPPATCH (next) |
+| `native-locks`  | Planned     | LOCK, UNLOCK + lock state management                  |
 
 ### Module Evolution
 
 ```
 Current                           Final
 src/handlers/                      src/handlers/
-  serve.rs      # GET/HEAD           serve.rs      # GET/HEAD
-  native_put.rs   # PUT              put.rs        # PUT
-  native_delete.rs # DELETE          delete.rs     # DELETE
-  native_options.rs # OPTIONS        options.rs    # OPTIONS
-  webdav.rs     # fallback           webdav.rs     # PROPFIND/MKCOL/COPY/MOVE
-  native_webdav.rs  (planned)        locks.rs      # LOCK/UNLOCK
+  http_get_head.rs # GET/HEAD            http.rs      # GET/HEAD/PUT/DELETE/OPTIONS
+  native_http_put.rs   # PUT
+  native_http_delete.rs # DELETE
+  native_http_options.rs # OPTIONS
+  native_webdav_propfind.rs # PROPFIND   webdav.rs     # PROPFIND/MKCOL/COPY/MOVE/PROPPATCH
+  native_webdav_mkcol.rs    # MKCOL
+  native_webdav_copy_move.rs # COPY/MOVE
+  dav_fallback.rs # fallback             locks.rs      # LOCK/UNLOCK
   native_locks.rs   (planned)
 ```
 
@@ -145,9 +159,9 @@ src/handlers/                      src/handlers/
 
 1. ~~**DELETE**: `native_http.rs` `handle_delete()` — path resolution → `tokio::fs::remove_file()` → 204 No Content~~
 2. ~~**OPTIONS**: `native_http.rs` `handle_options()` — return `Allow` header listing supported methods~~
-3. **PROPFIND**: new `native-webdav` feature + `native_webdav.rs` — `Depth: 0/1/infinity`, directory enumeration, XML response
-4. **MKCOL**: `native_webdav.rs` — `tokio::fs::create_dir()`
-5. **COPY/MOVE**: `native_webdav.rs` — file copy/move with `tokio::fs`
+3. ~~**PROPFIND**: `native_webdav.rs` — `Depth: 0/1/infinity`, directory enumeration, XML response~~
+4. ~~**MKCOL**: `native_webdav.rs` — `tokio::fs::create_dir()`~~
+5. ~~**COPY/MOVE**: `native_webdav.rs` — file copy/move with `tokio::fs`~~
 6. **PROPPATCH**: `native_webdav.rs` — property setting
 7. **LOCK/UNLOCK**: new `native-locks` feature + `native_locks.rs` — lock token management + enforcement in write handlers
 8. **Cleanup**: remove `dav-server` dep, drop `AppState.dav_handler`, strip `native_` prefix
