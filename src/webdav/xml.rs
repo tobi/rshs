@@ -1,4 +1,5 @@
 use std::io::Cursor;
+use std::time::UNIX_EPOCH;
 
 use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
@@ -8,10 +9,19 @@ use super::{PropEntry, PropRequest};
 pub const DAV_PREFIX: &str = "D:";
 const DAV_NS: &str = "DAV:";
 
-const SUPPORTED_PROPS: &[&str] = &["getcontentlength", "getlastmodified", "resourcetype"];
+const SUPPORTED_PROPS: &[&str] = &[
+    "creationdate",
+    "getcontentlength",
+    "getcontenttype",
+    "getetag",
+    "getlastmodified",
+    "lockdiscovery",
+    "resourcetype",
+    "supportedlock",
+];
 
 pub fn build_multistatus(entries: &[PropEntry], prop_request: &PropRequest) -> String {
-    let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
 
     writer
         .write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)))
@@ -111,7 +121,7 @@ fn write_response(
 
 fn is_applicable(prop: &str, is_dir: bool) -> bool {
     match prop {
-        "getcontentlength" => !is_dir,
+        "getcontentlength" | "getcontenttype" | "getetag" => !is_dir,
         _ => true,
     }
 }
@@ -128,6 +138,19 @@ fn write_propstat_200(writer: &mut Writer<Cursor<Vec<u8>>>, entry: &PropEntry, p
 
     for prop_name in props {
         match **prop_name {
+            "creationdate" => {
+                let date = entry
+                    .created
+                    .map(crate::utils::time::format_rfc3339)
+                    .unwrap_or_default();
+                w(Event::Start(BytesStart::new(format!(
+                    "{DAV_PREFIX}creationdate"
+                ))));
+                w(Event::Text(BytesText::new(&date)));
+                w(Event::End(BytesEnd::new(format!(
+                    "{DAV_PREFIX}creationdate"
+                ))));
+            }
             "getcontentlength" => {
                 w(Event::Start(BytesStart::new(format!(
                     "{DAV_PREFIX}getcontentlength"
@@ -137,6 +160,32 @@ fn write_propstat_200(writer: &mut Writer<Cursor<Vec<u8>>>, entry: &PropEntry, p
                     "{DAV_PREFIX}getcontentlength"
                 ))));
             }
+            "getcontenttype" => {
+                let ct = entry.content_type.as_deref().unwrap_or("");
+                w(Event::Start(BytesStart::new(format!(
+                    "{DAV_PREFIX}getcontenttype"
+                ))));
+                w(Event::Text(BytesText::new(ct)));
+                w(Event::End(BytesEnd::new(format!(
+                    "{DAV_PREFIX}getcontenttype"
+                ))));
+            }
+            "getetag" => {
+                let etag = format!(
+                    "{:x}-{:x}",
+                    entry
+                        .modified
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                    entry.size
+                );
+                w(Event::Start(BytesStart::new(format!(
+                    "{DAV_PREFIX}getetag"
+                ))));
+                w(Event::Text(BytesText::new(&etag)));
+                w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}getetag"))));
+            }
             "getlastmodified" => {
                 w(Event::Start(BytesStart::new(format!(
                     "{DAV_PREFIX}getlastmodified"
@@ -145,6 +194,11 @@ fn write_propstat_200(writer: &mut Writer<Cursor<Vec<u8>>>, entry: &PropEntry, p
                 w(Event::Text(BytesText::new(&date)));
                 w(Event::End(BytesEnd::new(format!(
                     "{DAV_PREFIX}getlastmodified"
+                ))));
+            }
+            "lockdiscovery" => {
+                w(Event::Empty(BytesStart::new(format!(
+                    "{DAV_PREFIX}lockdiscovery"
                 ))));
             }
             "resourcetype" => {
@@ -160,6 +214,16 @@ fn write_propstat_200(writer: &mut Writer<Cursor<Vec<u8>>>, entry: &PropEntry, p
                     "{DAV_PREFIX}resourcetype"
                 ))));
             }
+            "supportedlock" => {
+                w(Event::Start(BytesStart::new(format!(
+                    "{DAV_PREFIX}supportedlock"
+                ))));
+                write_lockentry(&mut w, "exclusive");
+                write_lockentry(&mut w, "shared");
+                w(Event::End(BytesEnd::new(format!(
+                    "{DAV_PREFIX}supportedlock"
+                ))));
+            }
             _ => {}
         }
     }
@@ -169,6 +233,25 @@ fn write_propstat_200(writer: &mut Writer<Cursor<Vec<u8>>>, entry: &PropEntry, p
     w(Event::Text(BytesText::new("HTTP/1.1 200 OK")));
     w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}status"))));
     w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}propstat"))));
+}
+
+fn write_lockentry(w: &mut impl FnMut(Event<'_>), scope: &str) {
+    w(Event::Start(BytesStart::new(format!(
+        "{DAV_PREFIX}lockentry"
+    ))));
+    w(Event::Start(BytesStart::new(format!(
+        "{DAV_PREFIX}lockscope"
+    ))));
+    w(Event::Empty(BytesStart::new(format!(
+        "{DAV_PREFIX}{scope}"
+    ))));
+    w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}lockscope"))));
+    w(Event::Start(BytesStart::new(format!(
+        "{DAV_PREFIX}locktype"
+    ))));
+    w(Event::Empty(BytesStart::new(format!("{DAV_PREFIX}write"))));
+    w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}locktype"))));
+    w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}lockentry"))));
 }
 
 fn write_propstat_404(writer: &mut Writer<Cursor<Vec<u8>>>, props: &[String]) {

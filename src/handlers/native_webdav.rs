@@ -207,9 +207,19 @@ mod tests {
             .await
             .unwrap();
         let text = String::from_utf8(body.to_vec()).unwrap();
-        assert!(text.contains("getcontentlength"));
-        assert!(text.contains("getlastmodified"));
-        assert!(text.contains("resourcetype"));
+        for p in &[
+            "creationdate",
+            "getcontentlength",
+            "getcontenttype",
+            "getetag",
+            "getlastmodified",
+            "lockdiscovery",
+            "resourcetype",
+            "supportedlock",
+        ] {
+            assert!(text.contains(p), "missing property: {p}");
+        }
+        assert!(!text.contains('\n'), "XML should have no newlines");
     }
 
     #[tokio::test]
@@ -250,5 +260,24 @@ mod tests {
             .unwrap();
         let text = String::from_utf8(body.to_vec()).unwrap();
         assert!(text.contains("file%20name.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_propfind_empty_body_defaults_to_allprop() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("x.txt"), b"data").unwrap();
+        let app = make_app(&dir);
+
+        let req = make_propfind("/x.txt", "0", Body::empty());
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 207);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(text.contains("getcontentlength"));
+        assert!(text.contains("getlastmodified"));
+        assert!(text.contains("resourcetype"));
     }
 }

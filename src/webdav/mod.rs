@@ -36,6 +36,8 @@ pub struct PropEntry {
     pub is_dir: bool,
     pub size: u64,
     pub modified: SystemTime,
+    pub created: Option<SystemTime>,
+    pub content_type: Option<String>,
 }
 
 pub fn parse_depth(headers: &HeaderMap) -> Depth {
@@ -79,7 +81,7 @@ pub fn parse_propfind_request(xml: &[u8]) -> Result<PropRequest, Box<dyn std::er
         }
     }
 
-    if found_allprop {
+    if found_allprop || props.is_empty() {
         Ok(PropRequest::AllProp)
     } else if found_propname {
         Ok(PropRequest::PropName)

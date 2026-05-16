@@ -59,6 +59,24 @@ pub fn format_rfc1123(st: SystemTime) -> String {
     )
 }
 
+/// RFC 3339 date format, e.g. "2026-05-11T16:07:56Z".
+pub fn format_rfc3339(st: SystemTime) -> String {
+    let duration = match st.duration_since(UNIX_EPOCH) {
+        Ok(d) => d,
+        Err(_) => return String::new(),
+    };
+
+    let total_secs = duration.as_secs() as i64;
+    let days = (total_secs / 86400) as i32;
+    let time_of_day = total_secs % 86400;
+    let hours = time_of_day / 3600;
+    let mins = (time_of_day % 3600) / 60;
+    let secs = time_of_day % 60;
+
+    let (year, month, day) = civil_from_days(days);
+
+    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{mins:02}:{secs:02}Z")
+}
 /// Days-since-Unix-epoch to (year, month, day).
 ///
 /// Howard Hinnant's `civil_from_days` algorithm — a branchless calendar

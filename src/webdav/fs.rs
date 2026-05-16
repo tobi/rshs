@@ -13,6 +13,26 @@ pub const HREF_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'.')
     .remove(b'~');
 
+fn make_entry(href: String, is_dir: bool, meta: &std::fs::Metadata) -> PropEntry {
+    PropEntry {
+        href,
+        is_dir,
+        size: meta.len(),
+        modified: meta.modified().unwrap_or(UNIX_EPOCH),
+        created: meta.created().ok(),
+        content_type: None,
+    }
+}
+
+fn guess_content_type(child_name: &std::ffi::OsStr) -> Option<String> {
+    let mime = mime_guess::from_path(child_name).first_or_octet_stream();
+    if mime == mime_guess::mime::APPLICATION_OCTET_STREAM {
+        None
+    } else {
+        Some(mime.essence_str().to_owned())
+    }
+}
+
 pub async fn collect_entries(fs_path: &Path, request_path: &str, depth: Depth) -> Vec<PropEntry> {
     let meta = match tokio::fs::metadata(fs_path).await {
         Ok(m) => m,
@@ -20,12 +40,10 @@ pub async fn collect_entries(fs_path: &Path, request_path: &str, depth: Depth) -
     };
 
     let is_dir = meta.is_dir();
-    let base_entry = PropEntry {
-        href: normalize_href(request_path, is_dir),
-        is_dir,
-        size: meta.len(),
-        modified: meta.modified().unwrap_or(UNIX_EPOCH),
-    };
+    let mut base_entry = make_entry(normalize_href(request_path, is_dir), is_dir, &meta);
+    if !is_dir {
+        base_entry.content_type = guess_content_type(fs_path.as_os_str());
+    }
 
     let mut entries = vec![base_entry];
 
@@ -62,18 +80,17 @@ async fn collect_direct_children(dir_path: &Path, parent_href: &str, entries: &m
             Err(_) => continue,
         };
 
-        let file_type = meta.file_type();
+        let is_dir = meta.file_type().is_dir();
         let child_href = format!(
             "{base}{encoded}",
             encoded = utf8_percent_encode(&name_str, HREF_ENCODE_SET)
         );
 
-        entries.push(PropEntry {
-            href: child_href,
-            is_dir: file_type.is_dir(),
-            size: meta.len(),
-            modified: meta.modified().unwrap_or(UNIX_EPOCH),
-        });
+        let mut entry = make_entry(child_href, is_dir, &meta);
+        if !is_dir {
+            entry.content_type = guess_content_type(&name);
+        }
+        entries.push(entry);
     }
 }
 
@@ -101,21 +118,20 @@ async fn collect_descendants(root_dir: &Path, root_href: &str, entries: &mut Vec
                 Err(_) => continue,
             };
 
-            let file_type = meta.file_type();
+            let is_dir = meta.file_type().is_dir();
             let child_href = format!(
                 "{base}{encoded}",
                 base = parent_href,
                 encoded = utf8_percent_encode(&name_str, HREF_ENCODE_SET)
             );
 
-            entries.push(PropEntry {
-                href: child_href.clone(),
-                is_dir: file_type.is_dir(),
-                size: meta.len(),
-                modified: meta.modified().unwrap_or(UNIX_EPOCH),
-            });
+            let mut entry = make_entry(child_href.clone(), is_dir, &meta);
+            if !is_dir {
+                entry.content_type = guess_content_type(&name);
+            }
+            entries.push(entry);
 
-            if file_type.is_dir() {
+            if is_dir {
                 let sub_href = normalize_href_dir(&child_href);
                 stack.push((dir_entry.path(), sub_href));
             }
