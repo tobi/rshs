@@ -278,11 +278,7 @@ mod tests {
         let app = make_app(&dir);
 
         let body = Body::from(
-            r#"<?xml version="1.0" encoding="utf-8"?>
-<D:lockinfo xmlns:D="DAV:">
-  <D:lockscope><D:exclusive/></D:lockscope>
-  <D:locktype><D:write/></D:locktype>
-</D:lockinfo>"#,
+            r#"<?xml version="1.0" encoding="utf-8"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#,
         );
         let req = Request::builder()
             .method(axum::http::Method::from_bytes(b"LOCK").unwrap())
@@ -312,11 +308,7 @@ mod tests {
         let app = make_app(&dir);
 
         let body = Body::from(
-            r#"<?xml version="1.0" encoding="utf-8"?>
-<D:lockinfo xmlns:D="DAV:">
-  <D:lockscope><D:exclusive/></D:lockscope>
-  <D:locktype><D:write/></D:locktype>
-</D:lockinfo>"#,
+            r#"<?xml version="1.0" encoding="utf-8"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#,
         );
         let req = Request::builder()
             .method(axum::http::Method::from_bytes(b"LOCK").unwrap())
@@ -334,11 +326,7 @@ mod tests {
         let app = make_app(&dir);
 
         let body = Body::from(
-            r#"<?xml version="1.0" encoding="utf-8"?>
-<D:lockinfo xmlns:D="DAV:">
-  <D:lockscope><D:exclusive/></D:lockscope>
-  <D:locktype><D:write/></D:locktype>
-</D:lockinfo>"#,
+            r#"<?xml version="1.0" encoding="utf-8"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#,
         );
         let req = Request::builder()
             .method(axum::http::Method::from_bytes(b"LOCK").unwrap())
@@ -351,11 +339,7 @@ mod tests {
         // Re-create app and send LOCK again (refresh)
         let app = make_app(&dir);
         let body = Body::from(
-            r#"<?xml version="1.0" encoding="utf-8"?>
-<D:lockinfo xmlns:D="DAV:">
-  <D:lockscope><D:exclusive/></D:lockscope>
-  <D:locktype><D:write/></D:locktype>
-</D:lockinfo>"#,
+            r#"<?xml version="1.0" encoding="utf-8"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#,
         );
         let req = Request::builder()
             .method(axum::http::Method::from_bytes(b"LOCK").unwrap())
@@ -390,11 +374,7 @@ mod tests {
 
         // Lock
         let body = Body::from(
-            r#"<?xml version="1.0" encoding="utf-8"?>
-<D:lockinfo xmlns:D="DAV:">
-  <D:lockscope><D:exclusive/></D:lockscope>
-  <D:locktype><D:write/></D:locktype>
-</D:lockinfo>"#,
+            r#"<?xml version="1.0" encoding="utf-8"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#,
         );
         let req = Request::builder()
             .method(axum::http::Method::from_bytes(b"LOCK").unwrap())

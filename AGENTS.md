@@ -152,7 +152,7 @@ src/handlers/                      src/handlers/
   native_webdav_mkcol.rs    # MKCOL
   native_webdav_copy_move.rs # COPY/MOVE
   dav_fallback.rs # fallback             locks.rs      # LOCK/UNLOCK
-  native_locks.rs   (planned)
+  native_locks.rs # LOCK/UNLOCK
 ```
 
 ### Remaining Steps

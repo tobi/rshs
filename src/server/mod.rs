@@ -13,17 +13,11 @@ use tower_http::trace::TraceLayer;
 
 use crate::auth::AuthConfig;
 #[cfg(feature = "native-locks")]
-use crate::handlers::native_locks;
-use crate::handlers::{dav_fallback, http_get_head};
-#[cfg(feature = "native-http")]
-use crate::handlers::{native_http_delete, native_http_options, native_http_put};
+use crate::handlers::locks;
 #[cfg(feature = "native-webdav")]
-use crate::handlers::{
-    native_webdav_copy_move, native_webdav_mkcol, native_webdav_propfind, native_webdav_proppatch,
-};
+use crate::handlers::webdav as webdav_handler;
+use crate::handlers::{dav_fallback, http};
 use crate::middleware;
-#[cfg(any(feature = "native-webdav", feature = "native-locks"))]
-use crate::webdav;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -69,47 +63,47 @@ async fn dispatch(
     let method = req.method();
 
     if method == Method::GET || method == Method::HEAD {
-        return http_get_head::handle(State(state), req).await;
+        return http::handle_get_head(State(state), req).await;
     }
     #[cfg(feature = "native-http")]
     if method == Method::PUT {
-        return native_http_put::handle(State(state), req).await;
+        return http::handle_put(State(state), req).await;
     }
     #[cfg(feature = "native-http")]
     if method == Method::DELETE {
-        return native_http_delete::handle(State(state), req).await;
+        return http::handle_delete(State(state), req).await;
     }
     #[cfg(feature = "native-http")]
     if method == Method::OPTIONS {
-        return native_http_options::handle().await;
+        return http::handle_options().await;
     }
     #[cfg(feature = "native-webdav")]
-    if method == *webdav::M_PROPFIND {
-        return native_webdav_propfind::handle(State(state), req).await;
+    if method == *crate::webdav::M_PROPFIND {
+        return webdav_handler::handle_propfind(State(state), req).await;
     }
     #[cfg(feature = "native-webdav")]
-    if method == *webdav::M_MKCOL {
-        return native_webdav_mkcol::handle(State(state), req).await;
+    if method == *crate::webdav::M_MKCOL {
+        return webdav_handler::handle_mkcol(State(state), req).await;
     }
     #[cfg(feature = "native-webdav")]
-    if method == *webdav::M_COPY {
-        return native_webdav_copy_move::handle_copy(State(state), req).await;
+    if method == *crate::webdav::M_COPY {
+        return webdav_handler::handle_copy(State(state), req).await;
     }
     #[cfg(feature = "native-webdav")]
-    if method == *webdav::M_MOVE {
-        return native_webdav_copy_move::handle_move(State(state), req).await;
+    if method == *crate::webdav::M_MOVE {
+        return webdav_handler::handle_move(State(state), req).await;
     }
     #[cfg(feature = "native-webdav")]
-    if method == *webdav::M_PROPPATCH {
-        return native_webdav_proppatch::handle(State(state), req).await;
+    if method == *crate::webdav::M_PROPPATCH {
+        return webdav_handler::handle_proppatch(State(state), req).await;
     }
     #[cfg(feature = "native-locks")]
-    if method == *webdav::M_LOCK {
-        return native_locks::handle_lock(State(state), req).await;
+    if method == *crate::webdav::M_LOCK {
+        return locks::handle_lock(State(state), req).await;
     }
     #[cfg(feature = "native-locks")]
-    if method == *webdav::M_UNLOCK {
-        return native_locks::handle_unlock(State(state), req).await;
+    if method == *crate::webdav::M_UNLOCK {
+        return locks::handle_unlock(State(state), req).await;
     }
 
     dav_fallback::dav_route(State(state), req).await
