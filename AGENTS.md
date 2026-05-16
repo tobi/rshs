@@ -51,7 +51,8 @@ src/
 
   utils/
     mod.rs
-    path.rs                     # Percent-decode + path resolution (resolve_existing, resolve_write_target)
+    error.rs                    # OrStatus trait + ok_or_return! macro
+    path.rs                     # Path resolution (resolve_existing, resolve_write_target, resolve_and_guard)
     time.rs                     # Calendar formatting for directory listings
 ```
 
@@ -85,6 +86,9 @@ src/
   `root_canonical` (cached canonical form for path traversal checks), `auth_config`,
   `dead_props` (WebDAV dead property store), `locks` (lock store). Router built with
   `.with_state(Arc::new(state))`.
+  `AppState` also provides convenience methods delegates to `utils::path`:
+  `state.resolve_existing(path)`, `state.resolve_write_target(path)`,
+  `state.resolve_and_guard(path, create_parents)`.
 - **File I/O**: Hot-path file operations (GET/HEAD serving, directory listing) use
   `tokio::fs` to offload blocking syscalls from async worker threads onto the blocking
   thread pool. Startup-only I/O (TLS cert/key loading, shadow file reads) uses
@@ -92,9 +96,10 @@ src/
   not compete for worker threads.
 - **Middleware via tower Layer**: Middleware is applied with `Router::layer(L)`. Tower Layers
   compose from inside out — the last `.layer()` in the chain runs first.
-- **Middleware order**: `HealthCheck` (outermost) → `Auth` → `TraceLayer` → handler.
+- **Middleware order**: `HealthCheck` (outermost) → `LockEnforce` → `Auth` → `TraceLayer` → handler.
   HealthCheck intercepts `x-health-check: true` before auth. Auth middleware auto-skips when
-  no users are configured (`auth_config.is_empty()`).
+  no users are configured (`auth_config.is_empty()`). LockEnforce checks write operations
+  (PUT/DELETE/MKCOL/PROPPATCH) against the lock store before the handler runs.
 - **Request dispatch**: `.fallback(any(dispatch))` routes all requests through a single
   `dispatch` function that branches by HTTP method:
   `GET`/`HEAD` → `http::handle_get_head`,
@@ -109,10 +114,20 @@ src/
   `LOCK` → `locks::handle_lock`,
   `UNLOCK` → `locks::handle_unlock`,
   unknown → `501 Not Implemented`.
-- **Path resolution**: `utils::path` provides two functions:
+- **Path resolution**: `utils::path` provides three functions + one error type:
   - `resolve_existing()` — canonicalize + traversal check for read ops (GET/HEAD) and delete ops (DELETE)
   - `resolve_write_target()` — segment check + traversal guard for write ops (PUT/DELETE/MKCOL)
-    Both percent-decode the URI path via `percent_encoding::percent_decode_str`.
+  - `resolve_and_guard()` — combined: resolve target + create parent dirs (optional) + canonicalize + traversal check
+  - `ResolveTargetError` — tagged error type with `InvalidPath`, `ParentCanonicalizeFailed`, `TraversalBlocked`
+    All percent-decode the URI path via `percent_encoding::percent_decode_str`.
+- **Error handling**: `utils::error::OrStatus` trait extends `Result<T, E: Display>` with
+  `.or_400(msg)`, `.or_404(msg)`, `.or_500(msg)`, `.or_status(code, msg)` methods that
+  map errors to `Result<T, Response>` with tracing log. `ok_or_return!` macro unwraps
+  `Result<T, Response>` or early-returns from the enclosing handler function.
+- **XML generation**: `webdav/xml.rs` defines `XmlWriterExt` trait (adds `.ev(event)` to
+  `Writer<Cursor<Vec<u8>>>` as shorthand for `.write_event(event).unwrap()`).
+  Helper functions: `multistatus(xml)` → `207 Multi-Status`, `xml_response(status, xml)`
+  for general XML responses.
 - **Lock system**: In-memory lock support via `LockStore` (`Arc<RwLock<HashMap<PathBuf, Vec<LockInfo>>>>`).
   Exclusive write locks only (shared + depth:infinity TODO). Lock enforcement via tower Layer middleware
   (`middleware::lock::lock_enforce`), which intercepts PUT/DELETE/MKCOL/PROPPATCH and rejects with
@@ -152,6 +167,16 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 ```
 
 `TryStreamExt::map_err` bridges `axum::Error` → `io::Error` for `StreamReader` compatibility.
+
+### Known Limitations
+
+| Item                      | Status | Description                                                                                                    |
+| ------------------------- | ------ | -------------------------------------------------------------------------------------------------------------- |
+| Lock scope                | TODO   | Exclusive write locks only (shared + depth:infinity TODO)                                                      |
+| Lock timeout cleanup      | TODO   | No lazy/background cleanup of expired locks                                                                    |
+| Dead property persistence | TODO   | In-memory only (`DeadPropertyStore`), lost on restart. xattr/sidecar-file persistence planned                  |
+| `getetag` format          | Known  | Uses mtime+size hex hash (`format!("{:x}-{:x}", mtime_secs, size)`). No inode available on macOS via `std::fs` |
+| HTML directory listing    | Known  | Single-line HTML output (no indentation). Adequate for browser rendering                                       |
 
 ## Conventions
 
