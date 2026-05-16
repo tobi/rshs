@@ -60,6 +60,8 @@ async fn dispatch(
         Method::GET | Method::HEAD => serve::handle(State(state), req).await,
         #[cfg(feature = "native-http")]
         Method::PUT => native_http::handle_put(State(state), req).await,
+        #[cfg(feature = "native-http")]
+        Method::DELETE => native_http::handle_delete(State(state), req).await,
         _ => webdav::dav_route(State(state), req).await,
     }
 }
