@@ -12,20 +12,46 @@ use axum::http::StatusCode;
 use axum::middleware as axum_mw;
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
+use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
 
 use crate::auth::AuthConfig;
 use crate::handlers::{http, locks, webdav as webdav_handler};
 use crate::middleware;
-use crate::webdav;
+use crate::utils::path::{self, ResolveTargetError};
+use crate::webdav::{self, DeadPropertyStore, LockStore};
 
 #[derive(Clone)]
 pub struct AppState {
     pub root_dir: PathBuf,
     pub root_canonical: PathBuf,
     pub auth_config: Arc<AuthConfig>,
-    pub dead_props: Arc<tokio::sync::RwLock<crate::webdav::DeadPropertyStore>>,
-    pub locks: Arc<tokio::sync::RwLock<crate::webdav::LockStore>>,
+    pub dead_props: Arc<RwLock<DeadPropertyStore>>,
+    pub locks: Arc<RwLock<LockStore>>,
+}
+
+impl AppState {
+    pub async fn resolve_existing(&self, request_path: &str) -> Option<PathBuf> {
+        path::resolve_existing(&self.root_dir, &self.root_canonical, request_path).await
+    }
+
+    pub fn resolve_write_target(&self, request_path: &str) -> Option<PathBuf> {
+        path::resolve_write_target(&self.root_dir, request_path)
+    }
+
+    pub async fn resolve_and_guard(
+        &self,
+        request_path: &str,
+        create_parents: bool,
+    ) -> Result<PathBuf, ResolveTargetError> {
+        path::resolve_and_guard(
+            &self.root_dir,
+            &self.root_canonical,
+            request_path,
+            create_parents,
+        )
+        .await
+    }
 }
 
 #[derive(Clone)]
@@ -86,15 +112,17 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response 
 }
 
 pub fn app(config: &ServerConfig) -> Router {
+    use tokio::sync::RwLock;
+
+    use crate::webdav::{DeadPropertyStore, LockStore};
+
     let state = Arc::new(AppState {
         root_dir: config.root_dir.clone(),
         root_canonical: fs::canonicalize(&config.root_dir)
             .unwrap_or_else(|_| config.root_dir.clone()),
         auth_config: Arc::new(config.auth_config.clone()),
-        dead_props: Arc::new(tokio::sync::RwLock::new(
-            crate::webdav::DeadPropertyStore::new(),
-        )),
-        locks: Arc::new(tokio::sync::RwLock::new(crate::webdav::LockStore::new())),
+        dead_props: Arc::new(RwLock::new(DeadPropertyStore::new())),
+        locks: Arc::new(RwLock::new(LockStore::new())),
     });
 
     Router::new()

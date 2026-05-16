@@ -48,23 +48,19 @@ const SUPPORTED_PROPS: &[&str] = &[
 pub fn build_multistatus(entries: &[PropEntry], prop_request: &PropRequest) -> String {
     let mut writer = Writer::new(Cursor::new(Vec::new()));
 
-    writer
-        .write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)))
-        .unwrap();
+    writer.ev(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
 
     let mut ms = BytesStart::new(format!("{DAV_PREFIX}multistatus"));
     ms.push_attribute(("xmlns:D", DAV_NS));
-    writer.write_event(Event::Start(ms)).unwrap();
+    writer.ev(Event::Start(ms));
 
     for entry in entries {
         write_response(&mut writer, entry, prop_request);
     }
 
-    writer
-        .write_event(Event::End(BytesEnd::new(format!(
-            "{DAV_PREFIX}multistatus"
-        ))))
-        .unwrap();
+    writer.ev(Event::End(BytesEnd::new(format!(
+        "{DAV_PREFIX}multistatus"
+    ))));
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
@@ -74,27 +70,17 @@ fn write_response(
     entry: &PropEntry,
     prop_request: &PropRequest,
 ) {
-    writer
-        .write_event(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}response"
-        ))))
-        .unwrap();
+    writer.ev(Event::Start(BytesStart::new(format!(
+        "{DAV_PREFIX}response"
+    ))));
 
-    writer
-        .write_event(Event::Start(BytesStart::new(format!("{DAV_PREFIX}href"))))
-        .unwrap();
-    writer
-        .write_event(Event::Text(BytesText::new(&entry.href)))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}href"))))
-        .unwrap();
+    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}href"))));
+    writer.ev(Event::Text(BytesText::new(&entry.href)));
+    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}href"))));
 
     if matches!(prop_request, PropRequest::PropName) {
         write_propname(writer, SUPPORTED_PROPS);
-        writer
-            .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}response"))))
-            .unwrap();
+        writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}response"))));
         return;
     }
 
@@ -146,9 +132,7 @@ fn write_response(
         }
     }
 
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}response"))))
-        .unwrap();
+    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}response"))));
 }
 
 fn is_applicable(prop: &str, is_dir: bool) -> bool {

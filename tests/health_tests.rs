@@ -9,6 +9,10 @@ use tower::ServiceExt;
 use rshs::{self, AppState};
 
 fn make_app(dir: &tempfile::TempDir) -> Router {
+    use std::collections::HashMap;
+
+    use tokio::sync::RwLock;
+
     let path = dir.path().to_path_buf();
     Router::new()
         .fallback(rshs::handlers::http::handle_get_head)
@@ -17,8 +21,8 @@ fn make_app(dir: &tempfile::TempDir) -> Router {
             root_dir: path.clone(),
             root_canonical: path.canonicalize().unwrap_or(path),
             auth_config: Arc::new(rshs::AuthConfig::new()),
-            dead_props: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-            locks: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            dead_props: Arc::new(RwLock::new(HashMap::new())),
+            locks: Arc::new(RwLock::new(HashMap::new())),
         }))
 }
 

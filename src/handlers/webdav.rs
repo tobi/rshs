@@ -24,14 +24,13 @@ pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -
     let depth = webdav::parse_depth(req.headers());
     let request_path = req.uri().path().to_owned();
 
-    let fs_path =
-        match path::resolve_existing(&state.root_dir, &state.root_canonical, &request_path).await {
-            Some(p) => p,
-            None => {
-                tracing::debug!("path resolution failed for PROPFIND");
-                return StatusCode::NOT_FOUND.into_response();
-            }
-        };
+    let fs_path = match state.resolve_existing(&request_path).await {
+        Some(p) => p,
+        None => {
+            tracing::debug!("path resolution failed for PROPFIND");
+            return StatusCode::NOT_FOUND.into_response();
+        }
+    };
 
     let body_bytes = ok_or_return!(
         body::to_bytes(req.into_body(), 65536)
@@ -73,24 +72,21 @@ pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -
 pub async fn handle_mkcol(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
-    let target =
-        match path::resolve_and_guard(&state.root_dir, &state.root_canonical, &request_path, false)
-            .await
-        {
-            Ok(t) => t,
-            Err(path::ResolveTargetError::InvalidPath) => {
-                tracing::debug!("path resolution failed for MKCOL");
-                return StatusCode::FORBIDDEN.into_response();
-            }
-            Err(path::ResolveTargetError::ParentCanonicalizeFailed(_)) => {
-                tracing::debug!("parent not found for MKCOL");
-                return StatusCode::CONFLICT.into_response();
-            }
-            Err(path::ResolveTargetError::TraversalBlocked) => {
-                tracing::warn!(path = %request_path, "path traversal blocked in MKCOL");
-                return StatusCode::FORBIDDEN.into_response();
-            }
-        };
+    let target = match state.resolve_and_guard(&request_path, false).await {
+        Ok(t) => t,
+        Err(path::ResolveTargetError::InvalidPath) => {
+            tracing::debug!("path resolution failed for MKCOL");
+            return StatusCode::FORBIDDEN.into_response();
+        }
+        Err(path::ResolveTargetError::ParentCanonicalizeFailed(_)) => {
+            tracing::debug!("parent not found for MKCOL");
+            return StatusCode::CONFLICT.into_response();
+        }
+        Err(path::ResolveTargetError::TraversalBlocked) => {
+            tracing::warn!(path = %request_path, "path traversal blocked in MKCOL");
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    };
 
     if tokio::fs::metadata(&target).await.is_ok() {
         tracing::debug!(path = %target.display(), "MKCOL target already exists");
@@ -134,13 +130,12 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
     };
     let src_path = req.uri().path().to_owned();
 
-    let fs_src =
-        match path::resolve_existing(&state.root_dir, &state.root_canonical, &src_path).await {
-            Some(p) => p,
-            None => return StatusCode::NOT_FOUND.into_response(),
-        };
+    let fs_src = match state.resolve_existing(&src_path).await {
+        Some(p) => p,
+        None => return StatusCode::NOT_FOUND.into_response(),
+    };
 
-    let fs_dest = match path::resolve_write_target(&state.root_dir, &dest_str) {
+    let fs_dest = match state.resolve_write_target(&dest_str) {
         Some(p) => p,
         None => return StatusCode::FORBIDDEN.into_response(),
     };
@@ -149,14 +144,7 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
         return StatusCode::FORBIDDEN.into_response();
     }
 
-    let dest = match path::resolve_and_guard(
-        &state.root_dir,
-        &state.root_canonical,
-        &dest_str,
-        true,
-    )
-    .await
-    {
+    let dest = match state.resolve_and_guard(&dest_str, true).await {
         Ok(t) => t,
         Err(path::ResolveTargetError::InvalidPath) => unreachable!(),
         Err(path::ResolveTargetError::ParentCanonicalizeFailed(e)) => {
@@ -261,14 +249,13 @@ async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), Res
 pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
-    let fs_path =
-        match path::resolve_existing(&state.root_dir, &state.root_canonical, &request_path).await {
-            Some(p) => p,
-            None => {
-                tracing::debug!("path resolution failed for PROPPATCH");
-                return StatusCode::NOT_FOUND.into_response();
-            }
-        };
+    let fs_path = match state.resolve_existing(&request_path).await {
+        Some(p) => p,
+        None => {
+            tracing::debug!("path resolution failed for PROPPATCH");
+            return StatusCode::NOT_FOUND.into_response();
+        }
+    };
 
     let body_bytes = ok_or_return!(
         body::to_bytes(req.into_body(), 65536)
@@ -387,31 +374,16 @@ fn write_proppatch_result(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use axum::{Router, body::Body, extract::Request, routing::any};
     use tower::ServiceExt;
-
-    use crate::{AppState, AuthConfig};
-
-    fn make_state(root: &std::path::Path) -> Arc<AppState> {
-        let root_buf = root.to_path_buf();
-        let canonical = root_buf.canonicalize().unwrap_or_else(|_| root_buf.clone());
-        Arc::new(AppState {
-            root_dir: root_buf.clone(),
-            root_canonical: canonical,
-            auth_config: Arc::new(AuthConfig::new()),
-            dead_props: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-            locks: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-        })
-    }
 
     // -- PROPFIND tests -----------------------------------------------------
 
     fn make_app_propfind(dir: &tempfile::TempDir) -> Router {
         Router::new()
             .fallback(any(super::handle_propfind))
-            .with_state(make_state(dir.path()))
+            .with_state(crate::make_test_state(dir.path()))
     }
 
     fn propfind_body(props: &str) -> Body {
@@ -625,7 +597,7 @@ mod tests {
     fn make_app_mkcol(dir: &tempfile::TempDir) -> Router {
         Router::new()
             .fallback(any(super::handle_mkcol))
-            .with_state(make_state(dir.path()))
+            .with_state(crate::make_test_state(dir.path()))
     }
 
     fn make_mkcol(uri: &str) -> Request {
@@ -704,7 +676,7 @@ mod tests {
     fn make_app_copy(dir: &tempfile::TempDir) -> Router {
         Router::new()
             .fallback(any(super::handle_copy))
-            .with_state(make_state(dir.path()))
+            .with_state(crate::make_test_state(dir.path()))
     }
 
     fn make_copy(uri: &str, dest: &str, overwrite: Option<&str>) -> Request {
@@ -814,7 +786,7 @@ mod tests {
     fn make_app_move(dir: &tempfile::TempDir) -> Router {
         Router::new()
             .fallback(any(super::handle_move))
-            .with_state(make_state(dir.path()))
+            .with_state(crate::make_test_state(dir.path()))
     }
 
     fn make_move(uri: &str, dest: &str, overwrite: Option<&str>) -> Request {
@@ -921,7 +893,7 @@ mod tests {
     fn make_app_proppatch(dir: &tempfile::TempDir) -> Router {
         Router::new()
             .fallback(any(super::handle_proppatch))
-            .with_state(make_state(dir.path()))
+            .with_state(crate::make_test_state(dir.path()))
     }
 
     #[tokio::test]

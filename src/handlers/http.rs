@@ -23,14 +23,13 @@ pub use axum::http::Method;
 pub async fn handle_get_head(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
-    let fs_path =
-        match path::resolve_existing(&state.root_dir, &state.root_canonical, &request_path).await {
-            Some(p) => p,
-            None => {
-                tracing::debug!("path resolution failed");
-                return StatusCode::NOT_FOUND.into_response();
-            }
-        };
+    let fs_path = match state.resolve_existing(&request_path).await {
+        Some(p) => p,
+        None => {
+            tracing::debug!("path resolution failed");
+            return StatusCode::NOT_FOUND.into_response();
+        }
+    };
 
     do_get_or_head(fs_path, request_path, req.method()).await
 }
@@ -168,32 +167,29 @@ async fn generate_dir_listing(dir_path: &Path, request_path: &str) -> (String, u
 }
 
 // ---------------------------------------------------------------------------
-// PUT (native-http)
+// PUT
 // ---------------------------------------------------------------------------
 
 pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
-    let target =
-        match path::resolve_and_guard(&state.root_dir, &state.root_canonical, &request_path, true)
-            .await
-        {
-            Ok(t) => t,
-            Err(path::ResolveTargetError::InvalidPath) => {
-                tracing::debug!("path resolution failed");
-                return StatusCode::BAD_REQUEST.into_response();
-            }
-            Err(path::ResolveTargetError::ParentCanonicalizeFailed(e)) => {
-                tracing::error!(
-                    error = %e, "failed to create/canonicalize parent dirs for PUT"
-                );
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
-            Err(path::ResolveTargetError::TraversalBlocked) => {
-                tracing::warn!(path = %request_path, "path traversal blocked in PUT");
-                return StatusCode::FORBIDDEN.into_response();
-            }
-        };
+    let target = match state.resolve_and_guard(&request_path, true).await {
+        Ok(t) => t,
+        Err(path::ResolveTargetError::InvalidPath) => {
+            tracing::debug!("path resolution failed");
+            return StatusCode::BAD_REQUEST.into_response();
+        }
+        Err(path::ResolveTargetError::ParentCanonicalizeFailed(e)) => {
+            tracing::error!(
+                error = %e, "failed to create/canonicalize parent dirs for PUT"
+            );
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        Err(path::ResolveTargetError::TraversalBlocked) => {
+            tracing::warn!(path = %request_path, "path traversal blocked in PUT");
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    };
 
     let existed = match tokio::fs::metadata(&target).await {
         Ok(m) => m.is_file(),
@@ -241,20 +237,19 @@ pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Res
 }
 
 // ---------------------------------------------------------------------------
-// DELETE (native-http)
+// DELETE
 // ---------------------------------------------------------------------------
 
 pub async fn handle_delete(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
-    let fs_path =
-        match path::resolve_existing(&state.root_dir, &state.root_canonical, &request_path).await {
-            Some(p) => p,
-            None => {
-                tracing::debug!("path resolution failed for DELETE");
-                return StatusCode::NOT_FOUND.into_response();
-            }
-        };
+    let fs_path = match state.resolve_existing(&request_path).await {
+        Some(p) => p,
+        None => {
+            tracing::debug!("path resolution failed for DELETE");
+            return StatusCode::NOT_FOUND.into_response();
+        }
+    };
 
     let meta = match tokio::fs::metadata(&fs_path).await {
         Ok(m) => m,
@@ -298,7 +293,7 @@ pub async fn handle_delete(State(state): State<Arc<AppState>>, req: Request) -> 
 }
 
 // ---------------------------------------------------------------------------
-// OPTIONS (native-http)
+// OPTIONS
 // ---------------------------------------------------------------------------
 
 pub async fn handle_options() -> Response {
@@ -388,6 +383,10 @@ mod tests {
     // -- PUT tests -----------------------------------------------------------
 
     fn make_app_put(dir: &tempfile::TempDir) -> Router {
+        use std::collections::HashMap;
+
+        use tokio::sync::RwLock;
+
         let root = dir.path().to_path_buf();
         let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
         Router::new()
@@ -397,8 +396,8 @@ mod tests {
                 root_dir: root.clone(),
                 root_canonical: canonical,
                 auth_config: Arc::new(AuthConfig::new()),
-                dead_props: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-                locks: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+                dead_props: Arc::new(RwLock::new(HashMap::new())),
+                locks: Arc::new(RwLock::new(HashMap::new())),
             }))
     }
 
@@ -524,6 +523,10 @@ mod tests {
     // -- DELETE tests --------------------------------------------------------
 
     fn make_app_delete(dir: &tempfile::TempDir) -> Router {
+        use std::collections::HashMap;
+
+        use tokio::sync::RwLock;
+
         let root = dir.path().to_path_buf();
         let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
         Router::new()
@@ -533,8 +536,8 @@ mod tests {
                 root_dir: root.clone(),
                 root_canonical: canonical,
                 auth_config: Arc::new(AuthConfig::new()),
-                dead_props: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-                locks: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+                dead_props: Arc::new(RwLock::new(HashMap::new())),
+                locks: Arc::new(RwLock::new(HashMap::new())),
             }))
     }
 

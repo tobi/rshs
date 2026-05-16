@@ -11,18 +11,20 @@ use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use crate::ok_or_return;
 use crate::server::AppState;
 use crate::utils::error::OrStatus;
-use crate::utils::path;
 use crate::webdav;
 use crate::webdav::xml::DAV_PREFIX;
+
+// ---------------------------------------------------------------------------
+// LOCK
+// ---------------------------------------------------------------------------
 
 pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
-    let fs_path =
-        match path::resolve_existing(&state.root_dir, &state.root_canonical, &request_path).await {
-            Some(p) => p,
-            None => return StatusCode::NOT_FOUND.into_response(),
-        };
+    let fs_path = match state.resolve_existing(&request_path).await {
+        Some(p) => p,
+        None => return StatusCode::NOT_FOUND.into_response(),
+    };
 
     let timeout = webdav::parse_timeout(req.headers());
     let body_bytes = ok_or_return!(
@@ -71,6 +73,10 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
         .unwrap()
 }
 
+// ---------------------------------------------------------------------------
+// UNLOCK
+// ---------------------------------------------------------------------------
+
 pub async fn handle_unlock(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
     let token = match webdav::parse_lock_token_header(req.headers()) {
@@ -78,11 +84,10 @@ pub async fn handle_unlock(State(state): State<Arc<AppState>>, req: Request) -> 
         None => return StatusCode::BAD_REQUEST.into_response(),
     };
 
-    let fs_path =
-        match path::resolve_existing(&state.root_dir, &state.root_canonical, &request_path).await {
-            Some(p) => p,
-            None => return StatusCode::NOT_FOUND.into_response(),
-        };
+    let fs_path = match state.resolve_existing(&request_path).await {
+        Some(p) => p,
+        None => return StatusCode::NOT_FOUND.into_response(),
+    };
 
     let mut locks = state.locks.write().await;
     if let Some(entry) = locks.get_mut(&fs_path) {
@@ -233,6 +238,10 @@ fn build_lock_response(token: &str, timeout: Option<std::time::Duration>) -> Str
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
 
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -243,31 +252,15 @@ mod tests {
     use crate::{AppState, AuthConfig};
 
     fn make_app(dir: &tempfile::TempDir) -> Router {
-        let root = dir.path().to_path_buf();
-        let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
         Router::new()
             .fallback(any(super::handle_lock))
-            .with_state(Arc::new(AppState {
-                root_dir: root.clone(),
-                root_canonical: canonical,
-                auth_config: Arc::new(AuthConfig::new()),
-                dead_props: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-                locks: Arc::new(tokio::sync::RwLock::new(crate::webdav::LockStore::new())),
-            }))
+            .with_state(crate::make_test_state(dir.path()))
     }
 
     fn make_app_unlock(dir: &tempfile::TempDir) -> Router {
-        let root = dir.path().to_path_buf();
-        let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
         Router::new()
             .fallback(any(super::handle_unlock))
-            .with_state(Arc::new(AppState {
-                root_dir: root.clone(),
-                root_canonical: canonical,
-                auth_config: Arc::new(AuthConfig::new()),
-                dead_props: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-                locks: Arc::new(tokio::sync::RwLock::new(crate::webdav::LockStore::new())),
-            }))
+            .with_state(crate::make_test_state(dir.path()))
     }
 
     #[tokio::test]
@@ -351,6 +344,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_unlock() {
+        use std::collections::HashMap;
+
+        use tokio::sync::RwLock;
+
+        use crate::webdav::LockStore;
+
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join("f.txt"), b"data").unwrap();
 
@@ -360,8 +359,8 @@ mod tests {
             root_dir: root.clone(),
             root_canonical: canonical,
             auth_config: Arc::new(AuthConfig::new()),
-            dead_props: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-            locks: Arc::new(tokio::sync::RwLock::new(crate::webdav::LockStore::new())),
+            dead_props: Arc::new(RwLock::new(HashMap::new())),
+            locks: Arc::new(RwLock::new(LockStore::new())),
         });
         let lock_app = Router::new()
             .fallback(any(super::handle_lock))
