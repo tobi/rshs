@@ -43,7 +43,7 @@ pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -
     let xml = webdav::xml::build_multistatus(&entries, &prop_request);
 
     tracing::debug!(
-        path = %request_path, depth = ?depth, entries = entries.len(), "PROPFIND completed"
+        path = %fs_path.display(), depth = ?depth, entries = entries.len(), "PROPFIND completed"
     );
 
     Response::builder()
