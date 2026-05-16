@@ -8,7 +8,9 @@ use axum::response::{IntoResponse, Response};
 use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
+use crate::ok_or_return;
 use crate::server::AppState;
+use crate::utils::error::OrStatus;
 use crate::utils::path;
 use crate::webdav;
 use crate::webdav::xml::DAV_PREFIX;
@@ -30,23 +32,14 @@ pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -
             }
         };
 
-    let body_bytes = match body::to_bytes(req.into_body(), 65536).await {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::error!(error = %e, "failed to read PROPFIND body");
-            return StatusCode::BAD_REQUEST.into_response();
-        }
-    };
-    let prop_request = match webdav::parse_propfind_request(&body_bytes) {
-        Ok(p) => {
-            tracing::debug!(?p, "parsed PROPFIND request");
-            p
-        }
-        Err(e) => {
-            tracing::debug!(error = %e, "failed to parse PROPFIND request");
-            return StatusCode::BAD_REQUEST.into_response();
-        }
-    };
+    let body_bytes = ok_or_return!(
+        body::to_bytes(req.into_body(), 65536)
+            .await
+            .or_400("failed to read PROPFIND body")
+    );
+    let prop_request = ok_or_return!(
+        webdav::parse_propfind_request(&body_bytes).or_400("failed to parse PROPFIND request")
+    );
 
     let mut entries = webdav::fs::collect_entries(&fs_path, &request_path, depth).await;
 
@@ -214,10 +207,9 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
 }
 
 async fn copy_file(src: &std::path::Path, dest: &std::path::Path) -> Result<(), Response> {
-    tokio::fs::copy(src, dest).await.map_err(|e| {
-        tracing::error!(error = %e, src = %src.display(), dest = %dest.display(), "copy file failed");
-        StatusCode::INTERNAL_SERVER_ERROR.into_response()
-    })?;
+    tokio::fs::copy(src, dest)
+        .await
+        .or_500("copy file failed")?;
     Ok(())
 }
 
@@ -285,21 +277,15 @@ pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) 
             }
         };
 
-    let body_bytes = match body::to_bytes(req.into_body(), 65536).await {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::error!(error = %e, "failed to read PROPPATCH body");
-            return StatusCode::BAD_REQUEST.into_response();
-        }
-    };
+    let body_bytes = ok_or_return!(
+        body::to_bytes(req.into_body(), 65536)
+            .await
+            .or_400("failed to read PROPPATCH body")
+    );
 
-    let op = match webdav::parse_proppatch_request(&body_bytes) {
-        Ok(o) => o,
-        Err(e) => {
-            tracing::debug!(error = %e, "failed to parse PROPPATCH request");
-            return StatusCode::BAD_REQUEST.into_response();
-        }
-    };
+    let op = ok_or_return!(
+        webdav::parse_proppatch_request(&body_bytes).or_400("failed to parse PROPPATCH request")
+    );
 
     let mut dead_props = state.dead_props.write().await;
     let entry = dead_props.entry(fs_path.clone()).or_default();

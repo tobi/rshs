@@ -8,7 +8,9 @@ use axum::response::{IntoResponse, Response};
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 
+use crate::ok_or_return;
 use crate::server::AppState;
+use crate::utils::error::OrStatus;
 use crate::utils::path;
 use crate::webdav;
 use crate::webdav::xml::DAV_PREFIX;
@@ -23,10 +25,11 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
         };
 
     let timeout = webdav::parse_timeout(req.headers());
-    let body_bytes = match body::to_bytes(req.into_body(), 65536).await {
-        Ok(b) => b,
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-    };
+    let body_bytes = ok_or_return!(
+        body::to_bytes(req.into_body(), 65536)
+            .await
+            .or_400("failed to read LOCK body")
+    );
 
     let owner = parse_lock_owner(&body_bytes);
     let token = webdav::generate_lock_token();
