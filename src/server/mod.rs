@@ -85,6 +85,14 @@ async fn dispatch(
     if method == *webdav::M_MKCOL {
         return native_webdav::handle_mkcol(State(state), req).await;
     }
+    #[cfg(feature = "native-webdav")]
+    if method == *webdav::M_COPY {
+        return native_webdav::handle_copy(State(state), req).await;
+    }
+    #[cfg(feature = "native-webdav")]
+    if method == *webdav::M_MOVE {
+        return native_webdav::handle_move(State(state), req).await;
+    }
 
     dav_fallback::dav_route(State(state), req).await
 }
