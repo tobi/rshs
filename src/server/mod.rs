@@ -59,27 +59,27 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response 
     let method = req.method();
 
     if method == http::Method::GET || method == http::Method::HEAD {
-        return http::handle_get_head(State(state), req).await;
+        http::handle_get_head(State(state), req).await
     } else if method == http::Method::PUT {
-        return http::handle_put(State(state), req).await;
+        http::handle_put(State(state), req).await
     } else if method == http::Method::DELETE {
-        return http::handle_delete(State(state), req).await;
+        http::handle_delete(State(state), req).await
     } else if method == http::Method::OPTIONS {
-        return http::handle_options().await;
+        http::handle_options().await
     } else if method == *webdav::M_PROPFIND {
-        return webdav_handler::handle_propfind(State(state), req).await;
+        webdav_handler::handle_propfind(State(state), req).await
     } else if method == *webdav::M_MKCOL {
-        return webdav_handler::handle_mkcol(State(state), req).await;
+        webdav_handler::handle_mkcol(State(state), req).await
     } else if method == *webdav::M_COPY {
-        return webdav_handler::handle_copy(State(state), req).await;
+        webdav_handler::handle_copy(State(state), req).await
     } else if method == *webdav::M_MOVE {
-        return webdav_handler::handle_move(State(state), req).await;
+        webdav_handler::handle_move(State(state), req).await
     } else if method == *webdav::M_PROPPATCH {
-        return webdav_handler::handle_proppatch(State(state), req).await;
+        webdav_handler::handle_proppatch(State(state), req).await
     } else if method == *webdav::M_LOCK {
-        return locks::handle_lock(State(state), req).await;
+        locks::handle_lock(State(state), req).await
     } else if method == *webdav::M_UNLOCK {
-        return locks::handle_unlock(State(state), req).await;
+        locks::handle_unlock(State(state), req).await
     } else {
         StatusCode::NOT_IMPLEMENTED.into_response()
     }

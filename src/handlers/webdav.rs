@@ -83,30 +83,24 @@ pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -
 pub async fn handle_mkcol(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
-    let fs_path = match path::resolve_write_target(&state.root_dir, &request_path) {
-        Some(p) => p,
-        None => {
-            tracing::debug!("path resolution failed for MKCOL");
-            return StatusCode::FORBIDDEN.into_response();
-        }
-    };
-
-    let parent = fs_path.parent().unwrap_or(&state.root_dir);
-    let parent_canonical = match tokio::fs::canonicalize(parent).await {
-        Ok(p) => p,
-        Err(_) => {
-            tracing::debug!("parent not found for MKCOL");
-            return StatusCode::CONFLICT.into_response();
-        }
-    };
-
-    if !parent_canonical.starts_with(state.root_canonical.as_path()) {
-        tracing::warn!(path = %fs_path.display(), "path traversal blocked in MKCOL");
-        return StatusCode::FORBIDDEN.into_response();
-    }
-
-    let filename = fs_path.file_name().unwrap();
-    let target = parent_canonical.join(filename);
+    let target =
+        match path::resolve_and_guard(&state.root_dir, &state.root_canonical, &request_path, false)
+            .await
+        {
+            Ok(t) => t,
+            Err(path::ResolveTargetError::InvalidPath) => {
+                tracing::debug!("path resolution failed for MKCOL");
+                return StatusCode::FORBIDDEN.into_response();
+            }
+            Err(path::ResolveTargetError::ParentCanonicalizeFailed(_)) => {
+                tracing::debug!("parent not found for MKCOL");
+                return StatusCode::CONFLICT.into_response();
+            }
+            Err(path::ResolveTargetError::TraversalBlocked) => {
+                tracing::warn!(path = %request_path, "path traversal blocked in MKCOL");
+                return StatusCode::FORBIDDEN.into_response();
+            }
+        };
 
     if tokio::fs::metadata(&target).await.is_ok() {
         tracing::debug!(path = %target.display(), "MKCOL target already exists");
@@ -165,22 +159,24 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
         return StatusCode::FORBIDDEN.into_response();
     }
 
-    let dest_parent = fs_dest.parent().unwrap_or(&state.root_dir);
-    if let Err(e) = tokio::fs::create_dir_all(dest_parent).await {
-        tracing::error!(error = %e, path = %dest_parent.display(), "failed to create dest parent dirs");
-        return StatusCode::CONFLICT.into_response();
-    }
-
-    let parent_canonical = match tokio::fs::canonicalize(dest_parent).await {
-        Ok(p) => p,
-        Err(_) => return StatusCode::CONFLICT.into_response(),
+    let dest = match path::resolve_and_guard(
+        &state.root_dir,
+        &state.root_canonical,
+        &dest_str,
+        true,
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(path::ResolveTargetError::InvalidPath) => unreachable!(),
+        Err(path::ResolveTargetError::ParentCanonicalizeFailed(e)) => {
+            tracing::error!(error = %e, "failed to create dest parent dirs");
+            return StatusCode::CONFLICT.into_response();
+        }
+        Err(path::ResolveTargetError::TraversalBlocked) => {
+            return StatusCode::FORBIDDEN.into_response();
+        }
     };
-    if !parent_canonical.starts_with(state.root_canonical.as_path()) {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-
-    let filename = fs_dest.file_name().unwrap();
-    let dest = parent_canonical.join(filename);
     let dest_existed = tokio::fs::metadata(&dest).await.is_ok();
 
     if dest_existed && !overwrite {

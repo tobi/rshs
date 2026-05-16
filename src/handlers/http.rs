@@ -11,7 +11,7 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::server::AppState;
-use crate::utils::path::{self, resolve_existing};
+use crate::utils::path;
 use crate::utils::time::format_modified;
 
 pub use axum::http::Method;
@@ -24,7 +24,7 @@ pub async fn handle_get_head(State(state): State<Arc<AppState>>, req: Request) -
     let request_path = req.uri().path().to_owned();
 
     let fs_path =
-        match resolve_existing(&state.root_dir, &state.root_canonical, &request_path).await {
+        match path::resolve_existing(&state.root_dir, &state.root_canonical, &request_path).await {
             Some(p) => p,
             None => {
                 tracing::debug!("path resolution failed");
@@ -174,39 +174,26 @@ async fn generate_dir_listing(dir_path: &Path, request_path: &str) -> (String, u
 pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
-    let fs_path = match path::resolve_write_target(&state.root_dir, &request_path) {
-        Some(p) => p,
-        None => {
-            tracing::debug!("path resolution failed");
-            return StatusCode::BAD_REQUEST.into_response();
-        }
-    };
-
-    let parent = fs_path.parent().unwrap_or(&state.root_dir);
-    if let Err(e) = tokio::fs::create_dir_all(parent).await {
-        tracing::error!(
-            error = %e, path = %parent.display(), "failed to create parent directories for PUT"
-        );
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    }
-
-    let parent_canonical = match tokio::fs::canonicalize(parent).await {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!(
-                error = %e, path = %parent.display(), "failed to canonicalize parent for PUT"
-            );
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-    };
-
-    if !parent_canonical.starts_with(state.root_canonical.as_path()) {
-        tracing::warn!(path = %fs_path.display(), "path traversal blocked in PUT");
-        return StatusCode::FORBIDDEN.into_response();
-    }
-
-    let filename = fs_path.file_name().unwrap();
-    let target = parent_canonical.join(filename);
+    let target =
+        match path::resolve_and_guard(&state.root_dir, &state.root_canonical, &request_path, true)
+            .await
+        {
+            Ok(t) => t,
+            Err(path::ResolveTargetError::InvalidPath) => {
+                tracing::debug!("path resolution failed");
+                return StatusCode::BAD_REQUEST.into_response();
+            }
+            Err(path::ResolveTargetError::ParentCanonicalizeFailed(e)) => {
+                tracing::error!(
+                    error = %e, "failed to create/canonicalize parent dirs for PUT"
+                );
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+            Err(path::ResolveTargetError::TraversalBlocked) => {
+                tracing::warn!(path = %request_path, "path traversal blocked in PUT");
+                return StatusCode::FORBIDDEN.into_response();
+            }
+        };
 
     let existed = match tokio::fs::metadata(&target).await {
         Ok(m) => m.is_file(),

@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
-use axum::{
-    http::StatusCode,
-    middleware::Next,
-    response::{IntoResponse, Response},
-};
+use axum::http::StatusCode;
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 
 use crate::server::AppState;
 use crate::webdav;

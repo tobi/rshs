@@ -2,11 +2,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use axum::{
-    body::Body,
-    http::{HeaderMap, StatusCode},
-    response::Response,
-};
+use axum::body::Body;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::Response;
 use tower::{Layer, Service};
 
 const HEALTH_CHECK_HEADER: &str = "x-health-check";
