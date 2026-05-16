@@ -13,8 +13,7 @@ use crate::ok_or_return;
 use crate::server::AppState;
 use crate::utils::error::OrStatus;
 use crate::utils::path;
-use crate::webdav;
-use crate::webdav::xml::DAV_PREFIX;
+use crate::webdav::{self, xml::DAV_PREFIX};
 
 // ---------------------------------------------------------------------------
 // PROPFIND
@@ -507,8 +506,7 @@ mod tests {
         let app = make_app_propfind(&dir);
 
         let body = Body::from(
-            r#"<?xml version="1.0" encoding="utf-8"?>
-<D:propfind xmlns:D="DAV:"><D:allprop/></D:propfind>"#,
+            r#"<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:allprop/></D:propfind>"#,
         );
         let req = make_propfind("/x.txt", "0", body);
         let resp = app.oneshot(req).await.unwrap();
@@ -903,10 +901,7 @@ mod tests {
         let app = make_app_proppatch(&dir);
 
         let body = Body::from(
-            r#"<?xml version="1.0" encoding="utf-8"?>
-<D:propertyupdate xmlns:D="DAV:">
-  <D:set><D:prop><X:author>Alice</X:author></D:prop></D:set>
-</D:propertyupdate>"#,
+            r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:author>Alice</X:author></D:prop></D:set></D:propertyupdate>"#,
         );
         let req = Request::builder()
             .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
@@ -931,10 +926,7 @@ mod tests {
         let app = make_app_proppatch(&dir);
 
         let body = Body::from(
-            r#"<?xml version="1.0" encoding="utf-8"?>
-<D:propertyupdate xmlns:D="DAV:">
-  <D:set><D:prop><X:tag>important</X:tag></D:prop></D:set>
-</D:propertyupdate>"#,
+            r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:tag>important</X:tag></D:prop></D:set></D:propertyupdate>"#,
         );
         let req = Request::builder()
             .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
@@ -946,10 +938,7 @@ mod tests {
 
         let app = make_app_proppatch(&dir);
         let body = Body::from(
-            r#"<?xml version="1.0" encoding="utf-8"?>
-<D:propertyupdate xmlns:D="DAV:">
-  <D:remove><D:prop><X:tag/></D:prop></D:remove>
-</D:propertyupdate>"#,
+            r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:remove><D:prop><X:tag/></D:prop></D:remove></D:propertyupdate>"#,
         );
         let req = Request::builder()
             .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
@@ -966,10 +955,7 @@ mod tests {
         let app = make_app_proppatch(&dir);
 
         let body = Body::from(
-            r#"<?xml version="1.0" encoding="utf-8"?>
-<D:propertyupdate xmlns:D="DAV:">
-  <D:set><D:prop><X:foo>bar</X:foo></D:prop></D:set>
-</D:propertyupdate>"#,
+            r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:foo>bar</X:foo></D:prop></D:set></D:propertyupdate>"#,
         );
         let req = Request::builder()
             .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())

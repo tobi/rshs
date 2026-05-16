@@ -11,8 +11,7 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::server::AppState;
-use crate::utils::path;
-use crate::utils::time::format_modified;
+use crate::utils::{path, time::format_rfc850};
 
 pub use axum::http::Method;
 
@@ -146,7 +145,7 @@ async fn generate_dir_listing(dir_path: &Path, request_path: &str) -> (String, u
     for entry in &entries {
         let disp = display(entry);
         let size_str = size_label(entry);
-        let date_str = format_modified(entry.3);
+        let date_str = format_rfc850(entry.3);
         let pad1 = name_col.saturating_sub(disp.len());
 
         let anchor = if entry.1 {

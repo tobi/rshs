@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// RFC 850 date format, e.g. "Saturday, 11-May-26 16:30:00 GMT".
-pub fn format_modified(st: SystemTime) -> String {
+pub fn format_rfc850(st: SystemTime) -> String {
     const MONTHS: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
