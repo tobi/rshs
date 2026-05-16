@@ -12,11 +12,11 @@ use dav_server::DavHandler;
 use tower_http::trace::TraceLayer;
 
 use crate::auth::AuthConfig;
-#[cfg(feature = "native-webdav")]
-use crate::handlers::native_webdav;
-use crate::handlers::{dav_fallback, serve};
+use crate::handlers::{dav_fallback, http_get_head};
 #[cfg(feature = "native-http")]
-use crate::handlers::{native_delete, native_options, native_put};
+use crate::handlers::{native_http_delete, native_http_options, native_http_put};
+#[cfg(feature = "native-webdav")]
+use crate::handlers::{native_webdav_copy_move, native_webdav_mkcol, native_webdav_propfind};
 use crate::middleware;
 #[cfg(feature = "native-webdav")]
 use crate::webdav;
@@ -63,35 +63,35 @@ async fn dispatch(
     let method = req.method();
 
     if method == Method::GET || method == Method::HEAD {
-        return serve::handle(State(state), req).await;
+        return http_get_head::handle(State(state), req).await;
     }
     #[cfg(feature = "native-http")]
     if method == Method::PUT {
-        return native_put::handle(State(state), req).await;
+        return native_http_put::handle(State(state), req).await;
     }
     #[cfg(feature = "native-http")]
     if method == Method::DELETE {
-        return native_delete::handle(State(state), req).await;
+        return native_http_delete::handle(State(state), req).await;
     }
     #[cfg(feature = "native-http")]
     if method == Method::OPTIONS {
-        return native_options::handle().await;
+        return native_http_options::handle().await;
     }
     #[cfg(feature = "native-webdav")]
     if method == *webdav::M_PROPFIND {
-        return native_webdav::handle_propfind(State(state), req).await;
+        return native_webdav_propfind::handle(State(state), req).await;
     }
     #[cfg(feature = "native-webdav")]
     if method == *webdav::M_MKCOL {
-        return native_webdav::handle_mkcol(State(state), req).await;
+        return native_webdav_mkcol::handle(State(state), req).await;
     }
     #[cfg(feature = "native-webdav")]
     if method == *webdav::M_COPY {
-        return native_webdav::handle_copy(State(state), req).await;
+        return native_webdav_copy_move::handle_copy(State(state), req).await;
     }
     #[cfg(feature = "native-webdav")]
     if method == *webdav::M_MOVE {
-        return native_webdav::handle_move(State(state), req).await;
+        return native_webdav_copy_move::handle_move(State(state), req).await;
     }
 
     dav_fallback::dav_route(State(state), req).await

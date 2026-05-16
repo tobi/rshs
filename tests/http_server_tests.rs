@@ -12,7 +12,7 @@ fn make_app(dir: &tempfile::TempDir) -> Router {
     let handler = rshs::handlers::dav_fallback::create_dav_handler(dir.path());
     let path = dir.path().to_path_buf();
     Router::new()
-        .fallback(rshs::handlers::serve::handle)
+        .fallback(rshs::handlers::http_get_head::handle)
         .with_state(Arc::new(AppState {
             root_dir: path.clone(),
             root_canonical: path.canonicalize().unwrap_or(path),
