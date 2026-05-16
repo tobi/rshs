@@ -1,11 +1,21 @@
 pub mod fs;
 pub mod xml;
 
+use std::sync::LazyLock;
 use std::time::SystemTime;
 
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, Method as HttpMethod};
 use quick_xml::Reader;
 use quick_xml::events::Event;
+
+type Method = LazyLock<HttpMethod>;
+
+pub static M_PROPFIND: Method = LazyLock::new(|| HttpMethod::from_bytes(b"PROPFIND").unwrap());
+pub static _M_MKCOL: Method = LazyLock::new(|| HttpMethod::from_bytes(b"MKCOL").unwrap());
+pub static _M_COPY: Method = LazyLock::new(|| HttpMethod::from_bytes(b"COPY").unwrap());
+pub static _M_MOVE: Method = LazyLock::new(|| HttpMethod::from_bytes(b"MOVE").unwrap());
+pub static _M_LOCK: Method = LazyLock::new(|| HttpMethod::from_bytes(b"LOCK").unwrap());
+pub static _M_UNLOCK: Method = LazyLock::new(|| HttpMethod::from_bytes(b"UNLOCK").unwrap());
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Depth {

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::middleware as axum_mw;
-use axum::{Router, extract::State, routing::any};
+use axum::{Router, extract::State, http::Method, routing::any};
 use dav_server::DavHandler;
 use tower_http::trace::TraceLayer;
 
@@ -18,6 +18,8 @@ use crate::handlers::{dav_fallback, serve};
 #[cfg(feature = "native-http")]
 use crate::handlers::{native_delete, native_options, native_put};
 use crate::middleware;
+#[cfg(feature = "native-webdav")]
+use crate::webdav;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -58,18 +60,29 @@ async fn dispatch(
     State(state): State<Arc<AppState>>,
     req: axum::extract::Request,
 ) -> axum::response::Response {
-    match req.method().as_str() {
-        "GET" | "HEAD" => serve::handle(State(state), req).await,
-        #[cfg(feature = "native-http")]
-        "PUT" => native_put::handle(State(state), req).await,
-        #[cfg(feature = "native-http")]
-        "DELETE" => native_delete::handle(State(state), req).await,
-        #[cfg(feature = "native-http")]
-        "OPTIONS" => native_options::handle().await,
-        #[cfg(feature = "native-webdav")]
-        "PROPFIND" => native_webdav::handle_propfind(State(state), req).await,
-        _ => dav_fallback::dav_route(State(state), req).await,
+    let method = req.method();
+
+    if method == Method::GET || method == Method::HEAD {
+        return serve::handle(State(state), req).await;
     }
+    #[cfg(feature = "native-http")]
+    if method == Method::PUT {
+        return native_put::handle(State(state), req).await;
+    }
+    #[cfg(feature = "native-http")]
+    if method == Method::DELETE {
+        return native_delete::handle(State(state), req).await;
+    }
+    #[cfg(feature = "native-http")]
+    if method == Method::OPTIONS {
+        return native_options::handle().await;
+    }
+    #[cfg(feature = "native-webdav")]
+    if method == *webdav::M_PROPFIND {
+        return native_webdav::handle_propfind(State(state), req).await;
+    }
+
+    dav_fallback::dav_route(State(state), req).await
 }
 
 pub fn app(config: &ServerConfig) -> Router {
