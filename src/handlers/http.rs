@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::{Method, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use futures_util::TryStreamExt;
 use tokio::io::AsyncWriteExt;
@@ -13,6 +13,8 @@ use tokio_util::io::{ReaderStream, StreamReader};
 use crate::server::AppState;
 use crate::utils::path::{self, resolve_existing};
 use crate::utils::time::format_modified;
+
+pub use axum::http::Method;
 
 // ---------------------------------------------------------------------------
 // GET / HEAD
