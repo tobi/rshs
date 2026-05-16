@@ -31,7 +31,9 @@ src/
   handlers/
     mod.rs
     serve.rs                    # GET/HEAD handler (directory listing + file serving)
-    native_http.rs              # PUT handler (native-http feature), WIP: DELETE, OPTIONS
+    native_put.rs               # PUT handler (native-http feature)
+    native_delete.rs            # DELETE handler (native-http feature)
+    native_options.rs           # OPTIONS handler (native-http feature)
     webdav.rs                   # dav-server fallback for non-native WebDAV methods
 
   middleware/
@@ -51,26 +53,27 @@ src/
 
 ### Dependencies
 
-| Crate                    | Features                        | Purpose                            |
-| ------------------------ | ------------------------------- | ---------------------------------- |
-| `axum` 0.8               | `http2`                         | HTTP server framework              |
-| `tokio` 1.52             | `rt-multi-thread,net,macros,fs` | Async runtime                      |
-| `tower` 0.5              | —                               | Middleware traits (Layer, Service) |
-| `tower-http` 0.6         | `trace`                         | Request tracing middleware         |
-| `tokio-rustls` 0.26      | —                               | TLS acceptor for axum              |
-| `rustls` 0.23            | —                               | TLS protocol implementation        |
-| `rustls-pemfile` 2.2     | —                               | PEM certificate/key parsing        |
-| `sha2` 0.11              | —                               | Certificate fingerprint            |
-| `clap` 4.6               | `derive`, `env`                 | CLI args + env var support         |
-| `dav-server` 0.11        | —                               | WebDAV fallback (legacy)           |
-| `futures-util` 0.3       | —                               | Stream combinators (TryStreamExt)  |
-| `mime_guess` 2           | —                               | MIME type detection                |
-| `percent-encoding` 2     | —                               | URI percent-encode/decode          |
-| `base64` 0.22            | —                               | Basic Auth header decoding         |
-| `sha-crypt` 0.6          | `getrandom`                     | SHA-512 crypt hash verification    |
-| `tracing` 0.1            | —                               | Structured logging facade          |
-| `tracing-subscriber` 0.3 | `env-filter`, `fmt`             | Log output + filter engine         |
-| `tracing-log` 0.2        | —                               | Bridge `log` → `tracing`           |
+| Crate                    | Features                        | Purpose                             |
+| ------------------------ | ------------------------------- | ----------------------------------- |
+| `axum` 0.8               | `http2`                         | HTTP server framework               |
+| `tokio` 1.52             | `rt-multi-thread,net,macros,fs` | Async runtime                       |
+| `tower` 0.5              | —                               | Middleware traits (Layer, Service)  |
+| `tower-http` 0.6         | `trace`                         | Request tracing middleware          |
+| `tokio-rustls` 0.26      | —                               | TLS acceptor for axum               |
+| `tokio-util` 0.7         | `io`                            | StreamReader for PUT body streaming |
+| `rustls` 0.23            | —                               | TLS protocol implementation         |
+| `rustls-pemfile` 2.2     | —                               | PEM certificate/key parsing         |
+| `sha2` 0.11              | —                               | Certificate fingerprint             |
+| `clap` 4.6               | `derive`, `env`                 | CLI args + env var support          |
+| `dav-server` 0.11        | —                               | WebDAV fallback (legacy)            |
+| `futures-util` 0.3       | —                               | Stream combinators (TryStreamExt)   |
+| `mime_guess` 2           | —                               | MIME type detection                 |
+| `percent-encoding` 2     | —                               | URI percent-encode/decode           |
+| `base64` 0.22            | —                               | Basic Auth header decoding          |
+| `sha-crypt` 0.6          | `getrandom`                     | SHA-512 crypt hash verification     |
+| `tracing` 0.1            | —                               | Structured logging facade           |
+| `tracing-subscriber` 0.3 | `env-filter`, `fmt`             | Log output + filter engine          |
+| `tracing-log` 0.2        | —                               | Bridge `log` → `tracing`            |
 
 ### Key Patterns
 
@@ -91,11 +94,13 @@ src/
 - **Request dispatch**: `.fallback(any(dispatch))` routes all requests through a single
   `dispatch` function that branches by HTTP method:
   `GET`/`HEAD` → `serve::handle`,
-  `PUT` → `native_http::handle_put` (when `native-http` feature enabled),
+  `PUT` → `native_put::handle_put` (when `native-http` feature enabled),
+  `DELETE` → `native_delete::handle_delete` (when `native-http` feature enabled),
+  `OPTIONS` → `native_options::handle_options` (when `native-http` feature enabled),
   everything else → `webdav::dav_route` (dav-server fallback).
 - **Path resolution**: `utils::path` provides two functions:
-  - `resolve_existing()` — canonicalize + traversal check for read ops (GET/HEAD)
-  - `resolve_write_target()` — segment check + traversal guard for write ops (PUT, future DELETE)
+  - `resolve_existing()` — canonicalize + traversal check for read ops (GET/HEAD) and delete ops (DELETE)
+  - `resolve_write_target()` — segment check + traversal guard for write ops (PUT, future MKCOL)
     Both percent-decode the URI path via `percent_encoding::percent_decode_str`.
 - **Lock system**: `memls::MemLs` provides in-memory lock support for the WebDAV handler,
   enabling proper lock enforcement (token validation, owner checks). Locks are ephemeral
@@ -118,7 +123,7 @@ Progress is gated by Cargo features. When all native features are enabled,
 
 | Feature         | Status      | Methods covered                        |
 | --------------- | ----------- | -------------------------------------- |
-| `native-http`   | In progress | PUT ✓, DELETE (next), OPTIONS (next)   |
+| `native-http`   | In progress | PUT ✓, DELETE ✓, OPTIONS ✓             |
 | `native-webdav` | Planned     | PROPFIND, MKCOL, COPY, MOVE, PROPPATCH |
 | `native-locks`  | Planned     | LOCK, UNLOCK + lock state management   |
 
@@ -128,7 +133,9 @@ Progress is gated by Cargo features. When all native features are enabled,
 Current                           Final
 src/handlers/                      src/handlers/
   serve.rs      # GET/HEAD           serve.rs      # GET/HEAD
-  native_http.rs  # PUT              http.rs       # PUT/DELETE/OPTIONS
+  native_put.rs   # PUT              put.rs        # PUT
+  native_delete.rs # DELETE          delete.rs     # DELETE
+  native_options.rs # OPTIONS        options.rs    # OPTIONS
   webdav.rs     # fallback           webdav.rs     # PROPFIND/MKCOL/COPY/MOVE
   native_webdav.rs  (planned)        locks.rs      # LOCK/UNLOCK
   native_locks.rs   (planned)
@@ -136,8 +143,8 @@ src/handlers/                      src/handlers/
 
 ### Remaining Steps
 
-1. **DELETE**: `native_http.rs` `handle_delete()` — path resolution → `tokio::fs::remove_file()` → 204 No Content
-2. **OPTIONS**: `native_http.rs` `handle_options()` — return `Allow` header listing supported methods
+1. ~~**DELETE**: `native_http.rs` `handle_delete()` — path resolution → `tokio::fs::remove_file()` → 204 No Content~~
+2. ~~**OPTIONS**: `native_http.rs` `handle_options()` — return `Allow` header listing supported methods~~
 3. **PROPFIND**: new `native-webdav` feature + `native_webdav.rs` — `Depth: 0/1/infinity`, directory enumeration, XML response
 4. **MKCOL**: `native_webdav.rs` — `tokio::fs::create_dir()`
 5. **COPY/MOVE**: `native_webdav.rs` — file copy/move with `tokio::fs`
@@ -150,8 +157,7 @@ src/handlers/                      src/handlers/
 PUT handler uses `StreamReader` + `tokio::io::copy` for zero-copy streaming from HTTP body to file:
 
 ```rust
-let stream = body.into_data_stream()
-    .map_err(std::io::Error::other);
+let stream = body.into_data_stream().map_err(std::io::Error::other);
 let mut reader = StreamReader::new(stream);
 let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 ```

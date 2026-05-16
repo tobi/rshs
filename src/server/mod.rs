@@ -13,7 +13,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::auth::AuthConfig;
 #[cfg(feature = "native-http")]
-use crate::handlers::native_http;
+use crate::handlers::{native_delete, native_options, native_put};
 use crate::handlers::{serve, webdav};
 use crate::middleware;
 
@@ -59,11 +59,11 @@ async fn dispatch(
     match *req.method() {
         Method::GET | Method::HEAD => serve::handle(State(state), req).await,
         #[cfg(feature = "native-http")]
-        Method::PUT => native_http::handle_put(State(state), req).await,
+        Method::PUT => native_put::handle_put(State(state), req).await,
         #[cfg(feature = "native-http")]
-        Method::DELETE => native_http::handle_delete(State(state), req).await,
+        Method::DELETE => native_delete::handle_delete(State(state), req).await,
         #[cfg(feature = "native-http")]
-        Method::OPTIONS => native_http::handle_options().await,
+        Method::OPTIONS => native_options::handle_options().await,
         _ => webdav::dav_route(State(state), req).await,
     }
 }
