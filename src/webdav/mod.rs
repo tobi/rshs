@@ -11,7 +11,7 @@ use quick_xml::events::Event;
 type Method = LazyLock<HttpMethod>;
 
 pub static M_PROPFIND: Method = LazyLock::new(|| HttpMethod::from_bytes(b"PROPFIND").unwrap());
-pub static _M_MKCOL: Method = LazyLock::new(|| HttpMethod::from_bytes(b"MKCOL").unwrap());
+pub static M_MKCOL: Method = LazyLock::new(|| HttpMethod::from_bytes(b"MKCOL").unwrap());
 pub static _M_COPY: Method = LazyLock::new(|| HttpMethod::from_bytes(b"COPY").unwrap());
 pub static _M_MOVE: Method = LazyLock::new(|| HttpMethod::from_bytes(b"MOVE").unwrap());
 pub static _M_LOCK: Method = LazyLock::new(|| HttpMethod::from_bytes(b"LOCK").unwrap());

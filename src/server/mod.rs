@@ -81,6 +81,10 @@ async fn dispatch(
     if method == *webdav::M_PROPFIND {
         return native_webdav::handle_propfind(State(state), req).await;
     }
+    #[cfg(feature = "native-webdav")]
+    if method == *webdav::M_MKCOL {
+        return native_webdav::handle_mkcol(State(state), req).await;
+    }
 
     dav_fallback::dav_route(State(state), req).await
 }
