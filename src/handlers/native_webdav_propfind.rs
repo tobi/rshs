@@ -39,7 +39,16 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: Request) -> Respons
         }
     };
 
-    let entries = webdav::fs::collect_entries(&fs_path, &request_path, depth).await;
+    let mut entries = webdav::fs::collect_entries(&fs_path, &request_path, depth).await;
+
+    let dead_store = state.dead_props.read().await;
+    for entry in &mut entries {
+        if let Some(ref cp) = entry.canonical_path {
+            entry.dead_props = dead_store.get(cp).cloned();
+        }
+    }
+    drop(dead_store);
+
     let xml = webdav::xml::build_multistatus(&entries, &prop_request);
 
     tracing::debug!(
@@ -72,6 +81,9 @@ mod tests {
                 root_canonical: canonical,
                 dav_handler: crate::handlers::dav_fallback::create_dav_handler(&root),
                 auth_config: Arc::new(AuthConfig::new()),
+                dead_props: Arc::new(tokio::sync::RwLock::new(
+                    crate::webdav::DeadPropertyStore::new(),
+                )),
             }))
     }
 

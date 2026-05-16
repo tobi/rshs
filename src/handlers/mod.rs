@@ -12,3 +12,5 @@ pub mod native_webdav_copy_move;
 pub mod native_webdav_mkcol;
 #[cfg(feature = "native-webdav")]
 pub mod native_webdav_propfind;
+#[cfg(feature = "native-webdav")]
+pub mod native_webdav_proppatch;

@@ -114,6 +114,13 @@ fn write_response(
         write_propstat_404(writer, &not_found);
     }
 
+    // Dead properties
+    if let Some(ref dead) = entry.dead_props {
+        if !dead.is_empty() {
+            write_dead_propstat(writer, dead);
+        }
+    }
+
     writer
         .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}response"))))
         .unwrap();
@@ -291,6 +298,32 @@ fn write_propname(writer: &mut Writer<Cursor<Vec<u8>>>, props: &[&str]) {
         w(Event::Empty(BytesStart::new(format!(
             "{DAV_PREFIX}{prop_name}"
         ))));
+    }
+
+    w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))));
+    w(Event::Start(BytesStart::new(format!("{DAV_PREFIX}status"))));
+    w(Event::Text(BytesText::new("HTTP/1.1 200 OK")));
+    w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}status"))));
+    w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}propstat"))));
+}
+
+fn write_dead_propstat(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    props: &std::collections::HashMap<String, String>,
+) {
+    let mut w = |ev: Event<'_>| {
+        writer.write_event(ev).unwrap();
+    };
+
+    w(Event::Start(BytesStart::new(format!(
+        "{DAV_PREFIX}propstat"
+    ))));
+    w(Event::Start(BytesStart::new(format!("{DAV_PREFIX}prop"))));
+
+    for (name, value) in props {
+        w(Event::Start(BytesStart::new(name.as_str())));
+        w(Event::Text(BytesText::new(value)));
+        w(Event::End(BytesEnd::new(name.as_str())));
     }
 
     w(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))));

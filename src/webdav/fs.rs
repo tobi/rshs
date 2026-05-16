@@ -13,7 +13,12 @@ pub const HREF_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'.')
     .remove(b'~');
 
-fn make_entry(href: String, is_dir: bool, meta: &std::fs::Metadata) -> PropEntry {
+fn make_entry(
+    href: String,
+    is_dir: bool,
+    meta: &std::fs::Metadata,
+    canonical: Option<PathBuf>,
+) -> PropEntry {
     PropEntry {
         href,
         is_dir,
@@ -21,6 +26,8 @@ fn make_entry(href: String, is_dir: bool, meta: &std::fs::Metadata) -> PropEntry
         modified: meta.modified().unwrap_or(UNIX_EPOCH),
         created: meta.created().ok(),
         content_type: None,
+        dead_props: None,
+        canonical_path: canonical,
     }
 }
 
@@ -40,7 +47,12 @@ pub async fn collect_entries(fs_path: &Path, request_path: &str, depth: Depth) -
     };
 
     let is_dir = meta.is_dir();
-    let mut base_entry = make_entry(normalize_href(request_path, is_dir), is_dir, &meta);
+    let mut base_entry = make_entry(
+        normalize_href(request_path, is_dir),
+        is_dir,
+        &meta,
+        Some(fs_path.to_path_buf()),
+    );
     if !is_dir {
         base_entry.content_type = guess_content_type(fs_path.as_os_str());
     }
@@ -86,7 +98,7 @@ async fn collect_direct_children(dir_path: &Path, parent_href: &str, entries: &m
             encoded = utf8_percent_encode(&name_str, HREF_ENCODE_SET)
         );
 
-        let mut entry = make_entry(child_href, is_dir, &meta);
+        let mut entry = make_entry(child_href, is_dir, &meta, None);
         if !is_dir {
             entry.content_type = guess_content_type(&name);
         }
@@ -125,7 +137,7 @@ async fn collect_descendants(root_dir: &Path, root_href: &str, entries: &mut Vec
                 encoded = utf8_percent_encode(&name_str, HREF_ENCODE_SET)
             );
 
-            let mut entry = make_entry(child_href.clone(), is_dir, &meta);
+            let mut entry = make_entry(child_href.clone(), is_dir, &meta, None);
             if !is_dir {
                 entry.content_type = guess_content_type(&name);
             }

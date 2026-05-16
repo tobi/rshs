@@ -16,7 +16,9 @@ use crate::handlers::{dav_fallback, http_get_head};
 #[cfg(feature = "native-http")]
 use crate::handlers::{native_http_delete, native_http_options, native_http_put};
 #[cfg(feature = "native-webdav")]
-use crate::handlers::{native_webdav_copy_move, native_webdav_mkcol, native_webdav_propfind};
+use crate::handlers::{
+    native_webdav_copy_move, native_webdav_mkcol, native_webdav_propfind, native_webdav_proppatch,
+};
 use crate::middleware;
 #[cfg(feature = "native-webdav")]
 use crate::webdav;
@@ -27,6 +29,7 @@ pub struct AppState {
     pub root_canonical: PathBuf,
     pub dav_handler: DavHandler,
     pub auth_config: Arc<AuthConfig>,
+    pub dead_props: Arc<tokio::sync::RwLock<crate::webdav::DeadPropertyStore>>,
 }
 
 #[derive(Clone)]
@@ -93,6 +96,10 @@ async fn dispatch(
     if method == *webdav::M_MOVE {
         return native_webdav_copy_move::handle_move(State(state), req).await;
     }
+    #[cfg(feature = "native-webdav")]
+    if method == *webdav::M_PROPPATCH {
+        return native_webdav_proppatch::handle(State(state), req).await;
+    }
 
     dav_fallback::dav_route(State(state), req).await
 }
@@ -104,6 +111,9 @@ pub fn app(config: &ServerConfig) -> Router {
             .unwrap_or_else(|_| config.root_dir.clone()),
         dav_handler: dav_fallback::create_dav_handler(&config.root_dir),
         auth_config: Arc::new(config.auth_config.clone()),
+        dead_props: Arc::new(tokio::sync::RwLock::new(
+            crate::webdav::DeadPropertyStore::new(),
+        )),
     });
 
     Router::new()

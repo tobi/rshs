@@ -19,6 +19,7 @@ fn make_app(dir: &tempfile::TempDir) -> Router {
             root_canonical: path.canonicalize().unwrap_or(path),
             dav_handler: handler,
             auth_config: Arc::new(rshs::AuthConfig::new()),
+            dead_props: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         }))
 }
 
