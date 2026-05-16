@@ -4,6 +4,8 @@ pub mod handlers;
 pub mod middleware;
 pub mod server;
 pub mod utils;
+#[cfg(feature = "native-webdav")]
+pub(crate) mod webdav;
 
 pub use auth::{AuthConfig, build_auth_config};
 pub use cli::{Cli, ShadowFileArg};

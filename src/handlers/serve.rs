@@ -19,7 +19,7 @@ pub async fn handle(State(state): State<Arc<AppState>>, req: Request) -> Respons
     match path::resolve_existing(&state.root_dir, &state.root_canonical, &request_path).await {
         Some(fs_path) => serve_get_or_head(fs_path, request_path, req.method()).await,
         None => {
-            tracing::debug!("path resolution failed");
+            tracing::debug!("path resolution failed for GET/HEAD");
             StatusCode::NOT_FOUND.into_response()
         }
     }
@@ -29,7 +29,7 @@ async fn serve_get_or_head(fs_path: PathBuf, request_path: String, method: &Meth
     let meta = match tokio::fs::metadata(&fs_path).await {
         Ok(m) => m,
         Err(e) => {
-            tracing::debug!(error = %e, "metadata failed");
+            tracing::debug!(error = %e, "metadata failed for GET/HEAD");
             return StatusCode::NOT_FOUND.into_response();
         }
     };

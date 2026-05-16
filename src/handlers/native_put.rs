@@ -12,7 +12,7 @@ use tokio_util::io::StreamReader;
 use crate::server::AppState;
 use crate::utils::path;
 
-pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Response {
+pub async fn handle(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
     let fs_path = match path::resolve_write_target(&state.root_dir, &request_path) {
@@ -110,12 +110,12 @@ mod tests {
         let root = dir.path().to_path_buf();
         let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
         Router::new()
-            .route("/", axum::routing::put(super::handle_put))
-            .route("/{*path}", axum::routing::put(super::handle_put))
+            .route("/", axum::routing::put(super::handle))
+            .route("/{*path}", axum::routing::put(super::handle))
             .with_state(Arc::new(AppState {
                 root_dir: root.clone(),
                 root_canonical: canonical,
-                dav_handler: crate::handlers::webdav::create_dav_handler(&root),
+                dav_handler: crate::handlers::dav_fallback::create_dav_handler(&root),
                 auth_config: Arc::new(AuthConfig::new()),
             }))
     }

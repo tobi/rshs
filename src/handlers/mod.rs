@@ -1,8 +1,10 @@
+pub mod dav_fallback;
 #[cfg(feature = "native-http")]
 pub mod native_delete;
 #[cfg(feature = "native-http")]
 pub mod native_options;
 #[cfg(feature = "native-http")]
 pub mod native_put;
+#[cfg(feature = "native-webdav")]
+pub mod native_webdav;
 pub mod serve;
-pub mod webdav;

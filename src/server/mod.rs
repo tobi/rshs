@@ -7,14 +7,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::middleware as axum_mw;
-use axum::{Router, extract::State, http::Method, routing::any};
+use axum::{Router, extract::State, routing::any};
 use dav_server::DavHandler;
 use tower_http::trace::TraceLayer;
 
 use crate::auth::AuthConfig;
+#[cfg(feature = "native-webdav")]
+use crate::handlers::native_webdav;
+use crate::handlers::{dav_fallback, serve};
 #[cfg(feature = "native-http")]
 use crate::handlers::{native_delete, native_options, native_put};
-use crate::handlers::{serve, webdav};
 use crate::middleware;
 
 #[derive(Clone)]
@@ -56,15 +58,17 @@ async fn dispatch(
     State(state): State<Arc<AppState>>,
     req: axum::extract::Request,
 ) -> axum::response::Response {
-    match *req.method() {
-        Method::GET | Method::HEAD => serve::handle(State(state), req).await,
+    match req.method().as_str() {
+        "GET" | "HEAD" => serve::handle(State(state), req).await,
         #[cfg(feature = "native-http")]
-        Method::PUT => native_put::handle_put(State(state), req).await,
+        "PUT" => native_put::handle(State(state), req).await,
         #[cfg(feature = "native-http")]
-        Method::DELETE => native_delete::handle_delete(State(state), req).await,
+        "DELETE" => native_delete::handle(State(state), req).await,
         #[cfg(feature = "native-http")]
-        Method::OPTIONS => native_options::handle_options().await,
-        _ => webdav::dav_route(State(state), req).await,
+        "OPTIONS" => native_options::handle().await,
+        #[cfg(feature = "native-webdav")]
+        "PROPFIND" => native_webdav::handle_propfind(State(state), req).await,
+        _ => dav_fallback::dav_route(State(state), req).await,
     }
 }
 
@@ -73,7 +77,7 @@ pub fn app(config: &ServerConfig) -> Router {
         root_dir: config.root_dir.clone(),
         root_canonical: fs::canonicalize(&config.root_dir)
             .unwrap_or_else(|_| config.root_dir.clone()),
-        dav_handler: webdav::create_dav_handler(&config.root_dir),
+        dav_handler: dav_fallback::create_dav_handler(&config.root_dir),
         auth_config: Arc::new(config.auth_config.clone()),
     });
 

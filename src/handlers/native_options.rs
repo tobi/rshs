@@ -1,6 +1,6 @@
 use axum::{body::Body, http::StatusCode, response::Response};
 
-pub async fn handle_options() -> Response {
+pub async fn handle() -> Response {
     Response::builder()
         .status(StatusCode::OK)
         .header(
@@ -16,7 +16,7 @@ pub async fn handle_options() -> Response {
 mod tests {
     #[tokio::test]
     async fn test_options_returns_ok() {
-        let resp = super::handle_options().await;
+        let resp = super::handle().await;
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
         let allow = resp.headers().get("allow").unwrap().to_str().unwrap();
         assert!(allow.contains("GET"));
@@ -28,7 +28,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_options_has_content_length_zero() {
-        let resp = super::handle_options().await;
+        let resp = super::handle().await;
         let cl = resp
             .headers()
             .get("content-length")
@@ -40,7 +40,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_options_body_empty() {
-        let resp = super::handle_options().await;
+        let resp = super::handle().await;
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
             .unwrap();

@@ -9,7 +9,7 @@ use axum::{
 use crate::server::AppState;
 use crate::utils::path;
 
-pub async fn handle_delete(State(state): State<Arc<AppState>>, req: Request) -> Response {
+pub async fn handle(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
     let fs_path =
@@ -75,12 +75,12 @@ mod tests {
         let root = dir.path().to_path_buf();
         let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
         Router::new()
-            .route("/", axum::routing::delete(super::handle_delete))
-            .route("/{*path}", axum::routing::delete(super::handle_delete))
+            .route("/", axum::routing::delete(super::handle))
+            .route("/{*path}", axum::routing::delete(super::handle))
             .with_state(Arc::new(AppState {
                 root_dir: root.clone(),
                 root_canonical: canonical,
-                dav_handler: crate::handlers::webdav::create_dav_handler(&root),
+                dav_handler: crate::handlers::dav_fallback::create_dav_handler(&root),
                 auth_config: Arc::new(AuthConfig::new()),
             }))
     }

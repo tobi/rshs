@@ -13,8 +13,9 @@ categories = ["web-programming::http-server"]
 
 [features]
 default = []
-native = ["native-http"]
+native = ["native-http", "native-webdav"]
 native-http = []
+native-webdav = []
 
 
 [dependencies]
@@ -25,6 +26,7 @@ dav-server = "0.11"
 futures-util = "0.3"
 mime_guess = "2.0"
 percent-encoding = "2.3"
+quick-xml = "0.40"
 rustls = "0.23"
 rustls-pemfile = "2.2"
 sha-crypt = { version = "0.6", features = ["getrandom"] }
