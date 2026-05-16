@@ -8,6 +8,8 @@ pub async fn handle() -> Response {
             "GET, HEAD, OPTIONS, PUT, DELETE, PROPFIND, MKCOL, COPY, MOVE, PROPPATCH, LOCK, UNLOCK",
         )
         .header("content-length", "0")
+        .header("dav", "1,2")
+        .header("ms-author-via", "DAV")
         .body(Body::empty())
         .unwrap()
 }
@@ -24,6 +26,15 @@ mod tests {
         assert!(allow.contains("DELETE"));
         assert!(allow.contains("PROPFIND"));
         assert!(allow.contains("MKCOL"));
+        assert_eq!(resp.headers().get("dav").unwrap().to_str().unwrap(), "1,2");
+        assert_eq!(
+            resp.headers()
+                .get("ms-author-via")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "DAV"
+        );
     }
 
     #[tokio::test]
