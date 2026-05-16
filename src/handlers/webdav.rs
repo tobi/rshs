@@ -1,7 +1,8 @@
 use std::io::Cursor;
+use std::path::Path;
 use std::sync::Arc;
 
-use axum::body::{self, Body};
+use axum::body;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -62,11 +63,7 @@ pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -
         path = %fs_path.display(), depth = ?depth, entries = entries.len(), "PROPFIND completed"
     );
 
-    Response::builder()
-        .status(StatusCode::from_u16(207).unwrap())
-        .header("content-type", "application/xml; charset=utf-8")
-        .body(Body::from(xml))
-        .unwrap()
+    webdav::xml::multistatus(xml)
 }
 
 // ---------------------------------------------------------------------------
@@ -206,18 +203,14 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
     }
 }
 
-async fn copy_file(src: &std::path::Path, dest: &std::path::Path) -> Result<(), Response> {
+async fn copy_file(src: &Path, dest: &Path) -> Result<(), Response> {
     tokio::fs::copy(src, dest)
         .await
         .or_500("copy file failed")?;
     Ok(())
 }
 
-async fn copy_dir(
-    src: &std::path::Path,
-    dest: &std::path::Path,
-    dest_existed: bool,
-) -> Result<(), Response> {
+async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), Response> {
     if !dest_existed {
         tokio::fs::create_dir(dest).await.map_err(|e| {
             tracing::error!(error = %e, dest = %dest.display(), "create dest dir failed");
@@ -304,11 +297,7 @@ pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) 
 
     drop(dead_props);
 
-    Response::builder()
-        .status(StatusCode::from_u16(207).unwrap())
-        .header("content-type", "application/xml; charset=utf-8")
-        .body(Body::from(xml))
-        .unwrap()
+    webdav::xml::multistatus(xml)
 }
 
 fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> String {
