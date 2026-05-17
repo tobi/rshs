@@ -405,15 +405,22 @@ fn write_proppatch_result(
 #[cfg(test)]
 mod tests {
 
+    use std::sync::Arc;
+
     use axum::{Router, body::Body, extract::Request, routing::any};
     use tower::ServiceExt;
+
+    use crate::{AppState, AuthConfig};
 
     // -- PROPFIND tests -----------------------------------------------------
 
     fn make_app_propfind(dir: &tempfile::TempDir) -> Router {
         Router::new()
             .fallback(any(super::handle_propfind))
-            .with_state(crate::make_test_state(dir.path()))
+            .with_state(std::sync::Arc::new(AppState::new(
+                dir.path().to_path_buf(),
+                AuthConfig::new(),
+            )))
     }
 
     fn propfind_body(props: &str) -> Body {
@@ -626,7 +633,10 @@ mod tests {
     fn make_app_mkcol(dir: &tempfile::TempDir) -> Router {
         Router::new()
             .fallback(any(super::handle_mkcol))
-            .with_state(crate::make_test_state(dir.path()))
+            .with_state(std::sync::Arc::new(AppState::new(
+                dir.path().to_path_buf(),
+                AuthConfig::new(),
+            )))
     }
 
     fn make_mkcol(uri: &str) -> Request {
@@ -705,7 +715,10 @@ mod tests {
     fn make_app_copy(dir: &tempfile::TempDir) -> Router {
         Router::new()
             .fallback(any(super::handle_copy))
-            .with_state(crate::make_test_state(dir.path()))
+            .with_state(Arc::new(AppState::new(
+                dir.path().to_path_buf(),
+                AuthConfig::new(),
+            )))
     }
 
     fn make_copy(uri: &str, dest: &str, overwrite: Option<&str>) -> Request {
@@ -815,7 +828,10 @@ mod tests {
     fn make_app_move(dir: &tempfile::TempDir) -> Router {
         Router::new()
             .fallback(any(super::handle_move))
-            .with_state(crate::make_test_state(dir.path()))
+            .with_state(Arc::new(AppState::new(
+                dir.path().to_path_buf(),
+                AuthConfig::new(),
+            )))
     }
 
     fn make_move(uri: &str, dest: &str, overwrite: Option<&str>) -> Request {
@@ -922,7 +938,10 @@ mod tests {
     fn make_app_proppatch(dir: &tempfile::TempDir) -> Router {
         Router::new()
             .fallback(any(super::handle_proppatch))
-            .with_state(crate::make_test_state(dir.path()))
+            .with_state(Arc::new(AppState::new(
+                dir.path().to_path_buf(),
+                AuthConfig::new(),
+            )))
     }
 
     #[tokio::test]

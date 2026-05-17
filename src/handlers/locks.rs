@@ -20,9 +20,9 @@ use crate::webdav::xml::DAV_PREFIX;
 // ---------------------------------------------------------------------------
 
 pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Response {
-    let request_path = req.uri().path().to_owned();
+    // LOCK accepts trailing slashes for collections
+    let request_path = req.uri().path().trim_end_matches('/').to_owned();
 
-    // LOCK on non-existent URL creates a lock-null resource (RFC 4918 §7.3)
     let target = match state.resolve_and_guard(&request_path).await {
         Ok(t) => t,
         Err(path::ResolveTargetError::InvalidPath) => return StatusCode::FORBIDDEN.into_response(),
@@ -35,15 +35,8 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
         }
     };
 
-    let existed = tokio::fs::metadata(&target).await.is_ok();
-    if !existed {
-        if let Err(e) = tokio::fs::File::create(&target).await {
-            tracing::error!(error = %e, path = %target.display(), "failed to create lock-null resource");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-    }
-
     let timeout = webdav::parse_timeout(req.headers());
+    let if_tokens = webdav::parse_if_header(req.headers());
     let body_bytes = ok_or_return!(
         body::to_bytes(req.into_body(), 65536)
             .await
@@ -51,7 +44,37 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
     );
 
     let owner = parse_lock_owner(&body_bytes);
-    let token = webdav::generate_lock_token();
+
+    let mut locks = state.locks.write().await;
+    let entry = locks.entry(target.clone()).or_default();
+
+    // Check for existing exclusive lock
+    let existing = entry
+        .iter()
+        .find(|l| matches!(l.scope, webdav::LockScope::Exclusive));
+
+    let (token, is_refresh) = if let Some(existing_lock) = existing {
+        if if_tokens.contains(&existing_lock.token) {
+            // Refresh: reuse existing token, update metadata
+            let token = existing_lock.token.clone();
+            entry.retain(|l| !matches!(l.scope, webdav::LockScope::Exclusive));
+            (token, true)
+        } else {
+            // Non-owner attempting to lock locked resource
+            drop(locks);
+            return StatusCode::LOCKED.into_response();
+        }
+    } else {
+        let file_existed = tokio::fs::metadata(&target).await.is_ok();
+        if !file_existed {
+            if let Err(e) = tokio::fs::File::create(&target).await {
+                tracing::error!(error = %e, path = %target.display(), "failed to create lock-null resource");
+                drop(locks);
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        }
+        (webdav::generate_lock_token(), false)
+    };
 
     let lock = webdav::LockInfo {
         token: token.clone(),
@@ -61,29 +84,16 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
         created: std::time::SystemTime::now(),
         depth: webdav::Depth::Zero,
     };
-
-    let mut locks = state.locks.write().await;
-    let entry = locks.entry(target.clone()).or_default();
-
-    // Check if already locked (refresh)
-    let is_refresh = entry
-        .iter()
-        .any(|l| matches!(l.scope, webdav::LockScope::Exclusive));
-    if is_refresh {
-        entry.retain(|l| !matches!(l.scope, webdav::LockScope::Exclusive));
-    }
     entry.push(lock);
 
     let xml = build_lock_response(&token, timeout);
 
-    tracing::debug!(path = %target.display(), token = %token, "LOCK completed");
+    tracing::debug!(path = %target.display(), token = %token, is_refresh, "LOCK completed");
 
     drop(locks);
 
-    let status = StatusCode::OK;
-
     Response::builder()
-        .status(status)
+        .status(StatusCode::OK)
         .header("content-type", "application/xml; charset=utf-8")
         .header("lock-token", format!("<{token}>"))
         .body(Body::from(xml))
@@ -271,13 +281,19 @@ mod tests {
     fn make_app(dir: &tempfile::TempDir) -> Router {
         Router::new()
             .fallback(any(super::handle_lock))
-            .with_state(crate::make_test_state(dir.path()))
+            .with_state(std::sync::Arc::new(AppState::new(
+                dir.path().to_path_buf(),
+                AuthConfig::new(),
+            )))
     }
 
     fn make_app_unlock(dir: &tempfile::TempDir) -> Router {
         Router::new()
             .fallback(any(super::handle_unlock))
-            .with_state(crate::make_test_state(dir.path()))
+            .with_state(std::sync::Arc::new(AppState::new(
+                dir.path().to_path_buf(),
+                AuthConfig::new(),
+            )))
     }
 
     #[tokio::test]

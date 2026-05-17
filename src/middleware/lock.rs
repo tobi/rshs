@@ -7,7 +7,7 @@ use axum::response::{IntoResponse, Response};
 use crate::server::AppState;
 use crate::webdav;
 
-const WRITE_METHODS: &[&str] = &["PUT", "DELETE", "MKCOL", "PROPPATCH"];
+const WRITE_METHODS: &[&str] = &["PUT", "DELETE", "MKCOL", "PROPPATCH", "MOVE", "COPY"];
 
 pub async fn lock_enforce(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
