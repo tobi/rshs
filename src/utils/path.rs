@@ -42,6 +42,42 @@ pub fn resolve_write_target(root_dir: &Path, request_path: &str) -> Option<PathB
     Some(root_dir.join(trimmed))
 }
 
+/// Errors returned by `resolve_and_guard`.
+pub enum ResolveTargetError {
+    /// Path contains `..`, `.`, or is a directory path.
+    InvalidPath,
+    /// Canonicalize of parent directory failed (doesn't exist, I/O error).
+    ParentCanonicalizeFailed(std::io::Error),
+    /// Canonical parent is outside the root directory.
+    TraversalBlocked,
+}
+
+/// Resolves a write target: validates path, canonicalizes parent,
+/// verifies traversal safety.
+///
+/// Returns the canonical target `PathBuf`.
+pub async fn resolve_and_guard(
+    root_dir: &Path,
+    root_canonical: &Path,
+    request_path: &str,
+) -> Result<PathBuf, ResolveTargetError> {
+    let fs_path =
+        resolve_write_target(root_dir, request_path).ok_or(ResolveTargetError::InvalidPath)?;
+
+    let parent = fs_path.parent().unwrap_or(root_dir);
+
+    let parent_canonical = tokio::fs::canonicalize(parent)
+        .await
+        .map_err(ResolveTargetError::ParentCanonicalizeFailed)?;
+
+    if !parent_canonical.starts_with(root_canonical) {
+        return Err(ResolveTargetError::TraversalBlocked);
+    }
+
+    let filename = fs_path.file_name().unwrap();
+    Ok(parent_canonical.join(filename))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

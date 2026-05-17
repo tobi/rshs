@@ -6,23 +6,56 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::Router;
+use axum::extract::{Request, State};
+use axum::http::StatusCode;
 use axum::middleware as axum_mw;
-use axum::{Router, extract::State, http::Method, routing::any};
-use dav_server::DavHandler;
+use axum::response::{IntoResponse, Response};
+use axum::routing::any;
+use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
 
 use crate::auth::AuthConfig;
-#[cfg(feature = "native-http")]
-use crate::handlers::native_http;
-use crate::handlers::{serve, webdav};
+use crate::handlers::{http, locks, webdav as webdav_handler};
 use crate::middleware;
+use crate::utils::path::{self, ResolveTargetError};
+use crate::webdav::{self, DeadPropertyStore, LockStore};
 
 #[derive(Clone)]
 pub struct AppState {
+    pub auth_config: Arc<AuthConfig>,
     pub root_dir: PathBuf,
     pub root_canonical: PathBuf,
-    pub dav_handler: DavHandler,
-    pub auth_config: Arc<AuthConfig>,
+    pub dead_props: Arc<RwLock<DeadPropertyStore>>,
+    pub locks: Arc<RwLock<LockStore>>,
+}
+
+impl AppState {
+    pub fn new(root_dir: PathBuf, auth_config: AuthConfig) -> Self {
+        let root_canonical = fs::canonicalize(&root_dir).unwrap_or_else(|_| root_dir.clone());
+        Self {
+            auth_config: Arc::new(auth_config),
+            root_dir,
+            root_canonical,
+            dead_props: Arc::new(RwLock::new(DeadPropertyStore::new())),
+            locks: Arc::new(RwLock::new(LockStore::new())),
+        }
+    }
+
+    pub async fn resolve_existing(&self, request_path: &str) -> Option<PathBuf> {
+        path::resolve_existing(&self.root_dir, &self.root_canonical, request_path).await
+    }
+
+    pub fn resolve_write_target(&self, request_path: &str) -> Option<PathBuf> {
+        path::resolve_write_target(&self.root_dir, request_path)
+    }
+
+    pub async fn resolve_and_guard(
+        &self,
+        request_path: &str,
+    ) -> Result<PathBuf, ResolveTargetError> {
+        path::resolve_and_guard(&self.root_dir, &self.root_canonical, request_path).await
+    }
 }
 
 #[derive(Clone)]
@@ -52,26 +85,41 @@ impl ServerConfig {
     }
 }
 
-async fn dispatch(
-    State(state): State<Arc<AppState>>,
-    req: axum::extract::Request,
-) -> axum::response::Response {
-    match *req.method() {
-        Method::GET | Method::HEAD => serve::handle(State(state), req).await,
-        #[cfg(feature = "native-http")]
-        Method::PUT => native_http::handle_put(State(state), req).await,
-        _ => webdav::dav_route(State(state), req).await,
+async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response {
+    let method = req.method();
+
+    if method == http::Method::GET || method == http::Method::HEAD {
+        http::handle_get_head(State(state), req).await
+    } else if method == http::Method::PUT {
+        http::handle_put(State(state), req).await
+    } else if method == http::Method::DELETE {
+        http::handle_delete(State(state), req).await
+    } else if method == http::Method::OPTIONS {
+        http::handle_options().await
+    } else if method == *webdav::M_PROPFIND {
+        webdav_handler::handle_propfind(State(state), req).await
+    } else if method == *webdav::M_MKCOL {
+        webdav_handler::handle_mkcol(State(state), req).await
+    } else if method == *webdav::M_COPY {
+        webdav_handler::handle_copy(State(state), req).await
+    } else if method == *webdav::M_MOVE {
+        webdav_handler::handle_move(State(state), req).await
+    } else if method == *webdav::M_PROPPATCH {
+        webdav_handler::handle_proppatch(State(state), req).await
+    } else if method == *webdav::M_LOCK {
+        locks::handle_lock(State(state), req).await
+    } else if method == *webdav::M_UNLOCK {
+        locks::handle_unlock(State(state), req).await
+    } else {
+        StatusCode::NOT_IMPLEMENTED.into_response()
     }
 }
 
 pub fn app(config: &ServerConfig) -> Router {
-    let state = Arc::new(AppState {
-        root_dir: config.root_dir.clone(),
-        root_canonical: fs::canonicalize(&config.root_dir)
-            .unwrap_or_else(|_| config.root_dir.clone()),
-        dav_handler: webdav::create_dav_handler(&config.root_dir),
-        auth_config: Arc::new(config.auth_config.clone()),
-    });
+    let state = Arc::new(AppState::new(
+        config.root_dir.clone(),
+        config.auth_config.clone(),
+    ));
 
     Router::new()
         .fallback(any(dispatch))
@@ -79,6 +127,10 @@ pub fn app(config: &ServerConfig) -> Router {
         .layer(axum_mw::from_fn_with_state(
             state.auth_config.clone(),
             middleware::auth::auth_middleware,
+        ))
+        .layer(axum_mw::from_fn_with_state(
+            state.clone(),
+            middleware::lock::lock_enforce,
         ))
         .layer(middleware::health::HealthCheck)
         .with_state(state)

@@ -1,4 +1,3 @@
-#[cfg(feature = "native-http")]
-pub mod native_http;
-pub mod serve;
+pub mod http;
+pub mod locks;
 pub mod webdav;

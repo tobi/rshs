@@ -1,6 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub fn format_modified(st: SystemTime) -> String {
+/// RFC 850 date format, e.g. "Saturday, 11-May-26 16:30:00 GMT".
+pub fn format_rfc850(st: SystemTime) -> String {
     const MONTHS: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
@@ -24,6 +25,58 @@ pub fn format_modified(st: SystemTime) -> String {
     )
 }
 
+/// RFC 1123 / RFC 7231 date format, e.g. "Sat, 11 May 2026 16:30:00 GMT".
+pub fn format_rfc1123(st: SystemTime) -> String {
+    const DAY_NAMES: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+
+    let duration = match st.duration_since(UNIX_EPOCH) {
+        Ok(d) => d,
+        Err(_) => return String::new(),
+    };
+
+    let total_secs = duration.as_secs() as i64;
+    let days = (total_secs / 86400) as i32;
+    let time_of_day = total_secs % 86400;
+    let hours = time_of_day / 3600;
+    let mins = (time_of_day % 3600) / 60;
+    let secs = time_of_day % 60;
+
+    let (year, month, day) = civil_from_days(days);
+    let dow = ((days as i64 + 4) % 7) as usize; // Unix epoch was a Thursday
+
+    format!(
+        "{}, {:02} {} {:04} {:02}:{:02}:{:02} GMT",
+        DAY_NAMES[dow],
+        day,
+        MONTHS[(month - 1) as usize],
+        year,
+        hours,
+        mins,
+        secs
+    )
+}
+
+/// RFC 3339 date format, e.g. "2026-05-11T16:07:56Z".
+pub fn format_rfc3339(st: SystemTime) -> String {
+    let duration = match st.duration_since(UNIX_EPOCH) {
+        Ok(d) => d,
+        Err(_) => return String::new(),
+    };
+
+    let total_secs = duration.as_secs() as i64;
+    let days = (total_secs / 86400) as i32;
+    let time_of_day = total_secs % 86400;
+    let hours = time_of_day / 3600;
+    let mins = (time_of_day % 3600) / 60;
+    let secs = time_of_day % 60;
+
+    let (year, month, day) = civil_from_days(days);
+
+    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{mins:02}:{secs:02}Z")
+}
 /// Days-since-Unix-epoch to (year, month, day).
 ///
 /// Howard Hinnant's `civil_from_days` algorithm — a branchless calendar

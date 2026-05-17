@@ -30,14 +30,20 @@ src/
 
   handlers/
     mod.rs
-    serve.rs                    # GET/HEAD handler (directory listing + file serving)
-    native_http.rs              # PUT handler (native-http feature), WIP: DELETE, OPTIONS
-    webdav.rs                   # dav-server fallback for non-native WebDAV methods
+    http.rs                     # GET/HEAD + PUT/DELETE/OPTIONS (directory listing + file ops)
+    webdav.rs                   # PROPFIND/MKCOL/COPY/MOVE/PROPPATCH handler
+    locks.rs                    # LOCK/UNLOCK handler
+
+  webdav/
+    mod.rs                      # WebDAV Method constants (LazyLock), types, parse helpers
+    xml.rs                      # Multistatus XML generation (PROPFIND response)
+    fs.rs                       # Filesystem traversal + href encoding
 
   middleware/
     mod.rs
     health.rs                   # Health check middleware (tower Layer)
     auth.rs                     # Basic Auth middleware (auto-skips when no users configured)
+    lock.rs                     # Lock enforcement middleware (tower Layer)
 
   server/
     mod.rs                      # AppState, ServerConfig, Router construction, serve
@@ -45,39 +51,44 @@ src/
 
   utils/
     mod.rs
-    path.rs                     # Percent-decode + path resolution (resolve_existing, resolve_write_target)
+    error.rs                    # OrStatus trait + ok_or_return! macro
+    path.rs                     # Path resolution (resolve_existing, resolve_write_target, resolve_and_guard)
     time.rs                     # Calendar formatting for directory listings
 ```
 
 ### Dependencies
 
-| Crate                    | Features                        | Purpose                            |
-| ------------------------ | ------------------------------- | ---------------------------------- |
-| `axum` 0.8               | `http2`                         | HTTP server framework              |
-| `tokio` 1.52             | `rt-multi-thread,net,macros,fs` | Async runtime                      |
-| `tower` 0.5              | —                               | Middleware traits (Layer, Service) |
-| `tower-http` 0.6         | `trace`                         | Request tracing middleware         |
-| `tokio-rustls` 0.26      | —                               | TLS acceptor for axum              |
-| `rustls` 0.23            | —                               | TLS protocol implementation        |
-| `rustls-pemfile` 2.2     | —                               | PEM certificate/key parsing        |
-| `sha2` 0.11              | —                               | Certificate fingerprint            |
-| `clap` 4.6               | `derive`, `env`                 | CLI args + env var support         |
-| `dav-server` 0.11        | —                               | WebDAV fallback (legacy)           |
-| `futures-util` 0.3       | —                               | Stream combinators (TryStreamExt)  |
-| `mime_guess` 2           | —                               | MIME type detection                |
-| `percent-encoding` 2     | —                               | URI percent-encode/decode          |
-| `base64` 0.22            | —                               | Basic Auth header decoding         |
-| `sha-crypt` 0.6          | `getrandom`                     | SHA-512 crypt hash verification    |
-| `tracing` 0.1            | —                               | Structured logging facade          |
-| `tracing-subscriber` 0.3 | `env-filter`, `fmt`             | Log output + filter engine         |
-| `tracing-log` 0.2        | —                               | Bridge `log` → `tracing`           |
+| Crate                    | Features                        | Purpose                             |
+| ------------------------ | ------------------------------- | ----------------------------------- |
+| `axum` 0.8               | `http2`                         | HTTP server framework               |
+| `tokio` 1.52             | `rt-multi-thread,net,macros,fs` | Async runtime                       |
+| `tower` 0.5              | —                               | Middleware traits (Layer, Service)  |
+| `tower-http` 0.6         | `trace`                         | Request tracing middleware          |
+| `tokio-rustls` 0.26      | —                               | TLS acceptor for axum               |
+| `tokio-util` 0.7         | `io`                            | StreamReader for PUT body streaming |
+| `rustls` 0.23            | —                               | TLS protocol implementation         |
+| `rustls-pemfile` 2.2     | —                               | PEM certificate/key parsing         |
+| `sha2` 0.11              | —                               | Certificate fingerprint             |
+| `clap` 4.6               | `derive`, `env`                 | CLI args + env var support          |
+| `futures-util` 0.3       | —                               | Stream combinators (TryStreamExt)   |
+| `mime_guess` 2           | —                               | MIME type detection                 |
+| `percent-encoding` 2     | —                               | URI percent-encode/decode           |
+| `quick-xml` 0.40         | —                               | XML parsing + generation (WebDAV)   |
+| `base64` 0.22            | —                               | Basic Auth header decoding          |
+| `sha-crypt` 0.6          | `getrandom`                     | SHA-512 crypt hash verification     |
+| `tracing` 0.1            | —                               | Structured logging facade           |
+| `tracing-subscriber` 0.3 | `env-filter`, `fmt`             | Log output + filter engine          |
 
 ### Key Patterns
 
 - **App state**: Shared state via `AppState` struct wrapped in `Arc`, accessed by handlers
   via `axum::extract::State<Arc<AppState>>`. Fields: `root_dir` (serve root path),
-  `root_canonical` (cached canonical form for path traversal checks), `dav_handler`
-  (WebDAV handler), `auth_config`. Router built with `.with_state(Arc::new(state))`.
+  `root_canonical` (cached canonical form for path traversal checks), `auth_config`,
+  `dead_props` (WebDAV dead property store), `locks` (lock store). Router built with
+  `.with_state(Arc::new(state))`.
+  `AppState` also provides convenience methods delegates to `utils::path`:
+  `state.resolve_existing(path)`, `state.resolve_write_target(path)`,
+  `state.resolve_and_guard(path, create_parents)`.
 - **File I/O**: Hot-path file operations (GET/HEAD serving, directory listing) use
   `tokio::fs` to offload blocking syscalls from async worker threads onto the blocking
   thread pool. Startup-only I/O (TLS cert/key loading, shadow file reads) uses
@@ -85,21 +96,42 @@ src/
   not compete for worker threads.
 - **Middleware via tower Layer**: Middleware is applied with `Router::layer(L)`. Tower Layers
   compose from inside out — the last `.layer()` in the chain runs first.
-- **Middleware order**: `HealthCheck` (outermost) → `Auth` → `TraceLayer` → handler.
+- **Middleware order**: `HealthCheck` (outermost) → `LockEnforce` → `Auth` → `TraceLayer` → handler.
   HealthCheck intercepts `x-health-check: true` before auth. Auth middleware auto-skips when
-  no users are configured (`auth_config.is_empty()`).
+  no users are configured (`auth_config.is_empty()`). LockEnforce checks write operations
+  (PUT/DELETE/MKCOL/PROPPATCH) against the lock store before the handler runs.
 - **Request dispatch**: `.fallback(any(dispatch))` routes all requests through a single
   `dispatch` function that branches by HTTP method:
-  `GET`/`HEAD` → `serve::handle`,
-  `PUT` → `native_http::handle_put` (when `native-http` feature enabled),
-  everything else → `webdav::dav_route` (dav-server fallback).
-- **Path resolution**: `utils::path` provides two functions:
-  - `resolve_existing()` — canonicalize + traversal check for read ops (GET/HEAD)
-  - `resolve_write_target()` — segment check + traversal guard for write ops (PUT, future DELETE)
-    Both percent-decode the URI path via `percent_encoding::percent_decode_str`.
-- **Lock system**: `memls::MemLs` provides in-memory lock support for the WebDAV handler,
-  enabling proper lock enforcement (token validation, owner checks). Locks are ephemeral
-  (lost on restart) but sufficient for standard WebDAV client compatibility.
+  `GET`/`HEAD` → `http::handle_get_head`,
+  `PUT` → `http::handle_put`,
+  `DELETE` → `http::handle_delete`,
+  `OPTIONS` → `http::handle_options`,
+  `PROPFIND` → `webdav::handle_propfind`,
+  `MKCOL` → `webdav::handle_mkcol`,
+  `COPY` → `webdav::handle_copy`,
+  `MOVE` → `webdav::handle_move`,
+  `PROPPATCH` → `webdav::handle_proppatch`,
+  `LOCK` → `locks::handle_lock`,
+  `UNLOCK` → `locks::handle_unlock`,
+  unknown → `501 Not Implemented`.
+- **Path resolution**: `utils::path` provides three functions + one error type:
+  - `resolve_existing()` — canonicalize + traversal check for read ops (GET/HEAD) and delete ops (DELETE)
+  - `resolve_write_target()` — segment check + traversal guard for write ops (PUT/DELETE/MKCOL)
+  - `resolve_and_guard()` — combined: resolve target + create parent dirs (optional) + canonicalize + traversal check
+  - `ResolveTargetError` — tagged error type with `InvalidPath`, `ParentCanonicalizeFailed`, `TraversalBlocked`
+    All percent-decode the URI path via `percent_encoding::percent_decode_str`.
+- **Error handling**: `utils::error::OrStatus` trait extends `Result<T, E: Display>` with
+  `.or_400(msg)`, `.or_404(msg)`, `.or_500(msg)`, `.or_status(code, msg)` methods that
+  map errors to `Result<T, Response>` with tracing log. `ok_or_return!` macro unwraps
+  `Result<T, Response>` or early-returns from the enclosing handler function.
+- **XML generation**: `webdav/xml.rs` defines `XmlWriterExt` trait (adds `.ev(event)` to
+  `Writer<Cursor<Vec<u8>>>` as shorthand for `.write_event(event).unwrap()`).
+  Helper functions: `multistatus(xml)` → `207 Multi-Status`, `xml_response(status, xml)`
+  for general XML responses.
+- **Lock system**: In-memory lock support via `LockStore` (`Arc<RwLock<HashMap<PathBuf, Vec<LockInfo>>>>`).
+  Exclusive write locks only (shared + depth:infinity TODO). Lock enforcement via tower Layer middleware
+  (`middleware::lock::lock_enforce`), which intercepts PUT/DELETE/MKCOL/PROPPATCH and rejects with
+  `423 Locked` unless the request carries a matching `If` header. Locks are ephemeral (lost on restart).
 - **Auth**: `AuthConfig` holds `HashMap<String, Credential>`. Auth middleware is always present
   in the chain but becomes a no-op when `is_empty()`. 401 responses include
   `WWW-Authenticate: Basic realm="rshs"` for browser password dialog support.
@@ -108,55 +140,54 @@ src/
 - **TLS**: `TlsListener` implements `axum::serve::Listener` wrapping a `tokio-rustls` acceptor.
   Both HTTP and HTTPS branches call `axum::serve(listener, router)` — fully symmetric.
 
-## Native WebDAV Refactoring
+### Supported Methods
 
-Gradual migration to replace `dav-server` with self-developed native handlers.
-Progress is gated by Cargo features. When all native features are enabled,
-`dav-server` is removed entirely.
-
-### Features
-
-| Feature         | Status      | Methods covered                        |
-| --------------- | ----------- | -------------------------------------- |
-| `native-http`   | In progress | PUT ✓, DELETE (next), OPTIONS (next)   |
-| `native-webdav` | Planned     | PROPFIND, MKCOL, COPY, MOVE, PROPPATCH |
-| `native-locks`  | Planned     | LOCK, UNLOCK + lock state management   |
-
-### Module Evolution
-
-```
-Current                           Final
-src/handlers/                      src/handlers/
-  serve.rs      # GET/HEAD           serve.rs      # GET/HEAD
-  native_http.rs  # PUT              http.rs       # PUT/DELETE/OPTIONS
-  webdav.rs     # fallback           webdav.rs     # PROPFIND/MKCOL/COPY/MOVE
-  native_webdav.rs  (planned)        locks.rs      # LOCK/UNLOCK
-  native_locks.rs   (planned)
-```
-
-### Remaining Steps
-
-1. **DELETE**: `native_http.rs` `handle_delete()` — path resolution → `tokio::fs::remove_file()` → 204 No Content
-2. **OPTIONS**: `native_http.rs` `handle_options()` — return `Allow` header listing supported methods
-3. **PROPFIND**: new `native-webdav` feature + `native_webdav.rs` — `Depth: 0/1/infinity`, directory enumeration, XML response
-4. **MKCOL**: `native_webdav.rs` — `tokio::fs::create_dir()`
-5. **COPY/MOVE**: `native_webdav.rs` — file copy/move with `tokio::fs`
-6. **PROPPATCH**: `native_webdav.rs` — property setting
-7. **LOCK/UNLOCK**: new `native-locks` feature + `native_locks.rs` — lock token management + enforcement in write handlers
-8. **Cleanup**: remove `dav-server` dep, drop `AppState.dav_handler`, strip `native_` prefix
+| Method    | Handler            | Module      |
+| --------- | ------------------ | ----------- |
+| GET/HEAD  | `handle_get_head`  | `http.rs`   |
+| PUT       | `handle_put`       | `http.rs`   |
+| DELETE    | `handle_delete`    | `http.rs`   |
+| OPTIONS   | `handle_options`   | `http.rs`   |
+| PROPFIND  | `handle_propfind`  | `webdav.rs` |
+| MKCOL     | `handle_mkcol`     | `webdav.rs` |
+| COPY      | `handle_copy`      | `webdav.rs` |
+| MOVE      | `handle_move`      | `webdav.rs` |
+| PROPPATCH | `handle_proppatch` | `webdav.rs` |
+| LOCK      | `handle_lock`      | `locks.rs`  |
+| UNLOCK    | `handle_unlock`    | `locks.rs`  |
 
 ### Body Streaming Pattern
 
 PUT handler uses `StreamReader` + `tokio::io::copy` for zero-copy streaming from HTTP body to file:
 
 ```rust
-let stream = body.into_data_stream()
-    .map_err(std::io::Error::other);
+let stream = body.into_data_stream().map_err(std::io::Error::other);
 let mut reader = StreamReader::new(stream);
 let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 ```
 
 `TryStreamExt::map_err` bridges `axum::Error` → `io::Error` for `StreamReader` compatibility.
+
+### Known Limitations
+
+| Item                      | Status      | Description                                                                                                                                                         |
+| ------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shared lock scope         | TODO (high) | Exclusive write locks only. Shared locks + depth:infinity not yet implemented. Affects litmus tests: `lock_shared` (23), `indirect_refresh` (36)                    |
+| Conditional If header     | TODO (high) | `If: (Not <DAV:no-lock>)` and complex conditionals not fully parsed (RFC 4918 §10.4). Affects litmus tests: `cond_put_with_not` (17), `fail_cond_put_unlocked` (22) |
+| Collection lock semantics | TODO (high) | Locked collection enforcement for DELETE and owner-token forwarding in COPY not fully handled. Affects litmus tests: `copy` (14), `notowner_modify` (34)            |
+| Lock timeout cleanup      | TODO        | No lazy/background cleanup of expired locks                                                                                                                         |
+| Dead property persistence | TODO        | In-memory only (`DeadPropertyStore`), lost on restart. xattr/sidecar-file persistence planned                                                                       |
+| `getetag` format          | Known       | Uses mtime+size hex hash (`format!("{:x}-{:x}", mtime_secs, size)`). No inode available on macOS via `std::fs`                                                      |
+| HTML directory listing    | Known       | Single-line HTML output (no indentation). Adequate for browser rendering                                                                                            |
+
+### Litmus Conformance
+
+| Suite    | Status | Passed | Total | Notes                                                                        |
+| -------- | ------ | ------ | ----- | ---------------------------------------------------------------------------- |
+| basic    | ✅     | 16     | 16    | 1 warning (delete_fragment)                                                  |
+| http     | ✅     | 4      | 4     |                                                                              |
+| copymove | ✅     | 13     | 13    | 2 warnings (201 vs 204, RFC 2518 ambiguity)                                  |
+| locks    | 🟡     | 24     | 30    | 6 remaining failures documented in Known Limitations; 11 skipped (cascading) |
 
 ## Conventions
 
@@ -245,7 +276,6 @@ curl -H "x-health-check: true" http://localhost:8080/
 ## Logging
 
 Uses the `tracing` ecosystem (structured, span-based) with `tracing-subscriber` as the output backend.
-`tracing-log` bridges `log`-based dependency crates (`dav-server`) into tracing.
 
 Log level is determined by the following priority (highest first):
 

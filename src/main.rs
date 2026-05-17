@@ -34,8 +34,6 @@ async fn main() -> std::io::Result<()> {
         .with_writer(io::stderr)
         .init();
 
-    let _ = tracing_log::LogTracer::init();
-
     let auth_config = rshs::build_auth_config(&cli);
 
     let port = cli.effective_port();

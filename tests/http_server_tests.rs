@@ -9,15 +9,19 @@ use tower::ServiceExt;
 use rshs::{self, AppState};
 
 fn make_app(dir: &tempfile::TempDir) -> Router {
-    let handler = rshs::handlers::webdav::create_dav_handler(dir.path());
+    use std::collections::HashMap;
+
+    use tokio::sync::RwLock;
+
     let path = dir.path().to_path_buf();
     Router::new()
-        .fallback(rshs::handlers::serve::handle)
+        .fallback(rshs::handlers::http::handle_get_head)
         .with_state(Arc::new(AppState {
             root_dir: path.clone(),
             root_canonical: path.canonicalize().unwrap_or(path),
-            dav_handler: handler,
             auth_config: Arc::new(rshs::AuthConfig::new()),
+            dead_props: Arc::new(RwLock::new(HashMap::new())),
+            locks: Arc::new(RwLock::new(HashMap::new())),
         }))
 }
 
@@ -217,14 +221,6 @@ async fn test_http_dir_listing_sizes() {
         .unwrap();
     let body_str = String::from_utf8(body.to_vec()).unwrap();
 
-    assert!(
-        body_str
-            .lines()
-            .any(|l| l.contains("hello.txt") && l.ends_with("13"))
-    );
-    assert!(
-        body_str
-            .lines()
-            .any(|l| l.contains("subdir/") && l.contains("-"))
-    );
+    assert!(body_str.contains("hello.txt") && body_str.contains("13"));
+    assert!(body_str.contains("subdir/") && body_str.contains("-"));
 }

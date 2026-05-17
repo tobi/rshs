@@ -1,6 +1,6 @@
 [package]
 name = "rshs"
-version = "0.6.2"
+version = "0.7.0"
 description = "A lightweight HTTP + WebDAV file server"
 edition = "2024"
 rust-version = "1.87"
@@ -11,20 +11,15 @@ repository = "https://github.com/mogeko/rshs"
 keywords = ["http", "webdav", "file-server", "axum"]
 categories = ["web-programming::http-server"]
 
-[features]
-default = []
-native = ["native-http"]
-native-http = []
-
 
 [dependencies]
 axum = { version = "0.8", features = ["http2"] }
 base64 = "0.22"
 clap = { version = "4.6", features = ["derive", "env"] }
-dav-server = "0.11"
 futures-util = "0.3"
 mime_guess = "2.0"
 percent-encoding = "2.3"
+quick-xml = "0.40"
 rustls = "0.23"
 rustls-pemfile = "2.2"
 sha-crypt = { version = "0.6", features = ["getrandom"] }
@@ -41,7 +36,6 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-tracing-log = "0.2"
 
 
 [dev-dependencies]
