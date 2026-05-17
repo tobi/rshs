@@ -1,9 +1,8 @@
 use clap::Parser;
 
+use crate::DEFAULT_LOG_LEVEL;
 use crate::auth::AuthConfig;
 use crate::server::tls::TlsConfig;
-
-use crate::DEFAULT_LOG_LEVEL;
 
 /// Arguments for shadow file access mode
 #[derive(Debug, Clone)]

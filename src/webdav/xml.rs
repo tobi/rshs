@@ -312,7 +312,7 @@ fn write_propname(writer: &mut Writer<Cursor<Vec<u8>>>, props: &[&str]) {
     writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}propstat"))));
 }
 
-fn write_activelock(writer: &mut Writer<Cursor<Vec<u8>>>, lock: &super::LockInfo) {
+pub(crate) fn write_activelock(writer: &mut Writer<Cursor<Vec<u8>>>, lock: &super::LockInfo) {
     writer.ev(Event::Start(BytesStart::new(format!(
         "{DAV_PREFIX}activelock"
     ))));

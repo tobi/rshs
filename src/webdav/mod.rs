@@ -122,6 +122,33 @@ pub fn generate_lock_token() -> String {
     format!("opaquelocktoken:{:016x}", h.finish())
 }
 
+pub fn find_ancestor_lock<'a, F>(
+    locks: &'a LockStore,
+    target: &std::path::Path,
+    root_canonical: &std::path::Path,
+    predicate: F,
+) -> Option<&'a LockInfo>
+where
+    F: Fn(&LockInfo) -> bool,
+{
+    let mut current = target.parent();
+    while let Some(parent) = current {
+        if !parent.starts_with(root_canonical) {
+            break;
+        }
+        if let Some(infos) = locks.get(parent) {
+            if let Some(lock) = infos
+                .iter()
+                .find(|l| l.depth == Depth::Infinity && predicate(l))
+            {
+                return Some(lock);
+            }
+        }
+        current = parent.parent();
+    }
+    None
+}
+
 pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
     let value = match headers.get("if").and_then(|v| v.to_str().ok()) {
         Some(v) => v,

@@ -373,22 +373,13 @@ mod tests {
     // -- PUT tests -----------------------------------------------------------
 
     fn make_app_put(dir: &tempfile::TempDir) -> Router {
-        use std::collections::HashMap;
-
-        use tokio::sync::RwLock;
-
-        let root = dir.path().to_path_buf();
-        let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
         Router::new()
             .route("/", axum::routing::put(super::handle_put))
             .route("/{*path}", axum::routing::put(super::handle_put))
-            .with_state(Arc::new(AppState {
-                root_dir: root.clone(),
-                root_canonical: canonical,
-                auth_config: Arc::new(AuthConfig::new()),
-                dead_props: Arc::new(RwLock::new(HashMap::new())),
-                locks: Arc::new(RwLock::new(HashMap::new())),
-            }))
+            .with_state(Arc::new(AppState::new(
+                dir.path().to_path_buf(),
+                AuthConfig::new(),
+            )))
     }
 
     #[tokio::test]
@@ -511,22 +502,13 @@ mod tests {
     // -- DELETE tests --------------------------------------------------------
 
     fn make_app_delete(dir: &tempfile::TempDir) -> Router {
-        use std::collections::HashMap;
-
-        use tokio::sync::RwLock;
-
-        let root = dir.path().to_path_buf();
-        let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
         Router::new()
             .route("/", axum::routing::delete(super::handle_delete))
             .route("/{*path}", axum::routing::delete(super::handle_delete))
-            .with_state(Arc::new(AppState {
-                root_dir: root.clone(),
-                root_canonical: canonical,
-                auth_config: Arc::new(AuthConfig::new()),
-                dead_props: Arc::new(RwLock::new(HashMap::new())),
-                locks: Arc::new(RwLock::new(HashMap::new())),
-            }))
+            .with_state(Arc::new(AppState::new(
+                dir.path().to_path_buf(),
+                AuthConfig::new(),
+            )))
     }
 
     #[tokio::test]

@@ -6,14 +6,14 @@ use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use quick_xml::Writer;
-use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
+use quick_xml::events::{BytesEnd, BytesStart, Event};
 
 use crate::ok_or_return;
 use crate::server::AppState;
 use crate::utils::error::OrStatus;
 use crate::webdav::{
     self,
-    xml::{DAV_PREFIX, XmlWriterExt},
+    xml::{DAV_PREFIX, XmlWriterExt, write_activelock},
 };
 
 // ---------------------------------------------------------------------------
@@ -48,43 +48,24 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
     let mut locks = state.locks.write().await;
 
     // Check ancestor depth:infinity locks for indirect refresh
-    {
-        let mut ancestor_lock: Option<webdav::LockInfo> = None;
-        let mut current = target.parent();
-        while let Some(parent) = current {
-            if !parent.starts_with(&state.root_canonical) {
-                break;
-            }
-            if let Some(entry) = locks.get(parent) {
-                for l in entry {
-                    if l.depth == webdav::Depth::Infinity && if_tokens.contains(&l.token) {
-                        ancestor_lock = Some(l.clone());
-                        break;
-                    }
-                }
-            }
-            if ancestor_lock.is_some() {
-                break;
-            }
-            current = parent.parent();
-        }
-
-        if let Some(ref al) = ancestor_lock {
-            let xml = build_lock_response(al);
-            tracing::debug!(
-                path = %target.display(),
-                token = %al.token,
-                ancestor = true,
-                "indirect LOCK refresh via ancestor depth:infinity lock"
-            );
-            drop(locks);
-            return Response::builder()
-                .status(StatusCode::OK)
-                .header("content-type", "application/xml; charset=utf-8")
-                .header("lock-token", format!("<{}>", al.token))
-                .body(Body::from(xml))
-                .unwrap();
-        }
+    if let Some(al) = webdav::find_ancestor_lock(&locks, &target, &state.root_canonical, |l| {
+        if_tokens.contains(&l.token)
+    }) {
+        let al = al.clone();
+        let xml = build_lock_response(&al);
+        tracing::debug!(
+            path = %target.display(),
+            token = %al.token,
+            ancestor = true,
+            "indirect LOCK refresh via ancestor depth:infinity lock"
+        );
+        drop(locks);
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/xml; charset=utf-8")
+            .header("lock-token", format!("<{}>", al.token))
+            .body(Body::from(xml))
+            .unwrap();
     }
 
     let entry = locks.entry(target.clone()).or_default();
@@ -294,65 +275,9 @@ fn build_lock_response(lock: &webdav::LockInfo) -> String {
     writer.ev(Event::Start(BytesStart::new(format!(
         "{DAV_PREFIX}lockdiscovery"
     ))));
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}activelock"
-    ))));
 
-    // lockscope
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}lockscope"
-    ))));
-    match lock.scope {
-        webdav::LockScope::Exclusive => {
-            writer.ev(Event::Empty(BytesStart::new(format!(
-                "{DAV_PREFIX}exclusive"
-            ))));
-        }
-        webdav::LockScope::Shared => {
-            writer.ev(Event::Empty(BytesStart::new(format!("{DAV_PREFIX}shared"))));
-        }
-    }
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}lockscope"))));
+    write_activelock(&mut writer, lock);
 
-    // locktype
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}locktype"
-    ))));
-    writer.ev(Event::Empty(BytesStart::new(format!("{DAV_PREFIX}write"))));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}locktype"))));
-
-    // depth
-    let depth_str = match lock.depth {
-        webdav::Depth::Zero => "0",
-        webdav::Depth::One => "1",
-        webdav::Depth::Infinity => "infinity",
-    };
-    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}depth"))));
-    writer.ev(Event::Text(BytesText::new(depth_str)));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}depth"))));
-
-    // timeout
-    if let Some(d) = lock.timeout {
-        writer.ev(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}timeout"
-        ))));
-        writer.ev(Event::Text(BytesText::new(&format!(
-            "Second-{}",
-            d.as_secs()
-        ))));
-        writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}timeout"))));
-    }
-
-    // locktoken
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}locktoken"
-    ))));
-    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}href"))));
-    writer.ev(Event::Text(BytesText::new(&lock.token)));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}href"))));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}locktoken"))));
-
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}activelock"))));
     writer.ev(Event::End(BytesEnd::new(format!(
         "{DAV_PREFIX}lockdiscovery"
     ))));
