@@ -170,13 +170,24 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 
 ### Known Limitations
 
-| Item                      | Status | Description                                                                                                    |
-| ------------------------- | ------ | -------------------------------------------------------------------------------------------------------------- |
-| Lock scope                | TODO   | Exclusive write locks only (shared + depth:infinity TODO)                                                      |
-| Lock timeout cleanup      | TODO   | No lazy/background cleanup of expired locks                                                                    |
-| Dead property persistence | TODO   | In-memory only (`DeadPropertyStore`), lost on restart. xattr/sidecar-file persistence planned                  |
-| `getetag` format          | Known  | Uses mtime+size hex hash (`format!("{:x}-{:x}", mtime_secs, size)`). No inode available on macOS via `std::fs` |
-| HTML directory listing    | Known  | Single-line HTML output (no indentation). Adequate for browser rendering                                       |
+| Item                      | Status      | Description                                                                                                                                                         |
+| ------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shared lock scope         | TODO (high) | Exclusive write locks only. Shared locks + depth:infinity not yet implemented. Affects litmus tests: `lock_shared` (23), `indirect_refresh` (36)                    |
+| Conditional If header     | TODO (high) | `If: (Not <DAV:no-lock>)` and complex conditionals not fully parsed (RFC 4918 §10.4). Affects litmus tests: `cond_put_with_not` (17), `fail_cond_put_unlocked` (22) |
+| Collection lock semantics | TODO (high) | Locked collection enforcement for DELETE and owner-token forwarding in COPY not fully handled. Affects litmus tests: `copy` (14), `notowner_modify` (34)            |
+| Lock timeout cleanup      | TODO        | No lazy/background cleanup of expired locks                                                                                                                         |
+| Dead property persistence | TODO        | In-memory only (`DeadPropertyStore`), lost on restart. xattr/sidecar-file persistence planned                                                                       |
+| `getetag` format          | Known       | Uses mtime+size hex hash (`format!("{:x}-{:x}", mtime_secs, size)`). No inode available on macOS via `std::fs`                                                      |
+| HTML directory listing    | Known       | Single-line HTML output (no indentation). Adequate for browser rendering                                                                                            |
+
+### Litmus Conformance
+
+| Suite    | Status | Passed | Total | Notes                                                                        |
+| -------- | ------ | ------ | ----- | ---------------------------------------------------------------------------- |
+| basic    | ✅     | 16     | 16    | 1 warning (delete_fragment)                                                  |
+| http     | ✅     | 4      | 4     |                                                                              |
+| copymove | ✅     | 13     | 13    | 2 warnings (201 vs 204, RFC 2518 ambiguity)                                  |
+| locks    | 🟡     | 24     | 30    | 6 remaining failures documented in Known Limitations; 11 skipped (cascading) |
 
 ## Conventions
 
