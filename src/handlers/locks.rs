@@ -36,6 +36,7 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
     };
 
     let timeout = webdav::parse_timeout(req.headers());
+    let depth = webdav::parse_depth(req.headers());
     let if_entries = webdav::parse_if_header(req.headers());
     let if_tokens: Vec<String> = if_entries
         .iter()
@@ -51,6 +52,47 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
     let (owner, lock_scope) = parse_lock_body(&body_bytes);
 
     let mut locks = state.locks.write().await;
+
+    // Check ancestor depth:infinity locks for indirect refresh
+    {
+        let mut ancestor_lock: Option<webdav::LockInfo> = None;
+        let mut current = target.parent();
+        while let Some(parent) = current {
+            if !parent.starts_with(&state.root_canonical) {
+                break;
+            }
+            if let Some(entry) = locks.get(parent) {
+                for l in entry {
+                    if l.depth == webdav::Depth::Infinity && if_tokens.contains(&l.token) {
+                        ancestor_lock = Some(l.clone());
+                        break;
+                    }
+                }
+            }
+            if ancestor_lock.is_some() {
+                break;
+            }
+            current = parent.parent();
+        }
+
+        if let Some(ref al) = ancestor_lock {
+            let xml = build_lock_response(al);
+            tracing::debug!(
+                path = %target.display(),
+                token = %al.token,
+                ancestor = true,
+                "indirect LOCK refresh via ancestor depth:infinity lock"
+            );
+            drop(locks);
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/xml; charset=utf-8")
+                .header("lock-token", format!("<{}>", al.token))
+                .body(Body::from(xml))
+                .unwrap();
+        }
+    }
+
     let entry = locks.entry(target.clone()).or_default();
 
     // Check existing locks for conflict
@@ -158,11 +200,10 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
         owner,
         timeout,
         created: std::time::SystemTime::now(),
-        depth: webdav::Depth::Zero,
+        depth,
     };
+    let xml = build_lock_response(&lock);
     entry.push(lock);
-
-    let xml = build_lock_response(&token, timeout, &lock_scope);
 
     tracing::debug!(path = %target.display(), token = %token, is_refresh, "LOCK completed");
 
@@ -249,11 +290,7 @@ fn parse_lock_body(xml: &[u8]) -> (Option<String>, webdav::LockScope) {
     (owner, scope)
 }
 
-fn build_lock_response(
-    token: &str,
-    timeout: Option<std::time::Duration>,
-    scope: &webdav::LockScope,
-) -> String {
+fn build_lock_response(lock: &webdav::LockInfo) -> String {
     let mut writer = Writer::new(Cursor::new(Vec::new()));
 
     let mut prop = BytesStart::new(format!("{DAV_PREFIX}prop"));
@@ -277,7 +314,7 @@ fn build_lock_response(
             "{DAV_PREFIX}lockscope"
         ))))
         .unwrap();
-    match scope {
+    match lock.scope {
         webdav::LockScope::Exclusive => {
             writer
                 .write_event(Event::Empty(BytesStart::new(format!(
@@ -309,18 +346,23 @@ fn build_lock_response(
         .unwrap();
 
     // depth
+    let depth_str = match lock.depth {
+        webdav::Depth::Zero => "0",
+        webdav::Depth::One => "1",
+        webdav::Depth::Infinity => "infinity",
+    };
     writer
         .write_event(Event::Start(BytesStart::new(format!("{DAV_PREFIX}depth"))))
         .unwrap();
     writer
-        .write_event(Event::Text(BytesText::new("0")))
+        .write_event(Event::Text(BytesText::new(depth_str)))
         .unwrap();
     writer
         .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}depth"))))
         .unwrap();
 
     // timeout
-    if let Some(d) = timeout {
+    if let Some(d) = lock.timeout {
         writer
             .write_event(Event::Start(BytesStart::new(format!(
                 "{DAV_PREFIX}timeout"
@@ -347,7 +389,7 @@ fn build_lock_response(
         .write_event(Event::Start(BytesStart::new(format!("{DAV_PREFIX}href"))))
         .unwrap();
     writer
-        .write_event(Event::Text(BytesText::new(token)))
+        .write_event(Event::Text(BytesText::new(&lock.token)))
         .unwrap();
     writer
         .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}href"))))

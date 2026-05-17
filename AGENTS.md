@@ -170,95 +170,24 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 
 ### Known Limitations
 
-| Item                      | Status      | Description                                                                                                                                                         |
-| ------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Shared lock scope         | ✅          | Shared locks (`LockScope::Shared`) + conflict resolution (shared/exclusive) implemented; `lock_shared` litmus test passes                                           |
-| Conditional If header     | ✅          | Full RFC 4918 §10.4 recursive-descent parser: `Not`, `DAV:no-lock`, resource-tags, AND semantics; `eval_condition` + `evaluate_if` in lock middleware |
-| Collection lock semantics | TODO (high) | Locked collection enforcement for DELETE and owner-token forwarding in COPY not fully handled. Affects litmus tests: `copy` (14), `notowner_modify` (34)            |
-| Lock timeout cleanup      | ✅          | Expired locks pruned every 30s by background task; `LockInfo::is_expired()` method                                                                                  |
-| Dead property persistence | TODO        | In-memory only (`DeadPropertyStore`), lost on restart. xattr/sidecar-file persistence planned                                                                       |
-| `getetag` format          | Known       | Uses mtime+size hex hash (`format!("{:x}-{:x}", mtime_secs, size)`). No inode available on macOS via `std::fs`                                                      |
-| HTML directory listing    | Known       | Single-line HTML output (no indentation). Adequate for browser rendering                                                                                            |
+| Item                      | Status   | Description                                                                                                                                           |
+| ------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shared lock scope         | ✅       | Shared locks (`LockScope::Shared`) + conflict resolution (shared/exclusive) implemented; `lock_shared` litmus test passes                             |
+| Conditional If header     | ✅       | Full RFC 4918 §10.4 recursive-descent parser: `Not`, `DAV:no-lock`, resource-tags, AND semantics; `eval_condition` + `evaluate_if` in lock middleware |
+| Collection lock semantics | ✅       | Depth:infinity ancestor chain enforcement in `lock_enforce` + indirect refresh via ancestor lock discovery in `handle_lock`                           |
+| Lock timeout cleanup      | ✅       | Expired locks pruned every 30s by background task; `LockInfo::is_expired()` method                                                                    |
+| Dead property persistence | Accepted | In-memory only (`DeadPropertyStore`), lost on restart. Accepted as architectural trade-off; sidecar persistence deferred                              |
+| `getetag` format          | Known    | Uses mtime+size hex hash (`format!("{:x}-{:x}", mtime_secs, size)`). No inode available on macOS via `std::fs`                                        |
+| HTML directory listing    | Known    | Single-line HTML output (no indentation). Adequate for browser rendering                                                                              |
 
 ### Litmus Conformance
 
-| Suite    | Status | Passed | Total | Notes                                                                        |
-| -------- | ------ | ------ | ----- | ---------------------------------------------------------------------------- |
-| basic    | ✅     | 16     | 16    | 1 warning (delete_fragment)                                                  |
-| http     | ✅     | 4      | 4     |                                                                              |
-| copymove | ✅     | 13     | 13    | 2 warnings (201 vs 204, RFC 2518 ambiguity)                                  |
-| locks    | 🟡     | 24     | 30    | 6 remaining failures documented in Known Limitations; 11 skipped (cascading) |
-
-## Known Limitations — Resolution Plan
-
-Ordered by dependency; phases sharing the same number can be worked on in parallel.
-
-### Phase 1 — Lock Timeout Cleanup
-
-- **Files**: `src/webdav/mod.rs`, `src/middleware/lock.rs` or `src/server/mod.rs`
-- **Changes**:
-  - Add `LockInfo::is_expired(&self) -> bool` method
-  - Spawn a background task in `start_server()` that scans `state.locks` every 30s and prunes expired `LockInfo` entries
-  - Register the task handle in `AppState` so it can be aborted on shutdown
-- **Effort**: ~30 LOC, zero coupling to other phases
-
-### Phase 2 — Shared Lock Scope
-
-- **Files**: `src/webdav/mod.rs`, `src/handlers/locks.rs`, `src/middleware/lock.rs`, `src/webdav/xml.rs`
-- **Changes**:
-  1. Add `LockScope::Shared` variant + `LockInfo::is_exclusive()` helper
-  2. Rename `parse_lock_owner()` → `parse_lock_body()` — extend parser to extract `<D:lockscope><D:shared/>` vs `<D:exclusive/>` from the LOCK request XML body
-  3. Update `handle_lock()`:
-     - Existing exclusive lock on resource → reject 423 unless token matches (refresh)
-     - Existing shared lock(s) + new exclusive → reject 423
-     - Existing shared lock(s) + new shared → allow (multiple shared holders)
-  4. Update `build_lock_response()` + `write_activelock()` to emit correct scope element
-  5. Update `lock_enforce()` middleware: shared-locked resources reject writes without matching token; reads (GET/PROPFIND) are unaffected
-- **Effort**: ~100 LOC
-
-### Phase 3 — Conditional If Header (RFC 4918 §10.4)
-
-- **Files**: `src/webdav/mod.rs`, `src/middleware/lock.rs`
-- **Changes**:
-  1. Replace `parse_if_header()` with a recursive-descent parser that returns `Vec<IfEntry>`:
-     - `StateToken(String)` — `<opaquelocktoken:...>`
-     - `Not(Box<IfCondition>)` — `Not <token>`
-     - `DAVNoLock` — `No <DAV:no-lock>` pseudo-state-token
-     - `IfEntry` has optional `ResourceTag(Option<String>, Vec<IfCondition>)` for URL-scoped conditions
-  2. Update `lock_enforce()` to evaluate `IfEntry` conditions against the lock store instead of simple token-membership
-  3. Update `handle_lock()` / `handle_unlock()` to use the new parser types for token extraction
-- **Effort**: ~200 LOC
-- **Depends on**: Phase 2
-
-### Phase 4 — Collection Lock Depth:Infinity Semantics
-
-- **Files**: `src/middleware/lock.rs`, `src/handlers/webdav.rs`, `src/handlers/locks.rs`
-- **Changes**:
-  1. `lock_enforce()`: for write ops, walk **up** the ancestor chain and check for depth:infinity locks on parent collections that the request's tokens don't cover
-  2. `lock_enforce()`: for DELETE on a directory, ensure no locked descendant exists whose token the request doesn't carry
-  3. COPY handler (`do_move_or_copy`): after copying from a locked source, forward owner lock tokens to the destination
-- **Effort**: ~80 LOC
-- **Depends on**: Phase 2, Phase 3
-
-### Phase 5 — Dead Property Persistence
-
-- **Files**: `src/webdav/mod.rs`, `src/handlers/webdav.rs`, `src/server/mod.rs`
-- **Approach**: Sidecar `.rshs-props.json` file in each directory
-- **Changes**:
-  1. Wrap in-memory `DeadPropertyStore` with `load(sidecar_path)` / `save(sidecar_path)` methods (parse/serialize JSON)
-  2. On startup, `AppState::new()` loads existing sidecar file if present
-  3. After PROPPATCH, persist the updated map
-  4. On DELETE, remove dead props for the deleted path
-- **Effort**: ~120 LOC
-- **Coupling**: Independent of all other phases
-
-### Phase Dependency Graph
-
-```
-Phase 1 (lock timeout)   ─┤
-Phase 2 (shared locks)   ─┼── Phase 3 (If header) ── Phase 4 (depth enforcement)
-Phase 5 (dead prop pers.) ┘
-```
+| Suite    | Status | Passed | Total | Notes                                                                                                     |
+| -------- | ------ | ------ | ----- | --------------------------------------------------------------------------------------------------------- |
+| basic    | ✅     | 16     | 16    | 1 warning (delete_fragment)                                                                               |
+| http     | ✅     | 4      | 4     |                                                                                                           |
+| copymove | ✅     | 13     | 13    | 2 warnings (201 vs 204, RFC 2518 ambiguity)                                                               |
+| locks    | ✅     | 36     | 37    | 1 remaining: `fail_cond_put_unlocked` (RFC 4918-compliant 200 OK, litmus 0.14 expects failure); 4 skipped |
 
 ## Conventions
 

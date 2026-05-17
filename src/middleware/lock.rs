@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use axum::http::StatusCode;
@@ -5,7 +6,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
 use crate::server::AppState;
-use crate::webdav::{self, IfCondition, LockInfo};
+use crate::webdav::{self, Depth, IfCondition, LockInfo, LockStore};
 
 fn eval_condition(cond: &IfCondition, infos: &[LockInfo]) -> bool {
     match cond {
@@ -40,6 +41,30 @@ fn evaluate_if(lists: &[webdav::IfList], infos: &[LockInfo], request_path: &str)
         .all(|l| l.conditions.iter().all(|c| eval_condition(c, infos)))
 }
 
+fn check_depth_infinity_ancestors(
+    locks: &LockStore,
+    target: &Path,
+    lists: &[webdav::IfList],
+    root_canonical: &Path,
+    request_path: &str,
+) -> Option<StatusCode> {
+    let mut current = target.parent();
+    while let Some(parent) = current {
+        if !parent.starts_with(root_canonical) {
+            break;
+        }
+        if let Some(infos) = locks.get(parent) {
+            if infos.iter().any(|l| l.depth == Depth::Infinity)
+                && !evaluate_if(lists, infos, request_path)
+            {
+                return Some(StatusCode::LOCKED);
+            }
+        }
+        current = parent.parent();
+    }
+    None
+}
+
 pub async fn lock_enforce(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     req: axum::extract::Request,
@@ -59,15 +84,28 @@ pub async fn lock_enforce(
 
     let locks = state.locks.read().await;
 
-    // Check source path
-    if let Ok(src) = state.resolve_and_guard(&request_path).await {
-        let infos = match locks.get(&src) {
-            Some(v) => v.as_slice(),
-            None => &[],
-        };
-        if !evaluate_if(&lists, infos, &request_path) {
-            tracing::debug!(path = %src.display(), "resource locked, rejecting write");
-            return Err(StatusCode::LOCKED.into_response());
+    // Check source path (skip for COPY — source is read-only)
+    if method != "COPY" {
+        if let Ok(src) = state.resolve_and_guard(&request_path).await {
+            let infos = match locks.get(&src) {
+                Some(v) => v.as_slice(),
+                None => &[],
+            };
+            if !evaluate_if(&lists, infos, &request_path) {
+                tracing::debug!(path = %src.display(), "resource locked, rejecting write");
+                return Err(StatusCode::LOCKED.into_response());
+            }
+            // Check ancestor depth:infinity locks
+            if let Some(status) = check_depth_infinity_ancestors(
+                &locks,
+                &src,
+                &lists,
+                &state.root_canonical,
+                &request_path,
+            ) {
+                tracing::debug!(path = %request_path, "ancestor depth:infinity lock");
+                return Err(status.into_response());
+            }
         }
     }
 
@@ -83,6 +121,17 @@ pub async fn lock_enforce(
                 if !evaluate_if(&lists, infos, dest_normalized) {
                     tracing::debug!(path = %dest_path.display(), "destination locked, rejecting COPY/MOVE");
                     return Err(StatusCode::LOCKED.into_response());
+                }
+                // Check ancestor depth:infinity locks on destination
+                if let Some(status) = check_depth_infinity_ancestors(
+                    &locks,
+                    &dest_path,
+                    &lists,
+                    &state.root_canonical,
+                    dest_normalized,
+                ) {
+                    tracing::debug!(path = %dest_normalized, "ancestor depth:infinity lock on destination");
+                    return Err(status.into_response());
                 }
             }
         }
