@@ -172,17 +172,16 @@ async fn generate_dir_listing(dir_path: &Path, request_path: &str) -> (String, u
 pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
-    let target = match state.resolve_and_guard(&request_path, true).await {
+    // PUT MUST NOT create intermediate collections (RFC 4918 §9.6)
+    let target = match state.resolve_and_guard(&request_path, false).await {
         Ok(t) => t,
         Err(path::ResolveTargetError::InvalidPath) => {
             tracing::debug!("path resolution failed");
             return StatusCode::BAD_REQUEST.into_response();
         }
-        Err(path::ResolveTargetError::ParentCanonicalizeFailed(e)) => {
-            tracing::error!(
-                error = %e, "failed to create/canonicalize parent dirs for PUT"
-            );
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        Err(path::ResolveTargetError::ParentCanonicalizeFailed(_)) => {
+            tracing::debug!("parent directory does not exist for PUT");
+            return StatusCode::CONFLICT.into_response();
         }
         Err(path::ResolveTargetError::TraversalBlocked) => {
             tracing::warn!(path = %request_path, "path traversal blocked in PUT");
@@ -457,7 +456,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_put_creates_parent_dirs() {
+    async fn test_put_rejects_missing_parent() {
         let dir = tempfile::TempDir::new().unwrap();
         let app = make_app_put(&dir);
 
@@ -468,10 +467,8 @@ mod tests {
             .unwrap();
 
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::CREATED);
-
-        let content = std::fs::read_to_string(dir.path().join("a/b/c/file.txt")).unwrap();
-        assert_eq!(content, "nested");
+        // RFC 4918 §9.6: PUT MUST NOT create intermediate collections
+        assert_eq!(resp.status(), axum::http::StatusCode::CONFLICT);
     }
 
     #[tokio::test]

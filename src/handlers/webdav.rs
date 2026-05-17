@@ -69,6 +69,12 @@ pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -
 // ---------------------------------------------------------------------------
 
 pub async fn handle_mkcol(State(state): State<Arc<AppState>>, req: Request) -> Response {
+    // MKCOL MUST fail with 415 if the request has a body (RFC 2518 §8.3.1)
+    let len = req.headers().get("content-length");
+    if len.and_then(|v| v.to_str().ok()).is_some_and(|v| v != "0") {
+        return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
+    }
+
     // MKCOL accepts trailing slashes per WebDAV client convention (e.g. litmus)
     let request_path = req.uri().path().trim_end_matches('/').to_owned();
 
