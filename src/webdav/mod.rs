@@ -2,6 +2,7 @@ pub mod fs;
 pub mod xml;
 
 use std::collections::HashMap;
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::LazyLock;
 use std::time::{Duration, SystemTime};
@@ -301,7 +302,28 @@ pub fn parse_depth(headers: &HeaderMap) -> Depth {
     }
 }
 
-pub fn parse_propfind_request(xml: &[u8]) -> Result<PropRequest, Box<dyn std::error::Error>> {
+#[derive(Debug)]
+pub enum ParseError {
+    InvalidBody(&'static str),
+    Xml(quick_xml::Error),
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Xml(e) => write!(f, "XML parse error: {e}"),
+            Self::InvalidBody(s) => write!(f, "invalid body: {s}"),
+        }
+    }
+}
+
+impl From<quick_xml::Error> for ParseError {
+    fn from(e: quick_xml::Error) -> Self {
+        Self::Xml(e)
+    }
+}
+
+pub fn parse_propfind_request(xml: &[u8]) -> Result<PropRequest, ParseError> {
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(true);
 
@@ -373,7 +395,7 @@ pub fn parse_overwrite(headers: &HeaderMap) -> bool {
         != "F"
 }
 
-pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, Box<dyn std::error::Error>> {
+pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, ParseError> {
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(true);
 
@@ -438,7 +460,7 @@ pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, Box<dyn std::e
     }
 
     if !found_any {
-        return Err("invalid PROPPATCH body".into());
+        return Err(ParseError::InvalidBody("invalid PROPPATCH body"));
     }
 
     Ok(PropPatchOp {

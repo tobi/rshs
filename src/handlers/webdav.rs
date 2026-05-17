@@ -690,15 +690,23 @@ mod tests {
             )))
     }
 
-    fn make_copy(uri: &str, dest: &str, overwrite: Option<&str>) -> Request {
+    fn make_copy_or_move(method: &[u8], uri: &str, dest: &str, overwrite: Option<&str>) -> Request {
         let mut builder = Request::builder()
-            .method(axum::http::Method::from_bytes(b"COPY").unwrap())
+            .method(axum::http::Method::from_bytes(method).unwrap())
             .uri(uri)
             .header("destination", dest);
         if let Some(ov) = overwrite {
             builder = builder.header("overwrite", ov);
         }
         builder.body(Body::empty()).unwrap()
+    }
+
+    fn make_copy(uri: &str, dest: &str, overwrite: Option<&str>) -> Request {
+        make_copy_or_move(b"COPY", uri, dest, overwrite)
+    }
+
+    fn make_move(uri: &str, dest: &str, overwrite: Option<&str>) -> Request {
+        make_copy_or_move(b"MOVE", uri, dest, overwrite)
     }
 
     #[tokio::test]
@@ -801,17 +809,6 @@ mod tests {
                 dir.path().to_path_buf(),
                 AuthConfig::new(),
             )))
-    }
-
-    fn make_move(uri: &str, dest: &str, overwrite: Option<&str>) -> Request {
-        let mut builder = Request::builder()
-            .method(axum::http::Method::from_bytes(b"MOVE").unwrap())
-            .uri(uri)
-            .header("destination", dest);
-        if let Some(ov) = overwrite {
-            builder = builder.header("overwrite", ov);
-        }
-        builder.body(Body::empty()).unwrap()
     }
 
     #[tokio::test]
