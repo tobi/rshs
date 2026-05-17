@@ -35,22 +35,23 @@ pub enum Depth {
     Infinity,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PropRequest {
     AllProp,
     PropName,
     Named(Vec<String>),
 }
 
+#[derive(Debug, Clone)]
 pub struct PropEntry {
+    pub canonical_path: Option<PathBuf>,
     pub href: String,
-    pub is_dir: bool,
-    pub size: u64,
+    pub content_type: Option<String>,
     pub modified: SystemTime,
     pub created: Option<SystemTime>,
-    pub content_type: Option<String>,
+    pub size: u64,
+    pub is_dir: bool,
     pub dead_props: Option<HashMap<String, String>>,
-    pub canonical_path: Option<PathBuf>,
     pub active_locks: Option<Vec<LockInfo>>,
 }
 

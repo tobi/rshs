@@ -10,7 +10,7 @@ use crate::webdav::{PropEntry, PropRequest};
 pub const DAV_PREFIX: &str = "D:";
 const DAV_NS: &str = "DAV:";
 
-trait XmlWriterExt {
+pub(crate) trait XmlWriterExt {
     fn ev(&mut self, event: Event<'_>);
 }
 

@@ -8,63 +8,6 @@ use axum::response::{IntoResponse, Response};
 use crate::server::AppState;
 use crate::webdav::{self, Depth, IfCondition, LockInfo, LockStore};
 
-fn eval_condition(cond: &IfCondition, infos: &[LockInfo]) -> bool {
-    match cond {
-        IfCondition::StateToken(t) if t == "DAV:no-lock" => !infos.iter().any(|l| l.is_exclusive()),
-        IfCondition::StateToken(t) => infos.iter().any(|l| l.token == *t),
-        IfCondition::Not(inner) => !eval_condition(inner, infos),
-    }
-}
-
-fn evaluate_if(lists: &[webdav::IfList], infos: &[LockInfo], request_path: &str) -> bool {
-    // No If header → the resource must be unlocked
-    if lists.is_empty() {
-        return infos.is_empty();
-    }
-
-    // Filter lists applicable to this resource
-    let applicable: Vec<_> = lists
-        .iter()
-        .filter(|l| match &l.resource_tag {
-            Some(tag) => tag == request_path,
-            None => true,
-        })
-        .collect();
-
-    if applicable.is_empty() {
-        return true;
-    }
-
-    // All applicable lists must pass (AND semantics across lists)
-    applicable
-        .iter()
-        .all(|l| l.conditions.iter().all(|c| eval_condition(c, infos)))
-}
-
-fn check_depth_infinity_ancestors(
-    locks: &LockStore,
-    target: &Path,
-    lists: &[webdav::IfList],
-    root_canonical: &Path,
-    request_path: &str,
-) -> Option<StatusCode> {
-    let mut current = target.parent();
-    while let Some(parent) = current {
-        if !parent.starts_with(root_canonical) {
-            break;
-        }
-        if let Some(infos) = locks.get(parent) {
-            if infos.iter().any(|l| l.depth == Depth::Infinity)
-                && !evaluate_if(lists, infos, request_path)
-            {
-                return Some(StatusCode::LOCKED);
-            }
-        }
-        current = parent.parent();
-    }
-    None
-}
-
 pub async fn lock_enforce(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     req: axum::extract::Request,
@@ -139,6 +82,63 @@ pub async fn lock_enforce(
 
     drop(locks);
     Ok(next.run(req).await)
+}
+
+fn eval_condition(cond: &IfCondition, infos: &[LockInfo]) -> bool {
+    match cond {
+        IfCondition::StateToken(t) if t == "DAV:no-lock" => !infos.iter().any(|l| l.is_exclusive()),
+        IfCondition::StateToken(t) => infos.iter().any(|l| l.token == *t),
+        IfCondition::Not(inner) => !eval_condition(inner, infos),
+    }
+}
+
+fn evaluate_if(lists: &[webdav::IfList], infos: &[LockInfo], request_path: &str) -> bool {
+    // No If header → the resource must be unlocked
+    if lists.is_empty() {
+        return infos.is_empty();
+    }
+
+    // Filter lists applicable to this resource
+    let applicable: Vec<_> = lists
+        .iter()
+        .filter(|l| match &l.resource_tag {
+            Some(tag) => tag == request_path,
+            None => true,
+        })
+        .collect();
+
+    if applicable.is_empty() {
+        return true;
+    }
+
+    // All applicable lists must pass (AND semantics across lists)
+    applicable
+        .iter()
+        .all(|l| l.conditions.iter().all(|c| eval_condition(c, infos)))
+}
+
+fn check_depth_infinity_ancestors(
+    locks: &LockStore,
+    target: &Path,
+    lists: &[webdav::IfList],
+    root_canonical: &Path,
+    request_path: &str,
+) -> Option<StatusCode> {
+    let mut current = target.parent();
+    while let Some(parent) = current {
+        if !parent.starts_with(root_canonical) {
+            break;
+        }
+        if let Some(infos) = locks.get(parent) {
+            if infos.iter().any(|l| l.depth == Depth::Infinity)
+                && !evaluate_if(lists, infos, request_path)
+            {
+                return Some(StatusCode::LOCKED);
+            }
+        }
+        current = parent.parent();
+    }
+    None
 }
 
 #[cfg(test)]

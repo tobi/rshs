@@ -11,7 +11,7 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::server::AppState;
-use crate::utils::{path, time::format_rfc850};
+use crate::utils::time::format_rfc850;
 
 pub use axum::http::Method;
 
@@ -175,17 +175,9 @@ pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Res
     // PUT MUST NOT create intermediate collections (RFC 4918 §9.6)
     let target = match state.resolve_and_guard(&request_path).await {
         Ok(t) => t,
-        Err(path::ResolveTargetError::InvalidPath) => {
-            tracing::debug!("path resolution failed");
-            return StatusCode::BAD_REQUEST.into_response();
-        }
-        Err(path::ResolveTargetError::ParentCanonicalizeFailed(_)) => {
-            tracing::debug!("parent directory does not exist for PUT");
-            return StatusCode::CONFLICT.into_response();
-        }
-        Err(path::ResolveTargetError::TraversalBlocked) => {
-            tracing::warn!(path = %request_path, "path traversal blocked in PUT");
-            return StatusCode::FORBIDDEN.into_response();
+        Err(e) => {
+            tracing::debug!(error = %e, "path resolution failed for PUT");
+            return e.status(StatusCode::BAD_REQUEST).into_response();
         }
     };
 

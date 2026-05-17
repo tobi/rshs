@@ -11,9 +11,10 @@ use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use crate::ok_or_return;
 use crate::server::AppState;
 use crate::utils::error::OrStatus;
-use crate::utils::path;
-use crate::webdav;
-use crate::webdav::xml::DAV_PREFIX;
+use crate::webdav::{
+    self,
+    xml::{DAV_PREFIX, XmlWriterExt},
+};
 
 // ---------------------------------------------------------------------------
 // LOCK
@@ -25,14 +26,7 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
 
     let target = match state.resolve_and_guard(&request_path).await {
         Ok(t) => t,
-        Err(path::ResolveTargetError::InvalidPath) => return StatusCode::FORBIDDEN.into_response(),
-        Err(path::ResolveTargetError::ParentCanonicalizeFailed(_)) => {
-            tracing::debug!("parent not found for LOCK");
-            return StatusCode::CONFLICT.into_response();
-        }
-        Err(path::ResolveTargetError::TraversalBlocked) => {
-            return StatusCode::FORBIDDEN.into_response();
-        }
+        Err(e) => return e.status(StatusCode::FORBIDDEN).into_response(),
     };
 
     let timeout = webdav::parse_timeout(req.headers());
@@ -295,55 +289,37 @@ fn build_lock_response(lock: &webdav::LockInfo) -> String {
 
     let mut prop = BytesStart::new(format!("{DAV_PREFIX}prop"));
     prop.push_attribute(("xmlns:D", "DAV:"));
-    writer.write_event(Event::Start(prop)).unwrap();
+    writer.ev(Event::Start(prop));
 
-    writer
-        .write_event(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}lockdiscovery"
-        ))))
-        .unwrap();
-    writer
-        .write_event(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}activelock"
-        ))))
-        .unwrap();
+    writer.ev(Event::Start(BytesStart::new(format!(
+        "{DAV_PREFIX}lockdiscovery"
+    ))));
+    writer.ev(Event::Start(BytesStart::new(format!(
+        "{DAV_PREFIX}activelock"
+    ))));
 
     // lockscope
-    writer
-        .write_event(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}lockscope"
-        ))))
-        .unwrap();
+    writer.ev(Event::Start(BytesStart::new(format!(
+        "{DAV_PREFIX}lockscope"
+    ))));
     match lock.scope {
         webdav::LockScope::Exclusive => {
-            writer
-                .write_event(Event::Empty(BytesStart::new(format!(
-                    "{DAV_PREFIX}exclusive"
-                ))))
-                .unwrap();
+            writer.ev(Event::Empty(BytesStart::new(format!(
+                "{DAV_PREFIX}exclusive"
+            ))));
         }
         webdav::LockScope::Shared => {
-            writer
-                .write_event(Event::Empty(BytesStart::new(format!("{DAV_PREFIX}shared"))))
-                .unwrap();
+            writer.ev(Event::Empty(BytesStart::new(format!("{DAV_PREFIX}shared"))));
         }
     }
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}lockscope"))))
-        .unwrap();
+    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}lockscope"))));
 
     // locktype
-    writer
-        .write_event(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}locktype"
-        ))))
-        .unwrap();
-    writer
-        .write_event(Event::Empty(BytesStart::new(format!("{DAV_PREFIX}write"))))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}locktype"))))
-        .unwrap();
+    writer.ev(Event::Start(BytesStart::new(format!(
+        "{DAV_PREFIX}locktype"
+    ))));
+    writer.ev(Event::Empty(BytesStart::new(format!("{DAV_PREFIX}write"))));
+    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}locktype"))));
 
     // depth
     let depth_str = match lock.depth {
@@ -351,64 +327,36 @@ fn build_lock_response(lock: &webdav::LockInfo) -> String {
         webdav::Depth::One => "1",
         webdav::Depth::Infinity => "infinity",
     };
-    writer
-        .write_event(Event::Start(BytesStart::new(format!("{DAV_PREFIX}depth"))))
-        .unwrap();
-    writer
-        .write_event(Event::Text(BytesText::new(depth_str)))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}depth"))))
-        .unwrap();
+    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}depth"))));
+    writer.ev(Event::Text(BytesText::new(depth_str)));
+    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}depth"))));
 
     // timeout
     if let Some(d) = lock.timeout {
-        writer
-            .write_event(Event::Start(BytesStart::new(format!(
-                "{DAV_PREFIX}timeout"
-            ))))
-            .unwrap();
-        writer
-            .write_event(Event::Text(BytesText::new(&format!(
-                "Second-{}",
-                d.as_secs()
-            ))))
-            .unwrap();
-        writer
-            .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}timeout"))))
-            .unwrap();
+        writer.ev(Event::Start(BytesStart::new(format!(
+            "{DAV_PREFIX}timeout"
+        ))));
+        writer.ev(Event::Text(BytesText::new(&format!(
+            "Second-{}",
+            d.as_secs()
+        ))));
+        writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}timeout"))));
     }
 
     // locktoken
-    writer
-        .write_event(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}locktoken"
-        ))))
-        .unwrap();
-    writer
-        .write_event(Event::Start(BytesStart::new(format!("{DAV_PREFIX}href"))))
-        .unwrap();
-    writer
-        .write_event(Event::Text(BytesText::new(&lock.token)))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}href"))))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}locktoken"))))
-        .unwrap();
+    writer.ev(Event::Start(BytesStart::new(format!(
+        "{DAV_PREFIX}locktoken"
+    ))));
+    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}href"))));
+    writer.ev(Event::Text(BytesText::new(&lock.token)));
+    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}href"))));
+    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}locktoken"))));
 
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}activelock"))))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!(
-            "{DAV_PREFIX}lockdiscovery"
-        ))))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))))
-        .unwrap();
+    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}activelock"))));
+    writer.ev(Event::End(BytesEnd::new(format!(
+        "{DAV_PREFIX}lockdiscovery"
+    ))));
+    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))));
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }

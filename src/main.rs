@@ -4,23 +4,11 @@ use std::path::PathBuf;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use rshs::DEFAULT_LOG_LEVEL;
-
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let cli = rshs::Cli::parse();
 
-    let filter = if cli.quiet {
-        EnvFilter::new("off")
-    } else if cli.verbose >= 2 {
-        EnvFilter::new("trace")
-    } else if cli.verbose >= 1 {
-        EnvFilter::new("debug")
-    } else if let Ok(f) = std::env::var("RSHS_LOG") {
-        EnvFilter::new(f)
-    } else {
-        EnvFilter::new(DEFAULT_LOG_LEVEL)
-    };
+    let filter = EnvFilter::new(cli.log_level());
 
     let ansi = match std::env::var("RSHS_LOG_STYLE").as_deref() {
         Ok("always") => true,

@@ -13,7 +13,10 @@ use crate::ok_or_return;
 use crate::server::AppState;
 use crate::utils::error::OrStatus;
 use crate::utils::path;
-use crate::webdav::{self, xml::DAV_PREFIX};
+use crate::webdav::{
+    self,
+    xml::{DAV_PREFIX, XmlWriterExt},
+};
 
 // ---------------------------------------------------------------------------
 // PROPFIND
@@ -80,17 +83,9 @@ pub async fn handle_mkcol(State(state): State<Arc<AppState>>, req: Request) -> R
 
     let target = match state.resolve_and_guard(&request_path).await {
         Ok(t) => t,
-        Err(path::ResolveTargetError::InvalidPath) => {
-            tracing::debug!("path resolution failed for MKCOL");
-            return StatusCode::FORBIDDEN.into_response();
-        }
-        Err(path::ResolveTargetError::ParentCanonicalizeFailed(_)) => {
-            tracing::debug!("parent not found for MKCOL");
-            return StatusCode::CONFLICT.into_response();
-        }
-        Err(path::ResolveTargetError::TraversalBlocked) => {
-            tracing::warn!(path = %request_path, "path traversal blocked in MKCOL");
-            return StatusCode::FORBIDDEN.into_response();
+        Err(e) => {
+            tracing::debug!(error = %e, "path resolution failed for MKCOL");
+            return e.status(StatusCode::FORBIDDEN).into_response();
         }
     };
 
@@ -153,7 +148,6 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
 
     let dest = match state.resolve_and_guard(&dest_str).await {
         Ok(t) => t,
-        Err(path::ResolveTargetError::InvalidPath) => unreachable!(),
         Err(path::ResolveTargetError::ParentCanonicalizeFailed(_)) => {
             tracing::debug!("dest parent not found for COPY/MOVE");
             return StatusCode::CONFLICT.into_response();
@@ -161,6 +155,7 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
         Err(path::ResolveTargetError::TraversalBlocked) => {
             return StatusCode::FORBIDDEN.into_response();
         }
+        _ => unreachable!(),
     };
     let mut dest_existed = tokio::fs::metadata(&dest).await.is_ok();
 
@@ -350,52 +345,26 @@ fn write_proppatch_result(
     prop_name: &str,
     status: &str,
 ) {
-    writer
-        .write_event(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}response"
-        ))))
-        .unwrap();
-    writer
-        .write_event(Event::Start(BytesStart::new(format!("{DAV_PREFIX}href"))))
-        .unwrap();
-    writer
-        .write_event(Event::Text(BytesText::new(href)))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}href"))))
-        .unwrap();
+    writer.ev(Event::Start(BytesStart::new(format!(
+        "{DAV_PREFIX}response"
+    ))));
+    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}href"))));
+    writer.ev(Event::Text(BytesText::new(href)));
+    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}href"))));
 
-    writer
-        .write_event(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}propstat"
-        ))))
-        .unwrap();
-    writer
-        .write_event(Event::Start(BytesStart::new(format!("{DAV_PREFIX}prop"))))
-        .unwrap();
-    writer
-        .write_event(Event::Empty(BytesStart::new(prop_name)))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))))
-        .unwrap();
+    writer.ev(Event::Start(BytesStart::new(format!(
+        "{DAV_PREFIX}propstat"
+    ))));
+    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}prop"))));
+    writer.ev(Event::Empty(BytesStart::new(prop_name)));
+    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))));
 
-    writer
-        .write_event(Event::Start(BytesStart::new(format!("{DAV_PREFIX}status"))))
-        .unwrap();
-    writer
-        .write_event(Event::Text(BytesText::new(&format!("HTTP/1.1 {status}"))))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}status"))))
-        .unwrap();
+    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}status"))));
+    writer.ev(Event::Text(BytesText::new(&format!("HTTP/1.1 {status}"))));
+    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}status"))));
 
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}propstat"))))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}response"))))
-        .unwrap();
+    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}propstat"))));
+    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}response"))));
 }
 
 // ---------------------------------------------------------------------------
