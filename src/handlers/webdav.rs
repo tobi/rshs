@@ -69,7 +69,8 @@ pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -
 // ---------------------------------------------------------------------------
 
 pub async fn handle_mkcol(State(state): State<Arc<AppState>>, req: Request) -> Response {
-    let request_path = req.uri().path().to_owned();
+    // MKCOL accepts trailing slashes per WebDAV client convention (e.g. litmus)
+    let request_path = req.uri().path().trim_end_matches('/').to_owned();
 
     let target = match state.resolve_and_guard(&request_path, false).await {
         Ok(t) => t,
