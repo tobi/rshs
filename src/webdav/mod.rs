@@ -4,7 +4,7 @@ pub mod xml;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::LazyLock;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use axum::http::{HeaderMap, Method as HttpMethod};
 use percent_encoding::percent_decode_str;
@@ -58,12 +58,21 @@ pub type LockStore = HashMap<PathBuf, Vec<LockInfo>>;
 
 #[derive(Debug, Clone)]
 pub struct LockInfo {
-    pub token: String,
     pub scope: LockScope,
+    pub token: String,
     pub owner: Option<String>,
-    pub timeout: Option<std::time::Duration>,
     pub created: SystemTime,
+    pub timeout: Option<Duration>,
     pub depth: Depth,
+}
+
+impl LockInfo {
+    pub fn is_expired(&self) -> bool {
+        let Some(timeout) = self.timeout else {
+            return false;
+        };
+        self.created.elapsed().unwrap_or_default() >= timeout
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -270,4 +279,45 @@ pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, Box<dyn std::e
         set: set_props,
         remove: remove_props,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn make_lock_info(timeout: Option<Duration>, created_offset: Duration) -> LockInfo {
+        LockInfo {
+            token: "opaquelocktoken:test".into(),
+            scope: LockScope::Exclusive,
+            owner: None,
+            timeout,
+            created: SystemTime::now() - created_offset,
+            depth: Depth::Zero,
+        }
+    }
+
+    #[test]
+    fn test_is_expired_no_timeout() {
+        let lock = make_lock_info(None, Duration::from_secs(3600));
+        assert!(!lock.is_expired());
+    }
+
+    #[test]
+    fn test_is_expired_future() {
+        let lock = make_lock_info(Some(Duration::from_secs(100)), Duration::ZERO);
+        assert!(!lock.is_expired());
+    }
+
+    #[test]
+    fn test_is_expired_past() {
+        let lock = make_lock_info(Some(Duration::from_secs(1)), Duration::from_secs(2));
+        assert!(lock.is_expired());
+    }
+
+    #[test]
+    fn test_is_expired_exact_boundary() {
+        let lock = make_lock_info(Some(Duration::from_secs(5)), Duration::from_secs(5));
+        assert!(lock.is_expired());
+    }
 }

@@ -85,6 +85,59 @@ impl ServerConfig {
     }
 }
 
+pub async fn start_server(config: ServerConfig) -> io::Result<()> {
+    let addr: SocketAddr = format!("{}:{}", config.host, config.port)
+        .parse()
+        .map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
+
+    let state = Arc::new(AppState::new(
+        config.root_dir.clone(),
+        config.auth_config.clone(),
+    ));
+
+    let router = Router::new()
+        .fallback(any(dispatch))
+        .layer(TraceLayer::new_for_http())
+        .layer(axum_mw::from_fn_with_state(
+            state.auth_config.clone(),
+            middleware::auth::auth_middleware,
+        ))
+        .layer(axum_mw::from_fn_with_state(
+            state.clone(),
+            middleware::lock::lock_enforce,
+        ))
+        .layer(middleware::health::HealthCheck)
+        .with_state(state.clone());
+
+    let cleanup_notify = Arc::new(tokio::sync::Notify::new());
+    let cleanup_handle = tokio::spawn(lock_cleanup_task(
+        state.locks.clone(),
+        cleanup_notify.clone(),
+    ));
+
+    match &config.tls_config {
+        Some(tls_config) => {
+            let listener = tls::TlsListener::bind(addr, tls_config.load()?).await?;
+            tracing::info!(
+                addr = %addr, cert = %tls_config.cert_path, key = %tls_config.key_path,
+                "starting HTTPS server"
+            );
+            axum::serve(listener, router).await.map_err(Error::other)?;
+        }
+        None => {
+            let listener = tokio::net::TcpListener::bind(addr).await?;
+            tracing::info!(addr = %addr, "starting HTTP server");
+            axum::serve(listener, router).await.map_err(Error::other)?;
+        }
+    }
+
+    cleanup_notify.notify_one();
+
+    let _ = cleanup_handle.await;
+
+    Ok(())
+}
+
 async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let method = req.method();
 
@@ -115,48 +168,21 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response 
     }
 }
 
-pub fn app(config: &ServerConfig) -> Router {
-    let state = Arc::new(AppState::new(
-        config.root_dir.clone(),
-        config.auth_config.clone(),
-    ));
-
-    Router::new()
-        .fallback(any(dispatch))
-        .layer(TraceLayer::new_for_http())
-        .layer(axum_mw::from_fn_with_state(
-            state.auth_config.clone(),
-            middleware::auth::auth_middleware,
-        ))
-        .layer(axum_mw::from_fn_with_state(
-            state.clone(),
-            middleware::lock::lock_enforce,
-        ))
-        .layer(middleware::health::HealthCheck)
-        .with_state(state)
-}
-
-pub async fn start_server(config: ServerConfig) -> io::Result<()> {
-    let addr: SocketAddr = format!("{}:{}", config.host, config.port)
-        .parse()
-        .map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
-    let router = app(&config);
-
-    match &config.tls_config {
-        Some(tls_config) => {
-            let listener = tls::TlsListener::bind(addr, tls_config.load()?).await?;
-            tracing::info!(
-                addr = %addr, cert = %tls_config.cert_path, key = %tls_config.key_path,
-                "starting HTTPS server"
-            );
-            axum::serve(listener, router).await.map_err(Error::other)?;
-        }
-        None => {
-            let listener = tokio::net::TcpListener::bind(addr).await?;
-            tracing::info!(addr = %addr, "starting HTTP server");
-            axum::serve(listener, router).await.map_err(Error::other)?;
+async fn lock_cleanup_task(locks: Arc<RwLock<LockStore>>, shutdown: Arc<tokio::sync::Notify>) {
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                let mut store = locks.write().await;
+                store.retain(|_path, infos| {
+                    infos.retain(|l| !l.is_expired());
+                    !infos.is_empty()
+                });
+                drop(store);
+            }
+            _ = shutdown.notified() => {
+                tracing::debug!("lock cleanup task shutting down");
+                break;
+            }
         }
     }
-
-    Ok(())
 }
