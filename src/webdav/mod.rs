@@ -168,19 +168,25 @@ pub fn parse_propfind_request(xml: &[u8]) -> Result<PropRequest, Box<dyn std::er
 }
 
 /// Extract the path from a Destination header (full URL → decoded path).
+/// Trailing slashes are stripped for COPY/MOVE compatibility with litmus.
 pub fn parse_destination(headers: &HeaderMap) -> Option<String> {
     let value = headers.get("destination")?.to_str().ok()?;
-    if let Some(pos) = value.find("://") {
+    let mut path = if let Some(pos) = value.find("://") {
         let after_scheme = &value[pos + 3..];
         if let Some(slash_pos) = after_scheme.find('/') {
-            let path = &after_scheme[slash_pos..];
-            return Some(percent_decode_str(path).decode_utf8_lossy().to_string());
+            percent_decode_str(&after_scheme[slash_pos..])
+                .decode_utf8_lossy()
+                .to_string()
+        } else {
+            return None;
         }
-    }
-    if value.starts_with('/') {
-        return Some(percent_decode_str(value).decode_utf8_lossy().to_string());
-    }
-    None
+    } else if value.starts_with('/') {
+        percent_decode_str(value).decode_utf8_lossy().to_string()
+    } else {
+        return None;
+    };
+    path.truncate(path.trim_end_matches('/').len());
+    Some(path)
 }
 
 pub fn parse_overwrite(headers: &HeaderMap) -> bool {

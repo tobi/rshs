@@ -129,6 +129,7 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
     let verb = if is_move { "MOVE" } else { "COPY" };
     let headers = req.headers();
     let overwrite = webdav::parse_overwrite(headers);
+    let depth = webdav::parse_depth(headers);
 
     let dest_str = match webdav::parse_destination(headers) {
         Some(s) => s,
@@ -150,18 +151,18 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
         return StatusCode::FORBIDDEN.into_response();
     }
 
-    let dest = match state.resolve_and_guard(&dest_str, true).await {
+    let dest = match state.resolve_and_guard(&dest_str, false).await {
         Ok(t) => t,
         Err(path::ResolveTargetError::InvalidPath) => unreachable!(),
-        Err(path::ResolveTargetError::ParentCanonicalizeFailed(e)) => {
-            tracing::error!(error = %e, "failed to create dest parent dirs");
+        Err(path::ResolveTargetError::ParentCanonicalizeFailed(_)) => {
+            tracing::debug!("dest parent not found for COPY/MOVE");
             return StatusCode::CONFLICT.into_response();
         }
         Err(path::ResolveTargetError::TraversalBlocked) => {
             return StatusCode::FORBIDDEN.into_response();
         }
     };
-    let dest_existed = tokio::fs::metadata(&dest).await.is_ok();
+    let mut dest_existed = tokio::fs::metadata(&dest).await.is_ok();
 
     if dest_existed && !overwrite {
         tracing::debug!(verb, "target exists and Overwrite is F");
@@ -173,8 +174,29 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
         Err(_) => return StatusCode::NOT_FOUND.into_response(),
     };
 
+    // Type-incompatible overwrite with Overwrite:T — clean up target first
+    if overwrite && dest_existed {
+        if let Ok(dest_meta) = tokio::fs::metadata(&dest).await {
+            if !meta.is_dir() && dest_meta.is_dir() {
+                let _ = tokio::fs::remove_dir_all(&dest).await;
+                dest_existed = false;
+            } else if meta.is_dir() && dest_meta.is_file() {
+                let _ = tokio::fs::remove_file(&dest).await;
+                dest_existed = false;
+            }
+        }
+    }
+
     if meta.is_dir() {
-        if let Err(resp) = copy_dir(&fs_src, &dest, dest_existed).await {
+        // MOVE ignores Depth header; COPY with Depth:0 makes shallow copy
+        if !is_move && depth == webdav::Depth::Zero {
+            if !dest_existed {
+                if let Err(e) = tokio::fs::create_dir(&dest).await {
+                    tracing::error!(error = %e, "shallow copy create dir failed");
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+            }
+        } else if let Err(resp) = copy_dir(&fs_src, &dest, dest_existed).await {
             return resp;
         }
     } else if let Err(resp) = copy_file(&fs_src, &dest).await {
@@ -230,10 +252,12 @@ async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), Res
             let entry_dest = dest_dir.join(entry.file_name());
 
             if file_type.is_dir() {
-                tokio::fs::create_dir(&entry_dest).await.map_err(|e| {
-                    tracing::error!(error = %e, dest = %entry_dest.display(), "create sub dir failed");
-                    StatusCode::INTERNAL_SERVER_ERROR.into_response()
-                })?;
+                if let Err(e) = tokio::fs::create_dir(&entry_dest).await {
+                    if e.kind() != std::io::ErrorKind::AlreadyExists {
+                        tracing::error!(error = %e, dest = %entry_dest.display(), "create sub dir failed");
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR.into_response());
+                    }
+                }
                 stack.push((entry.path(), entry_dest));
             } else if file_type.is_symlink() {
                 continue;
