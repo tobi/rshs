@@ -52,26 +52,19 @@ pub enum ResolveTargetError {
     TraversalBlocked,
 }
 
-/// Resolves a write target: validates path, creates parent dirs (optional),
-/// canonicalizes parent, verifies traversal safety.
+/// Resolves a write target: validates path, canonicalizes parent,
+/// verifies traversal safety.
 ///
 /// Returns the canonical target `PathBuf`.
 pub async fn resolve_and_guard(
     root_dir: &Path,
     root_canonical: &Path,
     request_path: &str,
-    create_parents: bool,
 ) -> Result<PathBuf, ResolveTargetError> {
     let fs_path =
         resolve_write_target(root_dir, request_path).ok_or(ResolveTargetError::InvalidPath)?;
 
     let parent = fs_path.parent().unwrap_or(root_dir);
-
-    if create_parents {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(ResolveTargetError::ParentCanonicalizeFailed)?;
-    }
 
     let parent_canonical = tokio::fs::canonicalize(parent)
         .await

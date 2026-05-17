@@ -173,7 +173,7 @@ pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Res
     let request_path = req.uri().path().to_owned();
 
     // PUT MUST NOT create intermediate collections (RFC 4918 §9.6)
-    let target = match state.resolve_and_guard(&request_path, false).await {
+    let target = match state.resolve_and_guard(&request_path).await {
         Ok(t) => t,
         Err(path::ResolveTargetError::InvalidPath) => {
             tracing::debug!("path resolution failed");

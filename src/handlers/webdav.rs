@@ -78,7 +78,7 @@ pub async fn handle_mkcol(State(state): State<Arc<AppState>>, req: Request) -> R
     // MKCOL accepts trailing slashes per WebDAV client convention (e.g. litmus)
     let request_path = req.uri().path().trim_end_matches('/').to_owned();
 
-    let target = match state.resolve_and_guard(&request_path, false).await {
+    let target = match state.resolve_and_guard(&request_path).await {
         Ok(t) => t,
         Err(path::ResolveTargetError::InvalidPath) => {
             tracing::debug!("path resolution failed for MKCOL");
@@ -151,7 +151,7 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
         return StatusCode::FORBIDDEN.into_response();
     }
 
-    let dest = match state.resolve_and_guard(&dest_str, false).await {
+    let dest = match state.resolve_and_guard(&dest_str).await {
         Ok(t) => t,
         Err(path::ResolveTargetError::InvalidPath) => unreachable!(),
         Err(path::ResolveTargetError::ParentCanonicalizeFailed(_)) => {

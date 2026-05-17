@@ -42,15 +42,8 @@ impl AppState {
     pub async fn resolve_and_guard(
         &self,
         request_path: &str,
-        create_parents: bool,
     ) -> Result<PathBuf, ResolveTargetError> {
-        path::resolve_and_guard(
-            &self.root_dir,
-            &self.root_canonical,
-            request_path,
-            create_parents,
-        )
-        .await
+        path::resolve_and_guard(&self.root_dir, &self.root_canonical, request_path).await
     }
 }
 
