@@ -11,6 +11,9 @@ repository = "https://github.com/mogeko/rshs"
 keywords = ["http", "webdav", "file-server", "axum"]
 categories = ["web-programming::http-server"]
 
+[features]
+default = []
+
 
 [dependencies]
 axum = { version = "0.8", features = ["http2"] }
