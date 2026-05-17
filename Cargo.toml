@@ -13,6 +13,11 @@ categories = ["web-programming::http-server"]
 
 [features]
 default = []
+# Enables litmus-compatible lock behavior:
+# - `DAV:no-lock` in If headers always evaluates to false,
+#   matching litmus test 21 (fail_cond_put_unlocked) expectation.
+#   Non-RFC-compliant; use only for litmus compliance testing.
+litmus-compat = []
 
 
 [dependencies]

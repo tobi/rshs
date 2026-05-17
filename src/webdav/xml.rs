@@ -338,8 +338,13 @@ pub(crate) fn write_activelock(writer: &mut Writer<Cursor<Vec<u8>>>, lock: &supe
     writer.ev(Event::Empty(BytesStart::new(format!("{DAV_PREFIX}write"))));
     writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}locktype"))));
 
+    let depth_str = match lock.depth {
+        super::Depth::Zero => "0",
+        super::Depth::One => "1",
+        super::Depth::Infinity => "infinity",
+    };
     writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}depth"))));
-    writer.ev(Event::Text(BytesText::new("0")));
+    writer.ev(Event::Text(BytesText::new(depth_str)));
     writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}depth"))));
 
     if let Some(ref owner) = lock.owner {

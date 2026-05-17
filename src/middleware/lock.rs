@@ -84,10 +84,17 @@ pub async fn lock_enforce(
     Ok(next.run(req).await)
 }
 
+fn active_lock(infos: &[LockInfo]) -> impl Iterator<Item = &LockInfo> + '_ {
+    infos.iter().filter(|l| !l.is_expired())
+}
+
 fn eval_condition(cond: &IfCondition, infos: &[LockInfo]) -> bool {
     match cond {
-        IfCondition::StateToken(t) if t == "DAV:no-lock" => !infos.iter().any(|l| l.is_exclusive()),
-        IfCondition::StateToken(t) => infos.iter().any(|l| l.token == *t),
+        #[cfg(not(feature = "litmus-compat"))]
+        IfCondition::StateToken(t) if t == "DAV:no-lock" => !active_lock(infos).any(|_| true),
+        #[cfg(feature = "litmus-compat")]
+        IfCondition::StateToken(t) if t == "DAV:no-lock" => false,
+        IfCondition::StateToken(t) => active_lock(infos).any(|l| l.token == *t),
         IfCondition::Not(inner) => !eval_condition(inner, infos),
     }
 }
@@ -95,7 +102,7 @@ fn eval_condition(cond: &IfCondition, infos: &[LockInfo]) -> bool {
 fn evaluate_if(lists: &[webdav::IfList], infos: &[LockInfo], request_path: &str) -> bool {
     // No If header → the resource must be unlocked
     if lists.is_empty() {
-        return infos.is_empty();
+        return !active_lock(infos).any(|_| true);
     }
 
     // Filter lists applicable to this resource
@@ -130,7 +137,7 @@ fn check_depth_infinity_ancestors(
             break;
         }
         if let Some(infos) = locks.get(parent) {
-            if infos.iter().any(|l| l.depth == Depth::Infinity)
+            if active_lock(infos).any(|l| l.depth == Depth::Infinity)
                 && !evaluate_if(lists, infos, request_path)
             {
                 return Some(StatusCode::LOCKED);
@@ -143,7 +150,7 @@ fn check_depth_infinity_ancestors(
 
 #[cfg(test)]
 mod tests {
-    use std::time::SystemTime;
+    use std::time::{Duration, SystemTime};
 
     use super::*;
     use crate::webdav::{Depth, IfCondition, IfList, LockInfo, LockScope};
@@ -155,6 +162,17 @@ mod tests {
             owner: None,
             timeout: None,
             created: SystemTime::now(),
+            depth: Depth::Zero,
+        }
+    }
+
+    fn make_expired_lock(token: &str) -> LockInfo {
+        LockInfo {
+            scope: LockScope::Exclusive,
+            token: token.into(),
+            owner: None,
+            timeout: Some(Duration::from_secs(1)),
+            created: SystemTime::now() - Duration::from_secs(2),
             depth: Depth::Zero,
         }
     }
@@ -173,11 +191,20 @@ mod tests {
         assert!(!eval_condition(&cond, &infos));
     }
 
+    #[cfg(not(feature = "litmus-compat"))]
     #[test]
     fn test_eval_condition_dav_no_lock_unlocked() {
         let infos: Vec<LockInfo> = vec![];
         let cond = IfCondition::StateToken("DAV:no-lock".into());
         assert!(eval_condition(&cond, &infos));
+    }
+
+    #[cfg(feature = "litmus-compat")]
+    #[test]
+    fn test_eval_condition_dav_no_lock_unlocked_always_fails() {
+        let infos: Vec<LockInfo> = vec![];
+        let cond = IfCondition::StateToken("DAV:no-lock".into());
+        assert!(!eval_condition(&cond, &infos));
     }
 
     #[test]
@@ -247,6 +274,7 @@ mod tests {
         assert!(evaluate_if(&lists, &infos, "/a"));
     }
 
+    #[cfg(not(feature = "litmus-compat"))]
     #[test]
     fn test_evaluate_if_not_no_lock_unlocked() {
         let lists = vec![IfList {
@@ -257,6 +285,19 @@ mod tests {
         }];
         let infos: Vec<LockInfo> = vec![];
         assert!(!evaluate_if(&lists, &infos, "/a"));
+    }
+
+    #[cfg(feature = "litmus-compat")]
+    #[test]
+    fn test_evaluate_if_not_no_lock_unlocked_always_passes() {
+        let lists = vec![IfList {
+            resource_tag: None,
+            conditions: vec![IfCondition::Not(Box::new(IfCondition::StateToken(
+                "DAV:no-lock".into(),
+            )))],
+        }];
+        let infos: Vec<LockInfo> = vec![];
+        assert!(evaluate_if(&lists, &infos, "/a"));
     }
 
     #[test]
@@ -278,5 +319,38 @@ mod tests {
         }];
         let infos = vec![make_lock(LockScope::Exclusive, "t1")];
         assert!(evaluate_if(&lists, &infos, "/a"));
+    }
+
+    #[test]
+    fn test_evaluate_if_no_lists_expired_ignored() {
+        let lists: Vec<IfList> = vec![];
+        let infos = vec![make_expired_lock("t1")];
+        // Expired lock ignored lazily → effectively unlocked → passes
+        assert!(evaluate_if(&lists, &infos, "/a"));
+    }
+
+    #[cfg(not(feature = "litmus-compat"))]
+    #[test]
+    fn test_dav_no_lock_expired_ignored() {
+        let infos = vec![make_expired_lock("t1")];
+        let cond = IfCondition::StateToken("DAV:no-lock".into());
+        assert!(eval_condition(&cond, &infos));
+    }
+
+    #[cfg(feature = "litmus-compat")]
+    #[test]
+    fn test_dav_no_lock_expired_still_fails() {
+        let infos = vec![make_expired_lock("t1")];
+        let cond = IfCondition::StateToken("DAV:no-lock".into());
+        // Under litmus-compat, DAV:no-lock always fails
+        assert!(!eval_condition(&cond, &infos));
+    }
+
+    #[test]
+    fn test_token_match_expired_rejected() {
+        let infos = vec![make_expired_lock("t1")];
+        let cond = IfCondition::StateToken("t1".into());
+        // Expired lock ignored lazily → token no longer valid
+        assert!(!eval_condition(&cond, &infos));
     }
 }

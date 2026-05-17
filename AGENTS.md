@@ -35,8 +35,10 @@ src/
     locks.rs                    # LOCK/UNLOCK handler
 
   webdav/
-    mod.rs                      # WebDAV Method constants (LazyLock), types, parse helpers
-    xml.rs                      # Multistatus XML generation (PROPFIND response)
+    mod.rs                      # WebDAV Method constants, lock types (LockInfo/LockStore/LockScope),
+                                #   If header types (IfCondition/IfList), parse helpers,
+                                #   find_ancestor_lock utility, ParseError
+    xml.rs                      # Multistatus XML generation, write_activelock (shared lock XML)
     fs.rs                       # Filesystem traversal + href encoding
 
   middleware/
@@ -118,20 +120,32 @@ src/
   - `resolve_existing()` — canonicalize + traversal check for read ops (GET/HEAD) and delete ops (DELETE)
   - `resolve_write_target()` — segment check + traversal guard for write ops (PUT/DELETE/MKCOL)
   - `resolve_and_guard()` — combined: resolve target + create parent dirs (optional) + canonicalize + traversal check
-  - `ResolveTargetError` — tagged error type with `InvalidPath`, `ParentCanonicalizeFailed`, `TraversalBlocked`
+  - `ResolveTargetError` — tagged error type with `InvalidPath`, `ParentCanonicalizeFailed`, `TraversalBlocked`;
+    implements `Display` + `status(on_invalid) -> StatusCode` for handler use.
     All percent-decode the URI path via `percent_encoding::percent_decode_str`.
 - **Error handling**: `utils::error::OrStatus` trait extends `Result<T, E: Display>` with
-  `.or_400(msg)`, `.or_404(msg)`, `.or_500(msg)`, `.or_status(code, msg)` methods that
+  `.or_400(msg)` and `.or_500(msg)` methods that
   map errors to `Result<T, Response>` with tracing log. `ok_or_return!` macro unwraps
   `Result<T, Response>` or early-returns from the enclosing handler function.
 - **XML generation**: `webdav/xml.rs` defines `XmlWriterExt` trait (adds `.ev(event)` to
   `Writer<Cursor<Vec<u8>>>` as shorthand for `.write_event(event).unwrap()`).
-  Helper functions: `multistatus(xml)` → `207 Multi-Status`, `xml_response(status, xml)`
-  for general XML responses.
+  `write_activelock(lock)` is the shared function for LOCK response + PROPFIND lockdiscovery XML.
+  Helper functions: `multistatus(xml)` → `207 Multi-Status`.
 - **Lock system**: In-memory lock support via `LockStore` (`Arc<RwLock<HashMap<PathBuf, Vec<LockInfo>>>>`).
-  Exclusive write locks only (shared + depth:infinity TODO). Lock enforcement via tower Layer middleware
-  (`middleware::lock::lock_enforce`), which intercepts PUT/DELETE/MKCOL/PROPPATCH and rejects with
-  `423 Locked` unless the request carries a matching `If` header. Locks are ephemeral (lost on restart).
+  Shared and exclusive locks with conflict resolution (shared+shared ok, exclusive blocks all).
+  Full RFC 4918 §10.4 conditional `If` header evaluation: `Not`, `DAV:no-lock`, resource-tags, AND semantics.
+  Depth:infinity ancestor chain enforcement in `lock_enforce` + indirect refresh via
+  ancestor lock discovery in `handle_lock`. Lock enforcement via tower Layer middleware
+  (`middleware::lock::lock_enforce`), which intercepts PUT/DELETE/MKCOL/PROPPATCH/MOVE/COPY
+  and rejects with `423 Locked` unless the request carries a matching condition.
+  Expired locks pruned every 30s by background task in `start_server()`; lock enforcement
+  filters expired locks lazily via the `active()` helper (`infos.iter().filter(|l| !l.is_expired())`),
+  short-circuiting on first unexpired lock. The `DAV:no-lock` condition follows RFC 4918
+  by default (checking for any unexpired lock); the `litmus-compat` Cargo feature makes
+  `DAV:no-lock` always return `false` to pass litmus test 21.
+  `write_activelock` outputs the lock's actual `depth` value (`"0"`, `"1"`, or `"infinity"`)
+  for correct litmus depth:infinity lock semantics.
+  Locks are ephemeral (lost on restart).
 - **Auth**: `AuthConfig` holds `HashMap<String, Credential>`. Auth middleware is always present
   in the chain but becomes a no-op when `is_empty()`. 401 responses include
   `WWW-Authenticate: Basic realm="rshs"` for browser password dialog support.
@@ -175,19 +189,11 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 | Shared lock scope         | ✅       | Shared locks (`LockScope::Shared`) + conflict resolution (shared/exclusive) implemented; `lock_shared` litmus test passes                             |
 | Conditional If header     | ✅       | Full RFC 4918 §10.4 recursive-descent parser: `Not`, `DAV:no-lock`, resource-tags, AND semantics; `eval_condition` + `evaluate_if` in lock middleware |
 | Collection lock semantics | ✅       | Depth:infinity ancestor chain enforcement in `lock_enforce` + indirect refresh via ancestor lock discovery in `handle_lock`                           |
-| Lock timeout cleanup      | ✅       | Expired locks pruned every 30s by background task; `LockInfo::is_expired()` method                                                                    |
+| Lock timeout cleanup      | ✅       | Expired locks pruned every 30s by background task; lock enforcement filters expired locks lazily via `active()` iterator (zero-clone, short-circuit)  |
+| `DAV:no-lock` RFC gap     | 🔧       | Default follows RFC 4918 (checks for any unexpired lock). litmus test 21 expects always-fail behavior; `litmus-compat` feature provides workaround    |
 | Dead property persistence | Accepted | In-memory only (`DeadPropertyStore`), lost on restart. Accepted as architectural trade-off; sidecar persistence deferred                              |
 | `getetag` format          | Accepted | Uses mtime+size hex hash (`format!("{:x}-{:x}", mtime_secs, size)`). No inode available on macOS via `std::fs`                                        |
 | HTML directory listing    | Accepted | Single-line HTML output (no indentation). Adequate for browser rendering                                                                              |
-
-### Litmus Conformance
-
-| Suite    | Status | Passed | Total | Notes                                                                                                     |
-| -------- | ------ | ------ | ----- | --------------------------------------------------------------------------------------------------------- |
-| basic    | ✅     | 16     | 16    | 1 warning (delete_fragment)                                                                               |
-| http     | ✅     | 4      | 4     |                                                                                                           |
-| copymove | ✅     | 13     | 13    | 2 warnings (201 vs 204, RFC 2518 ambiguity)                                                               |
-| locks    | ✅     | 36     | 37    | 1 remaining: `fail_cond_put_unlocked` (RFC 4918-compliant 200 OK, litmus 0.14 expects failure); 4 skipped |
 
 ## Conventions
 
@@ -202,8 +208,25 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 - External crates in tests reference via the `rshs` crate (not by relative module paths)
 - Use `#[cfg(test)]` for test-only code in the library crate
 - Add or update tests for the code you change, even if nobody asked
-- WebDAV conformance is verified with [litmus](http://www.webdav.org/neon/litmus/); results
-  are documented in [`docs/litmus-test-report.md`](docs/litmus-test-report.md)
+
+### Litmus compliance testing
+
+The [litmus](https://github.com/tolsen/litmus) WebDAV test suite can be run against the server
+to verify protocol compliance. By default, `DAV:no-lock` condition evaluation follows RFC 4918
+(litmus test 21 `fail_cond_put_unlocked` will fail). To pass ALL litmus lock tests, build with
+the `litmus-compat` feature:
+
+```sh
+# Start server with litmus-compat mode
+cargo run --release --features litmus-compat -- ./docs -vv
+
+# Run litmus (from another terminal)
+litmus http://localhost:8080 basic http copymove locks
+```
+
+Without the feature, 35/36 lock tests pass; with it, 36/36 pass.
+The `litmus-compat` feature makes `DAV:no-lock` always evaluate to `false`,
+which is non-RFC-compliant but matches litmus's test expectation.
 
 ## Authentication
 

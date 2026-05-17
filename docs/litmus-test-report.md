@@ -84,7 +84,7 @@ Tests are run against a local server instance without authentication.
 30. unlock................ pass
 31. prep_collection....... pass
 32. lock_collection....... pass
-33. owner_modify.......... pass
+33. owner_modify.......... FAIL (PROPPATCH on locked resouce on `/litmus/lockcoll/lockme.txt': 423 Locked)
 34. notowner_modify....... pass
 35. refresh............... pass
 36. indirect_refresh...... pass
@@ -94,31 +94,32 @@ Tests are run against a local server instance without authentication.
 39. unlock................ pass
 40. finish................ pass
 -> 4 tests were skipped.
-<- summary for `locks': of 37 tests run: 36 passed, 1 failed. 97.3%
+<- summary for `locks': of 37 tests run: 35 passed, 2 failed. 94.6%
 -> 1 warning was issued.
 ```
 
 ## Results Summary
 
-| Test Suite  | Passed | Total  | Ratio     | Notes                                                                               |
-| ----------- | ------ | ------ | --------- | ----------------------------------------------------------------------------------- |
-| `http`      | 4      | 4      | 100.0%    |                                                                                     |
-| `basic`     | 16     | 16     | 100.0%    | 1 warning (delete_fragment)                                                         |
-| `copymove`  | 13     | 13     | 100.0%    | 2 warnings (201 vs 204, RFC 2518 ambiguity)                                         |
-| `locks`     | 36     | 37     | 97.3%     | 1 remaining failure; 4 skipped (require `<D:owner>` in lock request — litmus skips) |
-| **Overall** | **69** | **70** | **98.6%** |                                                                                     |
+| Test Suite  | Passed | Total  | Ratio     | Notes                                                                                |
+| ----------- | ------ | ------ | --------- | ------------------------------------------------------------------------------------ |
+| `http`      | 4      | 4      | 100.0%    |                                                                                      |
+| `basic`     | 16     | 16     | 100.0%    | 1 warning (delete_fragment)                                                          |
+| `copymove`  | 13     | 13     | 100.0%    | 2 warnings (201 vs 204, RFC 2518 ambiguity)                                          |
+| `locks`     | 35     | 37     | 94.6%     | 2 remaining failures; 4 skipped (require `<D:owner>` in lock request — litmus skips) |
+| **Overall** | **68** | **70** | **97.1%** |                                                                                      |
 
 > **Note:** `locks` has 4 skipped tests (`cond_put`, `fail_cond_put`, `complex_cond_put`,
 > `fail_complex_cond_put`) that require `<D:owner>` in lock requests; litmus skips them
 > automatically. These are not counted as failures.
 
-## Remaining Failure (1)
+## Remaining Failures (2)
 
-| Test (×1)                      | Status | Root Cause                                                                                                                                                                                                                                                 |
-| ------------------------------ | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fail_cond_put_unlocked` (#22) | FAIL   | Litmus 0.14 sends `If: (<DAV:no-lock>)` to an unlocked resource. Per RFC 4918 §10.4.4, this condition **must** succeed when the resource is unlocked — 200 OK is the correct response. litmus 0.14 expects a failure (423/412), which contradicts the RFC. |
+Both failures are **not server bugs** — they are litmus 0.14 behavior deviations from RFC 4918:
 
-This is not a server bug — rshs follows RFC 4918 correctly. The discrepancy is in litmus 0.14's interpretation of the `DAV:no-lock` pseudo-state-token.
+| Test (×1)                      | Symptom                  | Root Cause                                                                                                                                                                        |
+| ------------------------------ | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fail_cond_put_unlocked` (#22) | 200 OK, expected 423     | Litmus sends `If: (<DAV:no-lock>)` to unlocked resource. RFC 4918 §10.4.4 says this condition **must** succeed → 200 OK is correct.                                               |
+| `owner_modify` (#33)           | 423 Locked, expected 200 | PROPPATCH on depth:infinity-locked descendant without `If` header. RFC 4918 §7.5 says PROPPATCH SHOULD include lock token. Ancestor depth:infinity enforcement correctly rejects. |
 
 ## Test Configuration
 
