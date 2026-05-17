@@ -11,6 +11,7 @@ use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use crate::ok_or_return;
 use crate::server::AppState;
 use crate::utils::error::OrStatus;
+use crate::utils::path;
 use crate::webdav;
 use crate::webdav::xml::DAV_PREFIX;
 
@@ -21,10 +22,26 @@ use crate::webdav::xml::DAV_PREFIX;
 pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
-    let fs_path = match state.resolve_existing(&request_path).await {
-        Some(p) => p,
-        None => return StatusCode::NOT_FOUND.into_response(),
+    // LOCK on non-existent URL creates a lock-null resource (RFC 4918 §7.3)
+    let target = match state.resolve_and_guard(&request_path).await {
+        Ok(t) => t,
+        Err(path::ResolveTargetError::InvalidPath) => return StatusCode::FORBIDDEN.into_response(),
+        Err(path::ResolveTargetError::ParentCanonicalizeFailed(_)) => {
+            tracing::debug!("parent not found for LOCK");
+            return StatusCode::CONFLICT.into_response();
+        }
+        Err(path::ResolveTargetError::TraversalBlocked) => {
+            return StatusCode::FORBIDDEN.into_response();
+        }
     };
+
+    let existed = tokio::fs::metadata(&target).await.is_ok();
+    if !existed {
+        if let Err(e) = tokio::fs::File::create(&target).await {
+            tracing::error!(error = %e, path = %target.display(), "failed to create lock-null resource");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
 
     let timeout = webdav::parse_timeout(req.headers());
     let body_bytes = ok_or_return!(
@@ -46,20 +63,20 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
     };
 
     let mut locks = state.locks.write().await;
-    let entry = locks.entry(fs_path.clone()).or_default();
+    let entry = locks.entry(target.clone()).or_default();
 
     // Check if already locked (refresh)
-    let existed = entry
+    let is_refresh = entry
         .iter()
         .any(|l| matches!(l.scope, webdav::LockScope::Exclusive));
-    if existed {
+    if is_refresh {
         entry.retain(|l| !matches!(l.scope, webdav::LockScope::Exclusive));
     }
     entry.push(lock);
 
     let xml = build_lock_response(&token, timeout);
 
-    tracing::debug!(path = %fs_path.display(), token = %token, "LOCK completed");
+    tracing::debug!(path = %target.display(), token = %token, "LOCK completed");
 
     drop(locks);
 
@@ -132,9 +149,9 @@ fn parse_lock_owner(xml: &[u8]) -> Option<String> {
 fn build_lock_response(token: &str, timeout: Option<std::time::Duration>) -> String {
     let mut writer = Writer::new(Cursor::new(Vec::new()));
 
-    writer
-        .write_event(Event::Start(BytesStart::new(format!("{DAV_PREFIX}prop"))))
-        .unwrap();
+    let mut prop = BytesStart::new(format!("{DAV_PREFIX}prop"));
+    prop.push_attribute(("xmlns:D", "DAV:"));
+    writer.write_event(Event::Start(prop)).unwrap();
 
     writer
         .write_event(Event::Start(BytesStart::new(format!(
@@ -295,7 +312,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lock_not_found() {
+    async fn test_lock_creates_locknull() {
         let dir = tempfile::TempDir::new().unwrap();
         let app = make_app(&dir);
 
@@ -308,7 +325,9 @@ mod tests {
             .body(body)
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+        // RFC 4918 §7.3: LOCK on non-existent URL creates lock-null resource
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert!(dir.path().join("ghost.txt").exists());
     }
 
     #[tokio::test]
