@@ -172,10 +172,10 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 
 | Item                      | Status      | Description                                                                                                                                                         |
 | ------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Shared lock scope         | TODO (high) | Exclusive write locks only. Shared locks + depth:infinity not yet implemented. Affects litmus tests: `lock_shared` (23), `indirect_refresh` (36)                    |
+| Shared lock scope         | ✅          | Shared locks (`LockScope::Shared`) + conflict resolution (shared/exclusive) implemented; `lock_shared` litmus test passes                                           |
 | Conditional If header     | TODO (high) | `If: (Not <DAV:no-lock>)` and complex conditionals not fully parsed (RFC 4918 §10.4). Affects litmus tests: `cond_put_with_not` (17), `fail_cond_put_unlocked` (22) |
 | Collection lock semantics | TODO (high) | Locked collection enforcement for DELETE and owner-token forwarding in COPY not fully handled. Affects litmus tests: `copy` (14), `notowner_modify` (34)            |
-| Lock timeout cleanup      | ✅          | Expired locks pruned every 30s by background task; `LockInfo::is_expired()` method                                                  |
+| Lock timeout cleanup      | ✅          | Expired locks pruned every 30s by background task; `LockInfo::is_expired()` method                                                                                  |
 | Dead property persistence | TODO        | In-memory only (`DeadPropertyStore`), lost on restart. xattr/sidecar-file persistence planned                                                                       |
 | `getetag` format          | Known       | Uses mtime+size hex hash (`format!("{:x}-{:x}", mtime_secs, size)`). No inode available on macOS via `std::fs`                                                      |
 | HTML directory listing    | Known       | Single-line HTML output (no indentation). Adequate for browser rendering                                                                                            |

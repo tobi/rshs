@@ -73,11 +73,16 @@ impl LockInfo {
         };
         self.created.elapsed().unwrap_or_default() >= timeout
     }
+
+    pub fn is_exclusive(&self) -> bool {
+        matches!(self.scope, LockScope::Exclusive)
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum LockScope {
     Exclusive,
+    Shared,
 }
 
 pub fn generate_lock_token() -> String {

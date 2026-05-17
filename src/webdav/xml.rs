@@ -320,9 +320,16 @@ fn write_activelock(writer: &mut Writer<Cursor<Vec<u8>>>, lock: &super::LockInfo
     writer.ev(Event::Start(BytesStart::new(format!(
         "{DAV_PREFIX}lockscope"
     ))));
-    writer.ev(Event::Empty(BytesStart::new(format!(
-        "{DAV_PREFIX}exclusive"
-    ))));
+    match lock.scope {
+        super::LockScope::Exclusive => {
+            writer.ev(Event::Empty(BytesStart::new(format!(
+                "{DAV_PREFIX}exclusive"
+            ))));
+        }
+        super::LockScope::Shared => {
+            writer.ev(Event::Empty(BytesStart::new(format!("{DAV_PREFIX}shared"))));
+        }
+    }
     writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}lockscope"))));
 
     writer.ev(Event::Start(BytesStart::new(format!(

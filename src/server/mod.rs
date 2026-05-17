@@ -12,14 +12,14 @@ use axum::http::StatusCode;
 use axum::middleware as axum_mw;
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
 use tower_http::trace::TraceLayer;
 
 use crate::auth::AuthConfig;
-use crate::handlers::{http, locks, webdav as webdav_handler};
+use crate::handlers::{locks, webdav as webdav_handler};
 use crate::middleware;
 use crate::utils::path::{self, ResolveTargetError};
-use crate::webdav::{self, DeadPropertyStore, LockStore};
+use crate::webdav::{DeadPropertyStore, LockStore};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -109,11 +109,9 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
         .layer(middleware::health::HealthCheck)
         .with_state(state.clone());
 
-    let cleanup_notify = Arc::new(tokio::sync::Notify::new());
-    let cleanup_handle = tokio::spawn(lock_cleanup_task(
-        state.locks.clone(),
-        cleanup_notify.clone(),
-    ));
+    let cleanup_notify = Arc::new(Notify::new());
+    let task = lock_cleanup_task(state.locks.clone(), cleanup_notify.clone());
+    let cleanup_handle = tokio::spawn(task);
 
     match &config.tls_config {
         Some(tls_config) => {
@@ -139,6 +137,8 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
 }
 
 async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response {
+    use crate::{handlers::http, webdav};
+
     let method = req.method();
 
     if method == http::Method::GET || method == http::Method::HEAD {
@@ -168,7 +168,7 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response 
     }
 }
 
-async fn lock_cleanup_task(locks: Arc<RwLock<LockStore>>, shutdown: Arc<tokio::sync::Notify>) {
+async fn lock_cleanup_task(locks: Arc<RwLock<LockStore>>, shutdown: Arc<Notify>) {
     loop {
         tokio::select! {
             _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
