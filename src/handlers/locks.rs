@@ -363,24 +363,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_unlock() {
-        use std::collections::HashMap;
-
-        use tokio::sync::RwLock;
-
-        use crate::webdav::LockStore;
-
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join("f.txt"), b"data").unwrap();
 
-        let root = dir.path().to_path_buf();
-        let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
-        let state = Arc::new(AppState {
-            root_dir: root.clone(),
-            root_canonical: canonical,
-            auth_config: Arc::new(AuthConfig::new()),
-            dead_props: Arc::new(RwLock::new(HashMap::new())),
-            locks: Arc::new(RwLock::new(LockStore::new())),
-        });
+        let state = Arc::new(AppState::new(dir.path().to_path_buf(), AuthConfig::new()));
         let lock_app = Router::new()
             .fallback(any(super::handle_lock))
             .with_state(state.clone());

@@ -23,14 +23,25 @@ use crate::webdav::{self, DeadPropertyStore, LockStore};
 
 #[derive(Clone)]
 pub struct AppState {
+    pub auth_config: Arc<AuthConfig>,
     pub root_dir: PathBuf,
     pub root_canonical: PathBuf,
-    pub auth_config: Arc<AuthConfig>,
     pub dead_props: Arc<RwLock<DeadPropertyStore>>,
     pub locks: Arc<RwLock<LockStore>>,
 }
 
 impl AppState {
+    pub fn new(root_dir: PathBuf, auth_config: AuthConfig) -> Self {
+        let root_canonical = fs::canonicalize(&root_dir).unwrap_or_else(|_| root_dir.clone());
+        Self {
+            auth_config: Arc::new(auth_config),
+            root_dir,
+            root_canonical,
+            dead_props: Arc::new(RwLock::new(DeadPropertyStore::new())),
+            locks: Arc::new(RwLock::new(LockStore::new())),
+        }
+    }
+
     pub async fn resolve_existing(&self, request_path: &str) -> Option<PathBuf> {
         path::resolve_existing(&self.root_dir, &self.root_canonical, request_path).await
     }
@@ -105,18 +116,10 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response 
 }
 
 pub fn app(config: &ServerConfig) -> Router {
-    use tokio::sync::RwLock;
-
-    use crate::webdav::{DeadPropertyStore, LockStore};
-
-    let state = Arc::new(AppState {
-        root_dir: config.root_dir.clone(),
-        root_canonical: fs::canonicalize(&config.root_dir)
-            .unwrap_or_else(|_| config.root_dir.clone()),
-        auth_config: Arc::new(config.auth_config.clone()),
-        dead_props: Arc::new(RwLock::new(DeadPropertyStore::new())),
-        locks: Arc::new(RwLock::new(LockStore::new())),
-    });
+    let state = Arc::new(AppState::new(
+        config.root_dir.clone(),
+        config.auth_config.clone(),
+    ));
 
     Router::new()
         .fallback(any(dispatch))
