@@ -26,7 +26,7 @@ pub fn multistatus(xml: String) -> Response {
 }
 
 /// Build an XML response with the given status code.
-pub fn xml_response(status: StatusCode, xml: String) -> Response {
+fn xml_response(status: StatusCode, xml: String) -> Response {
     Response::builder()
         .status(status)
         .header("content-type", "application/xml; charset=utf-8")

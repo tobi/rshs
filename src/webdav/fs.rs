@@ -6,7 +6,7 @@ use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use super::{Depth, PropEntry};
 
 /// Characters that do NOT need percent-encoding in a WebDAV href path segment.
-pub const HREF_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
+const HREF_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'/')
     .remove(b'-')
     .remove(b'_')

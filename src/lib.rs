@@ -7,7 +7,7 @@ pub mod utils;
 pub mod webdav;
 
 pub use auth::{AuthConfig, build_auth_config};
-pub use cli::{Cli, ShadowFileArg};
+pub use cli::Cli;
 pub use server::tls::TlsConfig;
 pub use server::{AppState, ServerConfig, start_server};
 

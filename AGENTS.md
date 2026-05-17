@@ -177,8 +177,8 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 | Collection lock semantics | ✅       | Depth:infinity ancestor chain enforcement in `lock_enforce` + indirect refresh via ancestor lock discovery in `handle_lock`                           |
 | Lock timeout cleanup      | ✅       | Expired locks pruned every 30s by background task; `LockInfo::is_expired()` method                                                                    |
 | Dead property persistence | Accepted | In-memory only (`DeadPropertyStore`), lost on restart. Accepted as architectural trade-off; sidecar persistence deferred                              |
-| `getetag` format          | Known    | Uses mtime+size hex hash (`format!("{:x}-{:x}", mtime_secs, size)`). No inode available on macOS via `std::fs`                                        |
-| HTML directory listing    | Known    | Single-line HTML output (no indentation). Adequate for browser rendering                                                                              |
+| `getetag` format          | Accepted | Uses mtime+size hex hash (`format!("{:x}-{:x}", mtime_secs, size)`). No inode available on macOS via `std::fs`                                        |
+| HTML directory listing    | Accepted | Single-line HTML output (no indentation). Adequate for browser rendering                                                                              |
 
 ### Litmus Conformance
 
