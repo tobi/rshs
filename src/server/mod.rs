@@ -173,10 +173,17 @@ async fn lock_cleanup_task(locks: Arc<RwLock<LockStore>>, shutdown: Arc<Notify>)
         tokio::select! {
             _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
                 let mut store = locks.write().await;
+                let before = store.values().map(|v| v.len()).sum::<usize>();
                 store.retain(|_path, infos| {
                     infos.retain(|l| !l.is_expired());
                     !infos.is_empty()
                 });
+                let after = store.values().map(|v| v.len()).sum::<usize>();
+                if before > after {
+                    tracing::debug!(
+                        removed = before - after, remaining = after, "cleanup expired locks"
+                    );
+                }
                 drop(store);
             }
             _ = shutdown.notified() => {
