@@ -85,6 +85,30 @@ pub enum LockScope {
     Shared,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IfCondition {
+    StateToken(String),
+    Not(Box<IfCondition>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IfList {
+    pub resource_tag: Option<String>,
+    pub conditions: Vec<IfCondition>,
+}
+
+impl IfList {
+    pub fn positive_tokens(&self) -> Vec<&str> {
+        self.conditions
+            .iter()
+            .filter_map(|c| match c {
+                IfCondition::StateToken(t) => Some(t.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
 pub fn generate_lock_token() -> String {
     use std::hash::{Hash, Hasher};
     use std::time::UNIX_EPOCH;
@@ -97,20 +121,129 @@ pub fn generate_lock_token() -> String {
     format!("opaquelocktoken:{:016x}", h.finish())
 }
 
-pub fn parse_if_header(headers: &HeaderMap) -> Vec<String> {
-    let mut tokens = Vec::new();
+pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
     let value = match headers.get("if").and_then(|v| v.to_str().ok()) {
         Some(v) => v,
-        None => return tokens,
+        None => return Vec::new(),
     };
-    for part in value.split('(') {
-        let inner = part.trim_end_matches(')').trim();
-        let token = inner.trim_matches('<').trim_matches('>').trim();
-        if !token.is_empty() {
-            tokens.push(token.to_string());
+
+    let mut lists = Vec::new();
+    let mut chars: std::iter::Peekable<_> = value.char_indices().peekable();
+
+    while chars.peek().is_some() {
+        // Skip whitespace
+        while chars.peek().is_some_and(|(_, c)| c.is_whitespace()) {
+            chars.next();
         }
+        if chars.peek().is_none() {
+            break;
+        }
+
+        let mut resource_tag = None;
+
+        // Check for resource tag: <url> followed by (
+        if chars.peek().unwrap().1 == '<' {
+            // Save working position in case this isn't a resource tag
+            let mut saved: Vec<_> = Vec::new();
+            loop {
+                let c = chars.next().unwrap().1;
+                saved.push(c);
+                if c == '>' {
+                    break;
+                }
+            }
+
+            let tag: String = saved[1..saved.len() - 1].iter().collect();
+
+            // Check if next non-whitespace is '('
+            let mut peek_pos = chars.peek();
+            while peek_pos.is_some_and(|(_, c)| c.is_whitespace()) {
+                chars.next();
+                peek_pos = chars.peek();
+            }
+            if peek_pos.is_some_and(|(_, c)| *c == '(') {
+                resource_tag = Some(tag);
+                chars.next(); // consume '('
+            } else {
+                // Bare token without enclosing (...) — single-condition list
+                lists.push(IfList {
+                    resource_tag: None,
+                    conditions: vec![IfCondition::StateToken(tag)],
+                });
+                continue;
+            }
+        } else if chars.peek().unwrap().1 == '(' {
+            chars.next(); // consume '('
+        } else {
+            // Skip unexpected char
+            chars.next();
+            continue;
+        }
+
+        // Parse conditions inside (...) until ')'
+        let mut conditions = Vec::new();
+        let mut negated = false;
+
+        loop {
+            while chars.peek().is_some_and(|(_, c)| c.is_whitespace()) {
+                chars.next();
+            }
+
+            match chars.peek() {
+                None => break,
+                Some((_, ')')) => {
+                    chars.next();
+                    break;
+                }
+                Some((i, _)) => {
+                    // Check for "Not" keyword
+                    if value[*i..].starts_with("Not") {
+                        let after_not = &value[*i + 3..];
+                        if after_not
+                            .starts_with(|c: char| c.is_whitespace() || c == '<' || c == '(')
+                        {
+                            negated = true;
+                            for _ in 0..3 {
+                                chars.next();
+                            }
+                            continue;
+                        }
+                    }
+
+                    // Read <token>
+                    if chars.peek().unwrap().1 == '<' {
+                        let mut token = String::new();
+                        chars.next(); // skip '<'
+                        loop {
+                            match chars.next() {
+                                Some((_, '>')) => break,
+                                Some((_, c)) => token.push(c),
+                                None => break,
+                            }
+                        }
+
+                        let cond = IfCondition::StateToken(token);
+                        if negated {
+                            conditions.push(IfCondition::Not(Box::new(cond)));
+                            negated = false;
+                        } else {
+                            conditions.push(cond);
+                        }
+                    } else {
+                        // Skip unexpected char inside list
+                        chars.next();
+                    }
+                }
+            }
+        }
+
+        lists.push(IfList {
+            resource_tag,
+            conditions,
+        });
     }
-    tokens
+
+    lists
 }
 
 pub fn parse_lock_token_header(headers: &HeaderMap) -> Option<String> {
@@ -324,5 +457,95 @@ mod tests {
     fn test_is_expired_exact_boundary() {
         let lock = make_lock_info(Some(Duration::from_secs(5)), Duration::from_secs(5));
         assert!(lock.is_expired());
+    }
+
+    fn make_if_header(value: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert("if", value.parse().unwrap());
+        headers
+    }
+
+    #[test]
+    fn test_parse_if_simple_token() {
+        let headers = make_if_header("(<opaquelocktoken:t1>)");
+        let lists = parse_if_header(&headers);
+        assert_eq!(lists.len(), 1);
+        assert_eq!(lists[0].resource_tag, None);
+        assert_eq!(lists[0].conditions.len(), 1);
+        assert_eq!(
+            lists[0].conditions[0],
+            IfCondition::StateToken("opaquelocktoken:t1".into())
+        );
+    }
+
+    #[test]
+    fn test_parse_if_not_token() {
+        let headers = make_if_header("(Not <opaquelocktoken:t1>)");
+        let lists = parse_if_header(&headers);
+        assert_eq!(lists.len(), 1);
+        assert_eq!(lists[0].conditions.len(), 1);
+        assert_eq!(
+            lists[0].conditions[0],
+            IfCondition::Not(Box::new(IfCondition::StateToken(
+                "opaquelocktoken:t1".into()
+            )))
+        );
+    }
+
+    #[test]
+    fn test_parse_if_not_no_lock() {
+        let headers = make_if_header("(Not <DAV:no-lock>)");
+        let lists = parse_if_header(&headers);
+        assert_eq!(lists.len(), 1);
+        assert_eq!(lists[0].conditions.len(), 1);
+        assert_eq!(
+            lists[0].conditions[0],
+            IfCondition::Not(Box::new(IfCondition::StateToken("DAV:no-lock".into())))
+        );
+    }
+
+    #[test]
+    fn test_parse_if_resource_tag() {
+        let headers = make_if_header("</path> (<opaquelocktoken:t1>)");
+        let lists = parse_if_header(&headers);
+        assert_eq!(lists.len(), 1);
+        assert_eq!(lists[0].resource_tag, Some("/path".into()));
+        assert_eq!(lists[0].conditions.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_if_and_conditions() {
+        let headers = make_if_header("(<opaquelocktoken:a> <opaquelocktoken:b>)");
+        let lists = parse_if_header(&headers);
+        assert_eq!(lists.len(), 1);
+        assert_eq!(lists[0].conditions.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_if_multiple_lists() {
+        let headers = make_if_header("(<opaquelocktoken:a>) (Not <DAV:no-lock>)");
+        let lists = parse_if_header(&headers);
+        assert_eq!(lists.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_if_no_header() {
+        let headers = HeaderMap::new();
+        let lists = parse_if_header(&headers);
+        assert!(lists.is_empty());
+    }
+
+    #[test]
+    fn test_positive_tokens() {
+        let lists = [IfList {
+            resource_tag: None,
+            conditions: vec![
+                IfCondition::StateToken("t1".into()),
+                IfCondition::Not(Box::new(IfCondition::StateToken("t2".into()))),
+                IfCondition::StateToken("t3".into()),
+            ],
+        }];
+        let tokens = lists[0].positive_tokens();
+        assert_eq!(tokens, vec!["t1", "t3"]);
     }
 }

@@ -36,7 +36,12 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
     };
 
     let timeout = webdav::parse_timeout(req.headers());
-    let if_tokens = webdav::parse_if_header(req.headers());
+    let if_entries = webdav::parse_if_header(req.headers());
+    let if_tokens: Vec<String> = if_entries
+        .iter()
+        .flat_map(|e| e.positive_tokens())
+        .map(|t| t.to_string())
+        .collect();
     let body_bytes = ok_or_return!(
         body::to_bytes(req.into_body(), 65536)
             .await
@@ -722,7 +727,7 @@ mod tests {
                 Request::builder()
                     .method(axum::http::Method::from_bytes(b"LOCK").unwrap())
                     .uri("/f.txt")
-                    .header("if", format!("<{token}>"))
+                    .header("if", format!("(<{token}>)"))
                     .body(Body::from(shared_body))
                     .unwrap(),
             )
