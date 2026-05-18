@@ -24,9 +24,15 @@ pub static M_UNLOCK: Method = LazyLock::new(|| HttpMethod::from_bytes(b"UNLOCK")
 
 pub type DeadPropertyStore = HashMap<PathBuf, HashMap<String, String>>;
 
+#[derive(Debug, Clone)]
+pub struct PropPatchAction {
+    pub name: String,
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct PropPatchOp {
-    pub set: HashMap<String, String>,
-    pub remove: Vec<String>,
+    pub actions: Vec<PropPatchAction>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -501,15 +507,43 @@ pub fn parse_overwrite(headers: &HeaderMap) -> bool {
         != "F"
 }
 
+fn decode_xml_char_refs(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(pos) = rest.find("&#") {
+        result.push_str(&rest[..pos]);
+        rest = &rest[pos + 2..];
+        let hex = rest.starts_with('x') || rest.starts_with('X');
+        if hex {
+            rest = &rest[1..];
+        }
+        if let Some(end) = rest.find(';') {
+            let num_str = &rest[..end];
+            let radix = if hex { 16 } else { 10 };
+            if let Ok(n) = u32::from_str_radix(num_str, radix) {
+                if let Some(c) = char::from_u32(n) {
+                    result.push(c);
+                }
+            }
+            rest = &rest[end + 1..];
+        } else {
+            break;
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
 pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, ParseError> {
-    let mut reader = Reader::from_reader(xml);
+    // Pre-decode XML character references: quick_xml 0.40 does not emit
+    // Text events for content that is entirely character references.
+    let decoded = decode_xml_char_refs(&String::from_utf8_lossy(xml));
+    let mut reader = Reader::from_reader(decoded.as_bytes());
     reader.config_mut().trim_text(true);
 
-    let mut set_props = HashMap::new();
-    let mut remove_props = Vec::new();
+    let mut actions = Vec::new();
     let mut in_set = false;
     let mut in_remove = false;
-    let mut found_any = false;
     let mut current_name: Option<String> = None;
 
     loop {
@@ -517,20 +551,17 @@ pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, ParseError> {
             Event::Start(e) => {
                 let (ns, local) = extract_element_ns(&e)?;
                 match &*local {
-                    "set" => {
-                        in_set = true;
-                        found_any = true;
-                    }
-                    "remove" => {
-                        in_remove = true;
-                        found_any = true;
-                    }
+                    "set" => in_set = true,
+                    "remove" => in_remove = true,
                     "prop" => {}
                     _ if in_set => {
                         current_name = Some(clark_key(&ns, &local));
                     }
                     _ if in_remove => {
-                        remove_props.push(clark_key(&ns, &local));
+                        actions.push(PropPatchAction {
+                            name: clark_key(&ns, &local),
+                            value: None,
+                        });
                     }
                     _ => {}
                 }
@@ -538,14 +569,24 @@ pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, ParseError> {
             Event::Empty(e) => {
                 let (ns, local) = extract_element_ns(&e)?;
                 if in_remove && local != "prop" {
-                    remove_props.push(clark_key(&ns, &local));
+                    actions.push(PropPatchAction {
+                        name: clark_key(&ns, &local),
+                        value: None,
+                    });
                 } else if in_set && local != "prop" {
-                    set_props.insert(clark_key(&ns, &local), String::new());
+                    actions.push(PropPatchAction {
+                        name: clark_key(&ns, &local),
+                        value: Some(String::new()),
+                    });
                 }
             }
             Event::Text(t) if in_set && current_name.is_some() => {
-                let val = String::from_utf8_lossy(t.as_ref()).to_string();
-                set_props.insert(current_name.take().unwrap(), val);
+                let raw = String::from_utf8_lossy(t.as_ref());
+                let val = decode_xml_char_refs(&raw);
+                actions.push(PropPatchAction {
+                    name: current_name.take().unwrap(),
+                    value: Some(val),
+                });
             }
             Event::End(e) => {
                 let local_name = e.local_name();
@@ -554,7 +595,10 @@ pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, ParseError> {
                     "set" => in_set = false,
                     "remove" => in_remove = false,
                     _ if in_set && current_name.is_some() => {
-                        set_props.insert(current_name.take().unwrap(), String::new());
+                        actions.push(PropPatchAction {
+                            name: current_name.take().unwrap(),
+                            value: Some(String::new()),
+                        });
                     }
                     _ => {}
                 }
@@ -564,14 +608,11 @@ pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, ParseError> {
         }
     }
 
-    if !found_any {
+    if actions.is_empty() {
         return Err(ParseError::InvalidBody("invalid PROPPATCH body"));
     }
 
-    Ok(PropPatchOp {
-        set: set_props,
-        remove: remove_props,
-    })
+    Ok(PropPatchOp { actions })
 }
 
 #[cfg(test)]
@@ -830,9 +871,50 @@ mod tests {
     fn test_parse_proppatch_preserves_namespace() {
         let xml = br#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><prop0 xmlns="http://example.com/neon/litmus/">value0</prop0></D:prop></D:set></D:propertyupdate>"#;
         let op = parse_proppatch_request(xml).unwrap();
-        assert_eq!(
-            op.set.get("{http://example.com/neon/litmus/}prop0"),
-            Some(&"value0".to_string())
-        );
+        let value = op.actions.iter().find_map(|a| match a {
+            PropPatchAction {
+                name,
+                value: Some(v),
+            } if name == "{http://example.com/neon/litmus/}prop0" => Some(v.as_str()),
+            _ => None,
+        });
+        assert_eq!(value, Some("value0"));
+    }
+
+    #[test]
+    fn test_parse_proppatch_respects_order_set_then_remove() {
+        let xml = br#"<?xml version="1.0"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:p>val</X:p></D:prop></D:set><D:remove><D:prop><X:p/></D:prop></D:remove></D:propertyupdate>"#;
+        let op = parse_proppatch_request(xml).unwrap();
+        assert_eq!(op.actions.len(), 2);
+        assert_eq!(op.actions[0].name, "p");
+        assert_eq!(op.actions[0].value.as_deref(), Some("val"));
+        assert_eq!(op.actions[1].name, "p");
+        assert!(op.actions[1].value.is_none());
+    }
+
+    #[test]
+    fn test_parse_proppatch_high_unicode_character() {
+        let xml = br#"<?xml version="1.0" encoding="utf-8" ?><propertyupdate xmlns='DAV:'><set><prop><high-unicode xmlns='http://example.com/neon/litmus/'>&#65536;</high-unicode></prop></set></propertyupdate>"#;
+        let op = parse_proppatch_request(xml).unwrap();
+        let value = op.actions.iter().find_map(|a| match a {
+            PropPatchAction {
+                name,
+                value: Some(v),
+            } if name == "{http://example.com/neon/litmus/}high-unicode" => Some(v.as_str()),
+            _ => None,
+        });
+        assert_eq!(value, Some("𐀀"), "high-unicode value should be U+10000 (𐀀)");
+
+        // Also test basic char ref
+        let xml = br#"<?xml version="1.0"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:p>&#65;&#66;&#67;</X:p></D:prop></D:set></D:propertyupdate>"#;
+        let op = parse_proppatch_request(xml).unwrap();
+        let val = op.actions.iter().find_map(|a| match a {
+            PropPatchAction {
+                name,
+                value: Some(v),
+            } if name == "p" => Some(v.as_str()),
+            _ => None,
+        });
+        assert_eq!(val, Some("ABC"), "&#65;&#66;&#67; should decode to ABC");
     }
 }

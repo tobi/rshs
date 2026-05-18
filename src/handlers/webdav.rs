@@ -305,17 +305,24 @@ pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) 
     let mut dead_props = state.dead_props.write().await;
     let entry = dead_props.entry(fs_path.clone()).or_default();
 
-    for name in &op.remove {
-        entry.remove(name);
-    }
-
-    for (name, value) in &op.set {
-        entry.insert(name.clone(), value.clone());
+    let mut set_count = 0u32;
+    let mut remove_count = 0u32;
+    for action in &op.actions {
+        match &action.value {
+            Some(value) => {
+                entry.insert(action.name.clone(), value.clone());
+                set_count += 1;
+            }
+            None => {
+                entry.remove(&action.name);
+                remove_count += 1;
+            }
+        }
     }
 
     let xml = build_proppatch_response(&request_path, &op);
 
-    tracing::debug!(path = %fs_path.display(), set = op.set.len(), remove = op.remove.len(), "PROPPATCH completed");
+    tracing::debug!(path = %fs_path.display(), set = set_count, remove = remove_count, "PROPPATCH completed");
 
     drop(dead_props);
 
@@ -333,11 +340,8 @@ fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> Str
     ms.push_attribute(("xmlns:D", "DAV:"));
     writer.write_event(Event::Start(ms)).unwrap();
 
-    for name in op.set.keys() {
-        write_proppatch_result(&mut writer, request_path, name, "200 OK");
-    }
-    for name in &op.remove {
-        write_proppatch_result(&mut writer, request_path, name, "200 OK");
+    for action in &op.actions {
+        write_proppatch_result(&mut writer, request_path, &action.name, "200 OK");
     }
 
     writer
