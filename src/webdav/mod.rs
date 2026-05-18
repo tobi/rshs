@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::LazyLock;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::http::{HeaderMap, Method as HttpMethod};
 use percent_encoding::percent_decode_str;
@@ -54,6 +54,38 @@ pub struct PropEntry {
     pub is_dir: bool,
     pub dead_props: Option<HashMap<String, String>>,
     pub active_locks: Option<Vec<LockInfo>>,
+}
+
+impl PropEntry {
+    pub fn new(
+        href: String,
+        is_dir: bool,
+        size: u64,
+        modified: SystemTime,
+        created: Option<SystemTime>,
+    ) -> Self {
+        Self {
+            canonical_path: None,
+            content_type: None,
+            dead_props: None,
+            active_locks: None,
+            href,
+            modified,
+            created,
+            size,
+            is_dir,
+        }
+    }
+
+    pub fn from_meta(href: String, is_dir: bool, meta: &std::fs::Metadata) -> Self {
+        Self::new(
+            href,
+            is_dir,
+            meta.len(),
+            meta.modified().unwrap_or(UNIX_EPOCH),
+            meta.created().ok(),
+        )
+    }
 }
 
 pub type LockStore = HashMap<PathBuf, Vec<LockInfo>>;
