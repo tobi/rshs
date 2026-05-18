@@ -141,6 +141,15 @@ impl IfList {
             })
             .collect()
     }
+
+    pub fn has_lock_token(&self) -> bool {
+        self.conditions.iter().any(|c| match c {
+            IfCondition::StateToken(t) => t != "DAV:no-lock",
+            IfCondition::Not(inner) => {
+                matches!(inner.as_ref(), IfCondition::StateToken(t) if t != "DAV:no-lock")
+            }
+        })
+    }
 }
 
 pub fn generate_lock_token() -> String {
@@ -629,5 +638,57 @@ mod tests {
         }];
         let tokens = lists[0].positive_tokens();
         assert_eq!(tokens, vec!["t1", "t3"]);
+    }
+
+    #[test]
+    fn test_has_lock_token_with_lock_token() {
+        let list = IfList {
+            resource_tag: None,
+            conditions: vec![IfCondition::StateToken("opaquelocktoken:abc".into())],
+        };
+        assert!(list.has_lock_token());
+    }
+
+    #[test]
+    fn test_has_lock_token_dav_no_lock_only() {
+        let list = IfList {
+            resource_tag: None,
+            conditions: vec![IfCondition::StateToken("DAV:no-lock".into())],
+        };
+        assert!(!list.has_lock_token());
+    }
+
+    #[test]
+    fn test_has_lock_token_not_dav_no_lock() {
+        let list = IfList {
+            resource_tag: None,
+            conditions: vec![IfCondition::Not(Box::new(IfCondition::StateToken(
+                "DAV:no-lock".into(),
+            )))],
+        };
+        assert!(!list.has_lock_token());
+    }
+
+    #[test]
+    fn test_has_lock_token_not_lock_token() {
+        let list = IfList {
+            resource_tag: None,
+            conditions: vec![IfCondition::Not(Box::new(IfCondition::StateToken(
+                "opaquelocktoken:abc".into(),
+            )))],
+        };
+        assert!(list.has_lock_token());
+    }
+
+    #[test]
+    fn test_has_lock_token_mixed() {
+        let list = IfList {
+            resource_tag: None,
+            conditions: vec![
+                IfCondition::StateToken("DAV:no-lock".into()),
+                IfCondition::StateToken("opaquelocktoken:xyz".into()),
+            ],
+        };
+        assert!(list.has_lock_token());
     }
 }
