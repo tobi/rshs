@@ -6,14 +6,15 @@ use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use quick_xml::Writer;
-use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
+use quick_xml::events::{BytesEnd, BytesStart, Event};
 
 use crate::ok_or_return;
 use crate::server::AppState;
 use crate::utils::error::OrStatus;
-use crate::utils::path;
-use crate::webdav;
-use crate::webdav::xml::DAV_PREFIX;
+use crate::webdav::{
+    self,
+    xml::{XmlWriterExt, dav_qname, write_activelock},
+};
 
 // ---------------------------------------------------------------------------
 // LOCK
@@ -25,68 +26,159 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
 
     let target = match state.resolve_and_guard(&request_path).await {
         Ok(t) => t,
-        Err(path::ResolveTargetError::InvalidPath) => return StatusCode::FORBIDDEN.into_response(),
-        Err(path::ResolveTargetError::ParentCanonicalizeFailed(_)) => {
-            tracing::debug!("parent not found for LOCK");
-            return StatusCode::CONFLICT.into_response();
-        }
-        Err(path::ResolveTargetError::TraversalBlocked) => {
-            return StatusCode::FORBIDDEN.into_response();
-        }
+        Err(e) => return e.status(StatusCode::FORBIDDEN).into_response(),
     };
 
     let timeout = webdav::parse_timeout(req.headers());
-    let if_tokens = webdav::parse_if_header(req.headers());
+    let depth = webdav::parse_depth(req.headers());
+    let if_entries = webdav::parse_if_header(req.headers());
+    let if_tokens: Vec<String> = if_entries
+        .iter()
+        .flat_map(|e| e.positive_tokens())
+        .map(|t| t.to_string())
+        .collect();
     let body_bytes = ok_or_return!(
         body::to_bytes(req.into_body(), 65536)
             .await
             .or_400("failed to read LOCK body")
     );
 
-    let owner = parse_lock_owner(&body_bytes);
+    let (owner, lock_scope) = parse_lock_body(&body_bytes);
 
     let mut locks = state.locks.write().await;
+
+    // Check ancestor depth:infinity locks for indirect refresh
+    if let Some(al) = webdav::find_ancestor_lock(&locks, &target, &state.root_canonical, |l| {
+        if_tokens.contains(&l.token)
+    }) {
+        let al = al.clone();
+        let xml = build_lock_response(&al);
+        tracing::debug!(
+            path = %target.display(),
+            token = %al.token,
+            ancestor = true,
+            "indirect LOCK refresh via ancestor depth:infinity lock"
+        );
+        drop(locks);
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/xml; charset=utf-8")
+            .header("lock-token", format!("<{}>", al.token))
+            .body(Body::from(xml))
+            .unwrap();
+    }
+
     let entry = locks.entry(target.clone()).or_default();
 
-    // Check for existing exclusive lock
-    let existing = entry
-        .iter()
-        .find(|l| matches!(l.scope, webdav::LockScope::Exclusive));
+    // Check existing locks for conflict
+    let has_exclusive = entry.iter().any(|l| l.is_exclusive());
 
-    let (token, is_refresh) = if let Some(existing_lock) = existing {
-        if if_tokens.contains(&existing_lock.token) {
-            // Refresh: reuse existing token, update metadata
-            let token = existing_lock.token.clone();
-            entry.retain(|l| !matches!(l.scope, webdav::LockScope::Exclusive));
-            (token, true)
-        } else {
-            // Non-owner attempting to lock locked resource
-            drop(locks);
-            return StatusCode::LOCKED.into_response();
-        }
-    } else {
-        let file_existed = tokio::fs::metadata(&target).await.is_ok();
-        if !file_existed {
-            if let Err(e) = tokio::fs::File::create(&target).await {
-                tracing::error!(error = %e, path = %target.display(), "failed to create lock-null resource");
+    let (token, is_refresh) = if matches!(lock_scope, webdav::LockScope::Exclusive) {
+        if has_exclusive {
+            // Existing exclusive lock — must be owner to refresh
+            let existing_token = entry
+                .iter()
+                .find(|l| l.is_exclusive())
+                .map(|l| l.token.clone());
+            if let Some(t) = existing_token {
+                if if_tokens.contains(&t) {
+                    entry.retain(|l| !l.is_exclusive());
+                    (t, true)
+                } else {
+                    drop(locks);
+                    return StatusCode::LOCKED.into_response();
+                }
+            } else {
                 drop(locks);
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                return StatusCode::LOCKED.into_response();
+            }
+        } else {
+            // Exclusive requested, no exclusive exists — check for shared conflict
+            // Exclusive cannot coexist with any shared locks
+            if !entry.is_empty() {
+                // Shared locks exist — only allow if token matches one of them (upgrade?)
+                // RFC 4918: shared locks don't block exclusive from same owner...
+                // Actually, shared locks block exclusive regardless
+                // But wait, if tokens match one of the shared locks, is that ok?
+                // Per RFC 4918, any existing lock blocks a conflicting new lock
+                // unless the request carries matching tokens for ALL existing locks
+                // For simplicity: if shared locks exist, reject exclusive unless
+                // the request carries a token that unlocks all shared locks
+                // (unlock + relock scenario)
+                let all_owned = entry.iter().all(|l| if_tokens.contains(&l.token));
+                if all_owned {
+                    // Request carries tokens for all existing shared locks —
+                    // replace them with the new exclusive lock
+                    entry.clear();
+                    (webdav::generate_lock_token(), false)
+                } else {
+                    drop(locks);
+                    return StatusCode::LOCKED.into_response();
+                }
+            } else {
+                let file_existed = tokio::fs::metadata(&target).await.is_ok();
+                if !file_existed {
+                    if let Err(e) = tokio::fs::File::create(&target).await {
+                        tracing::error!(error = %e, path = %target.display(), "failed to create lock-null resource");
+                        drop(locks);
+                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
+                }
+                (webdav::generate_lock_token(), false)
             }
         }
-        (webdav::generate_lock_token(), false)
+    } else {
+        // Shared lock requested
+        if has_exclusive {
+            // Existing exclusive — must be owner to refresh (or replace)
+            let existing_token = entry
+                .iter()
+                .find(|l| l.is_exclusive())
+                .map(|l| l.token.clone());
+            if let Some(t) = existing_token {
+                if if_tokens.contains(&t) {
+                    // Owner is switching to shared? Remove exclusive and add shared
+                    entry.retain(|l| !l.is_exclusive());
+                    (webdav::generate_lock_token(), false)
+                } else {
+                    drop(locks);
+                    return StatusCode::LOCKED.into_response();
+                }
+            } else {
+                drop(locks);
+                return StatusCode::LOCKED.into_response();
+            }
+        } else {
+            // No exclusive, only shared locks may exist — allow new shared
+            // If token matches an existing shared lock, refresh that one
+            if let Some(existing) = entry.iter().find(|l| if_tokens.contains(&l.token)) {
+                let token = existing.token.clone();
+                entry.retain(|l| l.token != token);
+                (token, true)
+            } else {
+                let file_existed = tokio::fs::metadata(&target).await.is_ok();
+                if !file_existed {
+                    if let Err(e) = tokio::fs::File::create(&target).await {
+                        tracing::error!(error = %e, path = %target.display(), "failed to create lock-null resource");
+                        drop(locks);
+                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
+                }
+                (webdav::generate_lock_token(), false)
+            }
+        }
     };
 
     let lock = webdav::LockInfo {
         token: token.clone(),
-        scope: webdav::LockScope::Exclusive,
+        scope: lock_scope,
         owner,
         timeout,
         created: std::time::SystemTime::now(),
-        depth: webdav::Depth::Zero,
+        depth,
     };
+    let xml = build_lock_response(&lock);
     entry.push(lock);
-
-    let xml = build_lock_response(&token, timeout);
 
     tracing::debug!(path = %target.display(), token = %token, is_refresh, "LOCK completed");
 
@@ -130,137 +222,62 @@ pub async fn handle_unlock(State(state): State<Arc<AppState>>, req: Request) -> 
     StatusCode::FORBIDDEN.into_response()
 }
 
-fn parse_lock_owner(xml: &[u8]) -> Option<String> {
+fn parse_lock_body(xml: &[u8]) -> (Option<String>, webdav::LockScope) {
     use quick_xml::Reader;
     use quick_xml::events::Event;
 
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(true);
     let mut in_owner = false;
+    let mut in_lockscope = false;
+    let mut owner = None;
+    let mut scope = webdav::LockScope::Exclusive;
 
     loop {
         match reader.read_event() {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) if e.local_name().as_ref() == b"owner" => {
-                in_owner = true;
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                let local = e.local_name();
+                let name = local.as_ref();
+                match name {
+                    b"owner" => in_owner = true,
+                    b"lockscope" => in_lockscope = true,
+                    b"shared" if in_lockscope => scope = webdav::LockScope::Shared,
+                    b"exclusive" if in_lockscope => {}
+                    _ => {}
+                }
             }
-            Ok(Event::End(e)) if e.local_name().as_ref() == b"owner" => {
-                in_owner = false;
+            Ok(Event::End(e)) => {
+                let local = e.local_name();
+                let name = local.as_ref();
+                match name {
+                    b"owner" => in_owner = false,
+                    b"lockscope" => in_lockscope = false,
+                    _ => {}
+                }
             }
             Ok(Event::Text(t)) if in_owner => {
-                return Some(String::from_utf8_lossy(t.as_ref()).to_string());
+                owner = Some(String::from_utf8_lossy(t.as_ref()).to_string());
             }
             Ok(Event::Eof) | Err(_) => break,
             _ => {}
         }
     }
-    None
+    (owner, scope)
 }
 
-fn build_lock_response(token: &str, timeout: Option<std::time::Duration>) -> String {
+fn build_lock_response(lock: &webdav::LockInfo) -> String {
     let mut writer = Writer::new(Cursor::new(Vec::new()));
 
-    let mut prop = BytesStart::new(format!("{DAV_PREFIX}prop"));
+    let mut prop = BytesStart::new(dav_qname("prop"));
     prop.push_attribute(("xmlns:D", "DAV:"));
-    writer.write_event(Event::Start(prop)).unwrap();
+    writer.ev(Event::Start(prop));
 
-    writer
-        .write_event(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}lockdiscovery"
-        ))))
-        .unwrap();
-    writer
-        .write_event(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}activelock"
-        ))))
-        .unwrap();
+    writer.ev(Event::Start(BytesStart::new(dav_qname("lockdiscovery"))));
 
-    // lockscope
-    writer
-        .write_event(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}lockscope"
-        ))))
-        .unwrap();
-    writer
-        .write_event(Event::Empty(BytesStart::new(format!(
-            "{DAV_PREFIX}exclusive"
-        ))))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}lockscope"))))
-        .unwrap();
+    write_activelock(&mut writer, lock);
 
-    // locktype
-    writer
-        .write_event(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}locktype"
-        ))))
-        .unwrap();
-    writer
-        .write_event(Event::Empty(BytesStart::new(format!("{DAV_PREFIX}write"))))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}locktype"))))
-        .unwrap();
-
-    // depth
-    writer
-        .write_event(Event::Start(BytesStart::new(format!("{DAV_PREFIX}depth"))))
-        .unwrap();
-    writer
-        .write_event(Event::Text(BytesText::new("0")))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}depth"))))
-        .unwrap();
-
-    // timeout
-    if let Some(d) = timeout {
-        writer
-            .write_event(Event::Start(BytesStart::new(format!(
-                "{DAV_PREFIX}timeout"
-            ))))
-            .unwrap();
-        writer
-            .write_event(Event::Text(BytesText::new(&format!(
-                "Second-{}",
-                d.as_secs()
-            ))))
-            .unwrap();
-        writer
-            .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}timeout"))))
-            .unwrap();
-    }
-
-    // locktoken
-    writer
-        .write_event(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}locktoken"
-        ))))
-        .unwrap();
-    writer
-        .write_event(Event::Start(BytesStart::new(format!("{DAV_PREFIX}href"))))
-        .unwrap();
-    writer
-        .write_event(Event::Text(BytesText::new(token)))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}href"))))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}locktoken"))))
-        .unwrap();
-
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}activelock"))))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!(
-            "{DAV_PREFIX}lockdiscovery"
-        ))))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))))
-        .unwrap();
+    writer.ev(Event::End(BytesEnd::new(dav_qname("lockdiscovery"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("prop"))));
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
@@ -435,5 +452,208 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_lock_shared() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("f.txt"), b"data").unwrap();
+        let app = make_app(&dir);
+
+        let body = Body::from(
+            r#"<?xml version="1.0" encoding="utf-8"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:shared/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#,
+        );
+        let req = Request::builder()
+            .method(axum::http::Method::from_bytes(b"LOCK").unwrap())
+            .uri("/f.txt")
+            .body(body)
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(text.contains("<D:shared"));
+    }
+
+    #[tokio::test]
+    async fn test_shared_lock_blocks_exclusive() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("f.txt"), b"data").unwrap();
+
+        let state = Arc::new(AppState::new(dir.path().to_path_buf(), AuthConfig::new()));
+        let app = Router::new()
+            .fallback(any(super::handle_lock))
+            .with_state(state.clone());
+        let app2 = Router::new()
+            .fallback(any(super::handle_lock))
+            .with_state(state);
+
+        // Shared lock
+        let body = Body::from(
+            r#"<?xml version="1.0" encoding="utf-8"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:shared/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#,
+        );
+        let req = Request::builder()
+            .method(axum::http::Method::from_bytes(b"LOCK").unwrap())
+            .uri("/f.txt")
+            .body(body)
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        // Exclusive lock from different client → 423
+        let body = Body::from(
+            r#"<?xml version="1.0" encoding="utf-8"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#,
+        );
+        let req = Request::builder()
+            .method(axum::http::Method::from_bytes(b"LOCK").unwrap())
+            .uri("/f.txt")
+            .body(body)
+            .unwrap();
+        let resp = app2.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::LOCKED);
+    }
+
+    #[tokio::test]
+    async fn test_exclusive_lock_blocks_shared() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("f.txt"), b"data").unwrap();
+
+        let state = Arc::new(AppState::new(dir.path().to_path_buf(), AuthConfig::new()));
+        let app = Router::new()
+            .fallback(any(super::handle_lock))
+            .with_state(state.clone());
+        let app2 = Router::new()
+            .fallback(any(super::handle_lock))
+            .with_state(state);
+
+        // Exclusive lock
+        let body = Body::from(
+            r#"<?xml version="1.0" encoding="utf-8"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#,
+        );
+        let req = Request::builder()
+            .method(axum::http::Method::from_bytes(b"LOCK").unwrap())
+            .uri("/f.txt")
+            .body(body)
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        // Shared lock from different client → 423
+        let body = Body::from(
+            r#"<?xml version="1.0" encoding="utf-8"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:shared/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#,
+        );
+        let req = Request::builder()
+            .method(axum::http::Method::from_bytes(b"LOCK").unwrap())
+            .uri("/f.txt")
+            .body(body)
+            .unwrap();
+        let resp = app2.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::LOCKED);
+    }
+
+    #[tokio::test]
+    async fn test_double_shared_lock() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("f.txt"), b"data").unwrap();
+
+        let state = Arc::new(AppState::new(dir.path().to_path_buf(), AuthConfig::new()));
+        let app = Router::new()
+            .fallback(any(super::handle_lock))
+            .with_state(state.clone());
+        let app2 = Router::new()
+            .fallback(any(super::handle_lock))
+            .with_state(state);
+
+        let shared_body = r#"<?xml version="1.0" encoding="utf-8"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:shared/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#;
+
+        // First shared lock
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method(axum::http::Method::from_bytes(b"LOCK").unwrap())
+                    .uri("/f.txt")
+                    .body(Body::from(shared_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        // Second shared lock from different client → should succeed
+        let resp = app2
+            .oneshot(
+                Request::builder()
+                    .method(axum::http::Method::from_bytes(b"LOCK").unwrap())
+                    .uri("/f.txt")
+                    .body(Body::from(shared_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_shared_lock_refresh() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("f.txt"), b"data").unwrap();
+
+        let state = Arc::new(AppState::new(dir.path().to_path_buf(), AuthConfig::new()));
+        let app = Router::new()
+            .fallback(any(super::handle_lock))
+            .with_state(state.clone());
+
+        let shared_body = r#"<?xml version="1.0" encoding="utf-8"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:shared/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#;
+
+        // First shared lock
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method(axum::http::Method::from_bytes(b"LOCK").unwrap())
+                    .uri("/f.txt")
+                    .body(Body::from(shared_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let token = resp
+            .headers()
+            .get("lock-token")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .trim_matches('<')
+            .trim_matches('>')
+            .to_string();
+
+        // Refresh with token
+        let app2 = Router::new()
+            .fallback(any(super::handle_lock))
+            .with_state(state);
+        let resp = app2
+            .oneshot(
+                Request::builder()
+                    .method(axum::http::Method::from_bytes(b"LOCK").unwrap())
+                    .uri("/f.txt")
+                    .header("if", format!("(<{token}>)"))
+                    .body(Body::from(shared_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        // Same token returned on refresh
+        let refreshed = resp
+            .headers()
+            .get("lock-token")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .trim_matches('<')
+            .trim_matches('>');
+        assert_eq!(refreshed, token);
     }
 }

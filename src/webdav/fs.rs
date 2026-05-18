@@ -1,36 +1,16 @@
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
 
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 use super::{Depth, PropEntry};
 
 /// Characters that do NOT need percent-encoding in a WebDAV href path segment.
-pub const HREF_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
+const HREF_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'/')
     .remove(b'-')
     .remove(b'_')
     .remove(b'.')
     .remove(b'~');
-
-fn make_entry(
-    href: String,
-    is_dir: bool,
-    meta: &std::fs::Metadata,
-    canonical: Option<PathBuf>,
-) -> PropEntry {
-    PropEntry {
-        href,
-        is_dir,
-        size: meta.len(),
-        modified: meta.modified().unwrap_or(UNIX_EPOCH),
-        created: meta.created().ok(),
-        content_type: None,
-        dead_props: None,
-        canonical_path: canonical,
-        active_locks: None,
-    }
-}
 
 fn guess_content_type(child_name: &std::ffi::OsStr) -> Option<String> {
     let mime = mime_guess::from_path(child_name).first_or_octet_stream();
@@ -48,12 +28,8 @@ pub async fn collect_entries(fs_path: &Path, request_path: &str, depth: Depth) -
     };
 
     let is_dir = meta.is_dir();
-    let mut base_entry = make_entry(
-        normalize_href(request_path, is_dir),
-        is_dir,
-        &meta,
-        Some(fs_path.to_path_buf()),
-    );
+    let mut base_entry = PropEntry::from_meta(normalize_href(request_path, is_dir), is_dir, &meta);
+    base_entry.canonical_path = Some(fs_path.to_path_buf());
     if !is_dir {
         base_entry.content_type = guess_content_type(fs_path.as_os_str());
     }
@@ -99,7 +75,7 @@ async fn collect_direct_children(dir_path: &Path, parent_href: &str, entries: &m
             encoded = utf8_percent_encode(&name_str, HREF_ENCODE_SET)
         );
 
-        let mut entry = make_entry(child_href, is_dir, &meta, None);
+        let mut entry = PropEntry::from_meta(child_href, is_dir, &meta);
         if !is_dir {
             entry.content_type = guess_content_type(&name);
         }
@@ -138,7 +114,7 @@ async fn collect_descendants(root_dir: &Path, root_href: &str, entries: &mut Vec
                 encoded = utf8_percent_encode(&name_str, HREF_ENCODE_SET)
             );
 
-            let mut entry = make_entry(child_href.clone(), is_dir, &meta, None);
+            let mut entry = PropEntry::from_meta(child_href.clone(), is_dir, &meta);
             if !is_dir {
                 entry.content_type = guess_content_type(&name);
             }

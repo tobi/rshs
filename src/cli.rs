@@ -1,9 +1,8 @@
 use clap::Parser;
 
+use crate::DEFAULT_LOG_LEVEL;
 use crate::auth::AuthConfig;
 use crate::server::tls::TlsConfig;
-
-use crate::DEFAULT_LOG_LEVEL;
 
 /// Arguments for shadow file access mode
 #[derive(Debug, Clone)]
@@ -130,14 +129,14 @@ impl Cli {
         config
     }
 
-    pub fn log_level(&self) -> &str {
+    pub fn log_level(&self) -> String {
         if self.quiet {
-            "off"
+            "off".into()
         } else {
             match self.verbose {
-                0 => DEFAULT_LOG_LEVEL,
-                1 => "debug",
-                _ => "trace",
+                0 => std::env::var("RSHS_LOG").unwrap_or_else(|_| DEFAULT_LOG_LEVEL.into()),
+                1 => "debug".into(),
+                _ => "trace".into(),
             }
         }
     }

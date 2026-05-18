@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
@@ -56,9 +57,13 @@ impl AuthConfig {
         }
     }
 
-    pub fn load_from_shadow_file(path: &Path) -> Result<Self, String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("cannot read shadow file {}: {e}", path.display()))?;
+    pub fn load_from_shadow_file(path: &Path) -> io::Result<Self> {
+        let content = fs::read_to_string(path).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("cannot read shadow file {}: {e}", path.display()),
+            )
+        })?;
         let mut config = AuthConfig::new();
 
         for (line_no, line) in content.lines().enumerate() {
@@ -99,21 +104,35 @@ impl AuthConfig {
         Ok(config)
     }
 
-    pub fn write_to_shadow_file(&self, path: &Path, create: bool) -> Result<(), String> {
+    pub fn write_to_shadow_file(&self, path: &Path, create: bool) -> io::Result<()> {
         if create {
             if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("cannot create parent dir {}: {e}", parent.display()))?;
+                fs::create_dir_all(parent).map_err(|e| {
+                    io::Error::new(
+                        e.kind(),
+                        format!("cannot create parent dir {}: {e}", parent.display()),
+                    )
+                })?;
             }
 
             let file = fs::OpenOptions::new()
                 .create_new(true)
                 .write(true)
                 .open(path)
-                .map_err(|e| format!("cannot create shadow file {}: {e}", path.display()))?;
+                .map_err(|e| {
+                    io::Error::new(
+                        e.kind(),
+                        format!("cannot create shadow file {}: {e}", path.display()),
+                    )
+                })?;
 
             file.set_permissions(fs::Permissions::from_mode(0o600))
-                .map_err(|e| format!("cannot set permissions on {}: {e}", path.display()))?;
+                .map_err(|e| {
+                    io::Error::new(
+                        e.kind(),
+                        format!("cannot set permissions on {}: {e}", path.display()),
+                    )
+                })?;
         }
 
         let mut content = String::new();
@@ -122,7 +141,7 @@ impl AuthConfig {
                 Credential::Sha512Crypt(h) => h.clone(),
                 Credential::Plaintext(p) => ShaCrypt::default()
                     .hash_password(p.as_bytes())
-                    .map_err(|e| format!("cannot hash password: {e}"))?
+                    .map_err(|e| io::Error::other(format!("cannot hash password: {e}")))?
                     .to_string(),
             };
             content.push_str(username);
@@ -131,8 +150,12 @@ impl AuthConfig {
             content.push('\n');
         }
 
-        fs::write(path, &content)
-            .map_err(|e| format!("cannot write shadow file {}: {e}", path.display()))?;
+        fs::write(path, &content).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("cannot write shadow file {}: {e}", path.display()),
+            )
+        })?;
 
         Ok(())
     }

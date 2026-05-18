@@ -1,5 +1,7 @@
+use std::fmt;
 use std::path::{Path, PathBuf};
 
+use axum::http::StatusCode;
 use percent_encoding::percent_decode_str;
 
 /// Resolve a path for read operations (GET/HEAD).
@@ -43,6 +45,7 @@ pub fn resolve_write_target(root_dir: &Path, request_path: &str) -> Option<PathB
 }
 
 /// Errors returned by `resolve_and_guard`.
+#[derive(Debug)]
 pub enum ResolveTargetError {
     /// Path contains `..`, `.`, or is a directory path.
     InvalidPath,
@@ -50,6 +53,26 @@ pub enum ResolveTargetError {
     ParentCanonicalizeFailed(std::io::Error),
     /// Canonical parent is outside the root directory.
     TraversalBlocked,
+}
+
+impl fmt::Display for ResolveTargetError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPath => write!(f, "invalid path"),
+            Self::ParentCanonicalizeFailed(e) => write!(f, "parent not found: {e}"),
+            Self::TraversalBlocked => write!(f, "path traversal blocked"),
+        }
+    }
+}
+
+impl ResolveTargetError {
+    pub fn status(&self, on_invalid: StatusCode) -> StatusCode {
+        match self {
+            Self::InvalidPath => on_invalid,
+            Self::ParentCanonicalizeFailed(_) => StatusCode::CONFLICT,
+            Self::TraversalBlocked => StatusCode::FORBIDDEN,
+        }
+    }
 }
 
 /// Resolves a write target: validates path, canonicalizes parent,

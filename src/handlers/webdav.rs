@@ -13,7 +13,10 @@ use crate::ok_or_return;
 use crate::server::AppState;
 use crate::utils::error::OrStatus;
 use crate::utils::path;
-use crate::webdav::{self, xml::DAV_PREFIX};
+use crate::webdav::{
+    self,
+    xml::{XmlWriterExt, dav_qname},
+};
 
 // ---------------------------------------------------------------------------
 // PROPFIND
@@ -80,17 +83,9 @@ pub async fn handle_mkcol(State(state): State<Arc<AppState>>, req: Request) -> R
 
     let target = match state.resolve_and_guard(&request_path).await {
         Ok(t) => t,
-        Err(path::ResolveTargetError::InvalidPath) => {
-            tracing::debug!("path resolution failed for MKCOL");
-            return StatusCode::FORBIDDEN.into_response();
-        }
-        Err(path::ResolveTargetError::ParentCanonicalizeFailed(_)) => {
-            tracing::debug!("parent not found for MKCOL");
-            return StatusCode::CONFLICT.into_response();
-        }
-        Err(path::ResolveTargetError::TraversalBlocked) => {
-            tracing::warn!(path = %request_path, "path traversal blocked in MKCOL");
-            return StatusCode::FORBIDDEN.into_response();
+        Err(e) => {
+            tracing::debug!(error = %e, "path resolution failed for MKCOL");
+            return e.status(StatusCode::FORBIDDEN).into_response();
         }
     };
 
@@ -153,7 +148,6 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
 
     let dest = match state.resolve_and_guard(&dest_str).await {
         Ok(t) => t,
-        Err(path::ResolveTargetError::InvalidPath) => unreachable!(),
         Err(path::ResolveTargetError::ParentCanonicalizeFailed(_)) => {
             tracing::debug!("dest parent not found for COPY/MOVE");
             return StatusCode::CONFLICT.into_response();
@@ -161,6 +155,7 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
         Err(path::ResolveTargetError::TraversalBlocked) => {
             return StatusCode::FORBIDDEN.into_response();
         }
+        _ => unreachable!(),
     };
     let mut dest_existed = tokio::fs::metadata(&dest).await.is_ok();
 
@@ -210,6 +205,16 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
             let _ = tokio::fs::remove_file(&fs_src).await;
         }
     }
+
+    // Migrate dead properties for COPY/MOVE
+    let mut dead_props = state.dead_props.write().await;
+    if let Some(props) = dead_props.remove(&fs_src) {
+        if !is_move {
+            dead_props.insert(fs_src.clone(), props.clone());
+        }
+        dead_props.insert(dest.clone(), props);
+    }
+    drop(dead_props);
 
     tracing::debug!(verb, src = %fs_src.display(), dest = %dest.display(), "completed");
     if dest_existed {
@@ -300,17 +305,24 @@ pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) 
     let mut dead_props = state.dead_props.write().await;
     let entry = dead_props.entry(fs_path.clone()).or_default();
 
-    for name in &op.remove {
-        entry.remove(name);
-    }
-
-    for (name, value) in &op.set {
-        entry.insert(name.clone(), value.clone());
+    let mut set_count = 0u32;
+    let mut remove_count = 0u32;
+    for action in &op.actions {
+        match &action.value {
+            Some(value) => {
+                entry.insert(action.name.clone(), value.clone());
+                set_count += 1;
+            }
+            None => {
+                entry.remove(&action.name);
+                remove_count += 1;
+            }
+        }
     }
 
     let xml = build_proppatch_response(&request_path, &op);
 
-    tracing::debug!(path = %fs_path.display(), set = op.set.len(), remove = op.remove.len(), "PROPPATCH completed");
+    tracing::debug!(path = %fs_path.display(), set = set_count, remove = remove_count, "PROPPATCH completed");
 
     drop(dead_props);
 
@@ -324,21 +336,16 @@ fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> Str
         .write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)))
         .unwrap();
 
-    let mut ms = BytesStart::new(format!("{DAV_PREFIX}multistatus"));
+    let mut ms = BytesStart::new(dav_qname("multistatus"));
     ms.push_attribute(("xmlns:D", "DAV:"));
     writer.write_event(Event::Start(ms)).unwrap();
 
-    for name in op.set.keys() {
-        write_proppatch_result(&mut writer, request_path, name, "200 OK");
-    }
-    for name in &op.remove {
-        write_proppatch_result(&mut writer, request_path, name, "200 OK");
+    for action in &op.actions {
+        write_proppatch_result(&mut writer, request_path, &action.name, "200 OK");
     }
 
     writer
-        .write_event(Event::End(BytesEnd::new(format!(
-            "{DAV_PREFIX}multistatus"
-        ))))
+        .write_event(Event::End(BytesEnd::new(dav_qname("multistatus"))))
         .unwrap();
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
@@ -350,52 +357,29 @@ fn write_proppatch_result(
     prop_name: &str,
     status: &str,
 ) {
-    writer
-        .write_event(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}response"
-        ))))
-        .unwrap();
-    writer
-        .write_event(Event::Start(BytesStart::new(format!("{DAV_PREFIX}href"))))
-        .unwrap();
-    writer
-        .write_event(Event::Text(BytesText::new(href)))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}href"))))
-        .unwrap();
+    writer.ev(Event::Start(BytesStart::new(dav_qname("response"))));
 
-    writer
-        .write_event(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}propstat"
-        ))))
-        .unwrap();
-    writer
-        .write_event(Event::Start(BytesStart::new(format!("{DAV_PREFIX}prop"))))
-        .unwrap();
-    writer
-        .write_event(Event::Empty(BytesStart::new(prop_name)))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))))
-        .unwrap();
+    writer.ev(Event::Start(BytesStart::new(dav_qname("href"))));
+    writer.ev(Event::Text(BytesText::new(href)));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("href"))));
 
-    writer
-        .write_event(Event::Start(BytesStart::new(format!("{DAV_PREFIX}status"))))
-        .unwrap();
-    writer
-        .write_event(Event::Text(BytesText::new(&format!("HTTP/1.1 {status}"))))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}status"))))
-        .unwrap();
+    writer.ev(Event::Start(BytesStart::new(dav_qname("propstat"))));
 
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}propstat"))))
-        .unwrap();
-    writer
-        .write_event(Event::End(BytesEnd::new(format!("{DAV_PREFIX}response"))))
-        .unwrap();
+    writer.ev(Event::Start(BytesStart::new(dav_qname("prop"))));
+    let (ns, local) = webdav::parse_clark(prop_name).unwrap_or(("", prop_name));
+    let mut elem = BytesStart::new(local);
+    if !ns.is_empty() {
+        elem.push_attribute(("xmlns", ns));
+    }
+    writer.ev(Event::Empty(elem));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("prop"))));
+
+    writer.ev(Event::Start(BytesStart::new(dav_qname("status"))));
+    writer.ev(Event::Text(BytesText::new(&format!("HTTP/1.1 {status}"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("status"))));
+
+    writer.ev(Event::End(BytesEnd::new(dav_qname("propstat"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("response"))));
 }
 
 // ---------------------------------------------------------------------------
@@ -407,9 +391,13 @@ mod tests {
 
     use std::sync::Arc;
 
+    use axum::extract::State;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
     use axum::{Router, body::Body, extract::Request, routing::any};
     use tower::ServiceExt;
 
+    use crate::webdav;
     use crate::{AppState, AuthConfig};
 
     // -- PROPFIND tests -----------------------------------------------------
@@ -721,15 +709,23 @@ mod tests {
             )))
     }
 
-    fn make_copy(uri: &str, dest: &str, overwrite: Option<&str>) -> Request {
+    fn make_copy_or_move(method: &[u8], uri: &str, dest: &str, overwrite: Option<&str>) -> Request {
         let mut builder = Request::builder()
-            .method(axum::http::Method::from_bytes(b"COPY").unwrap())
+            .method(axum::http::Method::from_bytes(method).unwrap())
             .uri(uri)
             .header("destination", dest);
         if let Some(ov) = overwrite {
             builder = builder.header("overwrite", ov);
         }
         builder.body(Body::empty()).unwrap()
+    }
+
+    fn make_copy(uri: &str, dest: &str, overwrite: Option<&str>) -> Request {
+        make_copy_or_move(b"COPY", uri, dest, overwrite)
+    }
+
+    fn make_move(uri: &str, dest: &str, overwrite: Option<&str>) -> Request {
+        make_copy_or_move(b"MOVE", uri, dest, overwrite)
     }
 
     #[tokio::test]
@@ -832,17 +828,6 @@ mod tests {
                 dir.path().to_path_buf(),
                 AuthConfig::new(),
             )))
-    }
-
-    fn make_move(uri: &str, dest: &str, overwrite: Option<&str>) -> Request {
-        let mut builder = Request::builder()
-            .method(axum::http::Method::from_bytes(b"MOVE").unwrap())
-            .uri(uri)
-            .header("destination", dest);
-        if let Some(ov) = overwrite {
-            builder = builder.header("overwrite", ov);
-        }
-        builder.body(Body::empty()).unwrap()
     }
 
     #[tokio::test]
@@ -1029,5 +1014,76 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    fn make_app_combined(dir: &tempfile::TempDir) -> Router {
+        Router::new()
+            .fallback(any(
+                |State(state): State<Arc<AppState>>, req: Request| async move {
+                    if req.method() == &*webdav::M_PROPFIND {
+                        super::handle_propfind(State(state), req).await
+                    } else if req.method() == &*webdav::M_PROPPATCH {
+                        super::handle_proppatch(State(state), req).await
+                    } else {
+                        StatusCode::METHOD_NOT_ALLOWED.into_response()
+                    }
+                },
+            ))
+            .with_state(std::sync::Arc::new(AppState::new(
+                dir.path().to_path_buf(),
+                AuthConfig::new(),
+            )))
+    }
+
+    #[tokio::test]
+    async fn test_propfind_invalid_xml_rejected() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app = make_app_propfind(&dir);
+
+        let req = Request::builder()
+            .method(axum::http::Method::from_bytes(b"PROPFIND").unwrap())
+            .uri("/")
+            .header("depth", "0")
+            .body(Body::from("<foo>"))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_proppatch_namespace_roundtrip() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("f.txt"), b"hello").unwrap();
+        let app = make_app_combined(&dir);
+
+        let body = Body::from(
+            r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><prop0 xmlns="http://example.com/neon/litmus/">value0</prop0></D:prop></D:set></D:propertyupdate>"#,
+        );
+        let req = Request::builder()
+            .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
+            .uri("/f.txt")
+            .body(body)
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 207);
+
+        let body = Body::from(
+            r#"<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:prop><prop0 xmlns="http://example.com/neon/litmus/"/></D:prop></D:propfind>"#,
+        );
+        let req = Request::builder()
+            .method(axum::http::Method::from_bytes(b"PROPFIND").unwrap())
+            .uri("/f.txt")
+            .header("depth", "0")
+            .body(body)
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 207);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(text.contains("xmlns=\"http://example.com/neon/litmus/\""));
+        assert!(text.contains(">value0<"));
     }
 }

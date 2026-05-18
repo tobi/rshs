@@ -5,12 +5,16 @@ use axum::{body::Body, http::StatusCode, response::Response};
 use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
-use crate::webdav::{PropEntry, PropRequest};
+use crate::webdav::{self, PropEntry, PropRequest};
 
 pub const DAV_PREFIX: &str = "D:";
 const DAV_NS: &str = "DAV:";
 
-trait XmlWriterExt {
+pub(crate) fn dav_qname(name: &str) -> String {
+    format!("{DAV_PREFIX}{name}")
+}
+
+pub(crate) trait XmlWriterExt {
     fn ev(&mut self, event: Event<'_>);
 }
 
@@ -26,7 +30,7 @@ pub fn multistatus(xml: String) -> Response {
 }
 
 /// Build an XML response with the given status code.
-pub fn xml_response(status: StatusCode, xml: String) -> Response {
+fn xml_response(status: StatusCode, xml: String) -> Response {
     Response::builder()
         .status(status)
         .header("content-type", "application/xml; charset=utf-8")
@@ -50,7 +54,7 @@ pub fn build_multistatus(entries: &[PropEntry], prop_request: &PropRequest) -> S
 
     writer.ev(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
 
-    let mut ms = BytesStart::new(format!("{DAV_PREFIX}multistatus"));
+    let mut ms = BytesStart::new(dav_qname("multistatus"));
     ms.push_attribute(("xmlns:D", DAV_NS));
     writer.ev(Event::Start(ms));
 
@@ -58,9 +62,7 @@ pub fn build_multistatus(entries: &[PropEntry], prop_request: &PropRequest) -> S
         write_response(&mut writer, entry, prop_request);
     }
 
-    writer.ev(Event::End(BytesEnd::new(format!(
-        "{DAV_PREFIX}multistatus"
-    ))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("multistatus"))));
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
@@ -70,17 +72,15 @@ fn write_response(
     entry: &PropEntry,
     prop_request: &PropRequest,
 ) {
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}response"
-    ))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("response"))));
 
-    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}href"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("href"))));
     writer.ev(Event::Text(BytesText::new(&entry.href)));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}href"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("href"))));
 
     if matches!(prop_request, PropRequest::PropName) {
         write_propname(writer, SUPPORTED_PROPS);
-        writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}response"))));
+        writer.ev(Event::End(BytesEnd::new(dav_qname("response"))));
         return;
     }
 
@@ -92,12 +92,21 @@ fn write_response(
         PropRequest::Named(names) => {
             let found: Vec<&str> = SUPPORTED_PROPS
                 .iter()
-                .filter(|p| names.iter().any(|n| n == **p))
+                .filter(|p| {
+                    names.iter().any(|n| {
+                        webdav::parse_clark(n)
+                            .map(|(_, l)| l == **p)
+                            .unwrap_or(false)
+                    })
+                })
                 .copied()
                 .collect();
             let missing: Vec<&str> = names
                 .iter()
-                .filter(|n| !SUPPORTED_PROPS.contains(&n.as_str()))
+                .filter(|n| {
+                    let local = webdav::parse_clark(n).map(|(_, l)| l).unwrap_or(n);
+                    !SUPPORTED_PROPS.contains(&local)
+                })
                 .map(|s| s.as_str())
                 .collect();
             (found, missing)
@@ -121,6 +130,12 @@ fn write_response(
         .collect();
     not_found.extend(missing.iter().map(|p| p.to_string()));
 
+    // Exclude properties that have dead-prop values — they appear in the
+    // 200 dead-propstat below, not here in the 404 section.
+    if let Some(ref dead) = entry.dead_props {
+        not_found.retain(|n| !dead.contains_key(n));
+    }
+
     if !not_found.is_empty() {
         write_propstat_404(writer, &not_found);
     }
@@ -132,7 +147,7 @@ fn write_response(
         }
     }
 
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}response"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("response"))));
 }
 
 fn is_applicable(prop: &str, is_dir: bool) -> bool {
@@ -142,11 +157,15 @@ fn is_applicable(prop: &str, is_dir: bool) -> bool {
     }
 }
 
+fn write_prop_text(writer: &mut Writer<Cursor<Vec<u8>>>, qname: &str, value: &str) {
+    writer.ev(Event::Start(BytesStart::new(qname)));
+    writer.ev(Event::Text(BytesText::new(value)));
+    writer.ev(Event::End(BytesEnd::new(qname)));
+}
+
 fn write_propstat_200(writer: &mut Writer<Cursor<Vec<u8>>>, entry: &PropEntry, props: &[&&str]) {
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}propstat"
-    ))));
-    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}prop"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("propstat"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("prop"))));
 
     for prop_name in props {
         match **prop_name {
@@ -155,32 +174,21 @@ fn write_propstat_200(writer: &mut Writer<Cursor<Vec<u8>>>, entry: &PropEntry, p
                     .created
                     .map(crate::utils::time::format_rfc3339)
                     .unwrap_or_default();
-                writer.ev(Event::Start(BytesStart::new(format!(
-                    "{DAV_PREFIX}creationdate"
-                ))));
-                writer.ev(Event::Text(BytesText::new(&date)));
-                writer.ev(Event::End(BytesEnd::new(format!(
-                    "{DAV_PREFIX}creationdate"
-                ))));
+                write_prop_text(writer, &dav_qname("creationdate"), &date);
             }
             "getcontentlength" => {
-                writer.ev(Event::Start(BytesStart::new(format!(
-                    "{DAV_PREFIX}getcontentlength"
-                ))));
-                writer.ev(Event::Text(BytesText::new(&entry.size.to_string())));
-                writer.ev(Event::End(BytesEnd::new(format!(
-                    "{DAV_PREFIX}getcontentlength"
-                ))));
+                write_prop_text(
+                    writer,
+                    &dav_qname("getcontentlength"),
+                    &entry.size.to_string(),
+                );
             }
             "getcontenttype" => {
-                let ct = entry.content_type.as_deref().unwrap_or("");
-                writer.ev(Event::Start(BytesStart::new(format!(
-                    "{DAV_PREFIX}getcontenttype"
-                ))));
-                writer.ev(Event::Text(BytesText::new(ct)));
-                writer.ev(Event::End(BytesEnd::new(format!(
-                    "{DAV_PREFIX}getcontenttype"
-                ))));
+                write_prop_text(
+                    writer,
+                    &dav_qname("getcontenttype"),
+                    entry.content_type.as_deref().unwrap_or(""),
+                );
             }
             "getetag" => {
                 let etag = format!(
@@ -192,195 +200,163 @@ fn write_propstat_200(writer: &mut Writer<Cursor<Vec<u8>>>, entry: &PropEntry, p
                         .as_secs(),
                     entry.size
                 );
-                writer.ev(Event::Start(BytesStart::new(format!(
-                    "{DAV_PREFIX}getetag"
-                ))));
-                writer.ev(Event::Text(BytesText::new(&etag)));
-                writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}getetag"))));
+                write_prop_text(writer, &dav_qname("getetag"), &etag);
             }
             "getlastmodified" => {
-                writer.ev(Event::Start(BytesStart::new(format!(
-                    "{DAV_PREFIX}getlastmodified"
-                ))));
                 let date = crate::utils::time::format_rfc1123(entry.modified);
-                writer.ev(Event::Text(BytesText::new(&date)));
-                writer.ev(Event::End(BytesEnd::new(format!(
-                    "{DAV_PREFIX}getlastmodified"
-                ))));
+                write_prop_text(writer, &dav_qname("getlastmodified"), &date);
             }
             "lockdiscovery" => {
-                writer.ev(Event::Start(BytesStart::new(format!(
-                    "{DAV_PREFIX}lockdiscovery"
-                ))));
+                writer.ev(Event::Start(BytesStart::new(dav_qname("lockdiscovery"))));
                 if let Some(ref locks) = entry.active_locks {
                     for lock in locks {
                         write_activelock(writer, lock);
                     }
                 }
-                writer.ev(Event::End(BytesEnd::new(format!(
-                    "{DAV_PREFIX}lockdiscovery"
-                ))));
+                writer.ev(Event::End(BytesEnd::new(dav_qname("lockdiscovery"))));
             }
             "resourcetype" => {
-                writer.ev(Event::Start(BytesStart::new(format!(
-                    "{DAV_PREFIX}resourcetype"
-                ))));
+                writer.ev(Event::Start(BytesStart::new(dav_qname("resourcetype"))));
                 if entry.is_dir {
-                    writer.ev(Event::Empty(BytesStart::new(format!(
-                        "{DAV_PREFIX}collection"
-                    ))));
+                    writer.ev(Event::Empty(BytesStart::new(dav_qname("collection"))));
                 }
-                writer.ev(Event::End(BytesEnd::new(format!(
-                    "{DAV_PREFIX}resourcetype"
-                ))));
+                writer.ev(Event::End(BytesEnd::new(dav_qname("resourcetype"))));
             }
             "supportedlock" => {
-                writer.ev(Event::Start(BytesStart::new(format!(
-                    "{DAV_PREFIX}supportedlock"
-                ))));
+                writer.ev(Event::Start(BytesStart::new(dav_qname("supportedlock"))));
                 write_lockentry(writer, "exclusive");
                 write_lockentry(writer, "shared");
-                writer.ev(Event::End(BytesEnd::new(format!(
-                    "{DAV_PREFIX}supportedlock"
-                ))));
+                writer.ev(Event::End(BytesEnd::new(dav_qname("supportedlock"))));
             }
             _ => {}
         }
     }
 
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))));
-    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}status"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("prop"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("status"))));
     writer.ev(Event::Text(BytesText::new("HTTP/1.1 200 OK")));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}status"))));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}propstat"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("status"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("propstat"))));
 }
 
 fn write_lockentry(writer: &mut Writer<Cursor<Vec<u8>>>, scope: &str) {
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}lockentry"
-    ))));
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}lockscope"
-    ))));
-    writer.ev(Event::Empty(BytesStart::new(format!(
-        "{DAV_PREFIX}{scope}"
-    ))));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}lockscope"))));
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}locktype"
-    ))));
-    writer.ev(Event::Empty(BytesStart::new(format!("{DAV_PREFIX}write"))));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}locktype"))));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}lockentry"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("lockentry"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("lockscope"))));
+    writer.ev(Event::Empty(BytesStart::new(dav_qname(scope))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("lockscope"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("locktype"))));
+    writer.ev(Event::Empty(BytesStart::new(dav_qname("write"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("locktype"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("lockentry"))));
 }
 
 fn write_propstat_404(writer: &mut Writer<Cursor<Vec<u8>>>, props: &[String]) {
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}propstat"
-    ))));
-    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}prop"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("propstat"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("prop"))));
 
     for prop_name in props {
-        writer.ev(Event::Empty(BytesStart::new(format!(
-            "{DAV_PREFIX}{prop_name}"
-        ))));
+        let (ns, local) = webdav::parse_clark(prop_name).unwrap_or(("", prop_name));
+        let mut elem = BytesStart::new(local);
+        if !ns.is_empty() {
+            elem.push_attribute(("xmlns", ns));
+        }
+        writer.ev(Event::Empty(elem));
     }
 
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))));
-    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}status"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("prop"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("status"))));
     writer.ev(Event::Text(BytesText::new("HTTP/1.1 404 Not Found")));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}status"))));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}propstat"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("status"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("propstat"))));
 }
 
 fn write_propname(writer: &mut Writer<Cursor<Vec<u8>>>, props: &[&str]) {
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}propstat"
-    ))));
-    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}prop"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("propstat"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("prop"))));
 
     for prop_name in props {
-        writer.ev(Event::Empty(BytesStart::new(format!(
-            "{DAV_PREFIX}{prop_name}"
-        ))));
+        writer.ev(Event::Empty(BytesStart::new(dav_qname(prop_name))));
     }
 
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))));
-    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}status"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("prop"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("status"))));
     writer.ev(Event::Text(BytesText::new("HTTP/1.1 200 OK")));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}status"))));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}propstat"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("status"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("propstat"))));
 }
 
-fn write_activelock(writer: &mut Writer<Cursor<Vec<u8>>>, lock: &super::LockInfo) {
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}activelock"
-    ))));
+pub(crate) fn write_activelock(writer: &mut Writer<Cursor<Vec<u8>>>, lock: &super::LockInfo) {
+    writer.ev(Event::Start(BytesStart::new(dav_qname("activelock"))));
 
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}lockscope"
-    ))));
-    writer.ev(Event::Empty(BytesStart::new(format!(
-        "{DAV_PREFIX}exclusive"
-    ))));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}lockscope"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("lockscope"))));
+    match lock.scope {
+        super::LockScope::Exclusive => {
+            writer.ev(Event::Empty(BytesStart::new(dav_qname("exclusive"))));
+        }
+        super::LockScope::Shared => {
+            writer.ev(Event::Empty(BytesStart::new(dav_qname("shared"))));
+        }
+    }
+    writer.ev(Event::End(BytesEnd::new(dav_qname("lockscope"))));
 
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}locktype"
-    ))));
-    writer.ev(Event::Empty(BytesStart::new(format!("{DAV_PREFIX}write"))));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}locktype"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("locktype"))));
+    writer.ev(Event::Empty(BytesStart::new(dav_qname("write"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("locktype"))));
 
-    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}depth"))));
-    writer.ev(Event::Text(BytesText::new("0")));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}depth"))));
+    let depth_str = match lock.depth {
+        super::Depth::Zero => "0",
+        super::Depth::One => "1",
+        super::Depth::Infinity => "infinity",
+    };
+    writer.ev(Event::Start(BytesStart::new(dav_qname("depth"))));
+    writer.ev(Event::Text(BytesText::new(depth_str)));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("depth"))));
 
     if let Some(ref owner) = lock.owner {
-        writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}owner"))));
+        writer.ev(Event::Start(BytesStart::new(dav_qname("owner"))));
         writer.ev(Event::Text(BytesText::new(owner)));
-        writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}owner"))));
+        writer.ev(Event::End(BytesEnd::new(dav_qname("owner"))));
     }
 
     if let Some(d) = lock.timeout {
-        writer.ev(Event::Start(BytesStart::new(format!(
-            "{DAV_PREFIX}timeout"
-        ))));
+        writer.ev(Event::Start(BytesStart::new(dav_qname("timeout"))));
         writer.ev(Event::Text(BytesText::new(&format!(
             "Second-{}",
             d.as_secs()
         ))));
-        writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}timeout"))));
+        writer.ev(Event::End(BytesEnd::new(dav_qname("timeout"))));
     }
 
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}locktoken"
-    ))));
-    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}href"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("locktoken"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("href"))));
     writer.ev(Event::Text(BytesText::new(&lock.token)));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}href"))));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}locktoken"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("href"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("locktoken"))));
 
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}activelock"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("activelock"))));
 }
 
 fn write_dead_propstat(
     writer: &mut Writer<Cursor<Vec<u8>>>,
     props: &std::collections::HashMap<String, String>,
 ) {
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}propstat"
-    ))));
-    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}prop"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("propstat"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("prop"))));
 
-    for (name, value) in props {
-        writer.ev(Event::Start(BytesStart::new(name.as_str())));
+    for (clark_key, value) in props {
+        let (ns, local) = webdav::parse_clark(clark_key).unwrap_or(("", clark_key));
+        let mut elem = BytesStart::new(local);
+        if !ns.is_empty() {
+            elem.push_attribute(("xmlns", ns));
+        }
+        writer.ev(Event::Start(elem));
         writer.ev(Event::Text(BytesText::new(value)));
-        writer.ev(Event::End(BytesEnd::new(name.as_str())));
+        writer.ev(Event::End(BytesEnd::new(local)));
     }
 
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))));
-    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}status"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("prop"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("status"))));
     writer.ev(Event::Text(BytesText::new("HTTP/1.1 200 OK")));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}status"))));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}propstat"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("status"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("propstat"))));
 }

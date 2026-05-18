@@ -9,8 +9,6 @@ use axum::response::{IntoResponse, Response};
 pub trait OrStatus<T> {
     /// Log at `error` level and return `500 Internal Server Error`.
     fn or_500(self, msg: &str) -> Result<T, Response>;
-    /// Log at `debug` level and return `404 Not Found`.
-    fn or_404(self, msg: &str) -> Result<T, Response>;
     /// Log at `debug` level and return `400 Bad Request`.
     fn or_400(self, msg: &str) -> Result<T, Response>;
     /// Log at `error` level and return a custom status code.
@@ -22,13 +20,6 @@ impl<T, E: Display> OrStatus<T> for Result<T, E> {
         self.map_err(|e| {
             tracing::error!(error = %e, "{msg}");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        })
-    }
-
-    fn or_404(self, msg: &str) -> Result<T, Response> {
-        self.map_err(|e| {
-            tracing::debug!(error = %e, "{msg}");
-            StatusCode::NOT_FOUND.into_response()
         })
     }
 
