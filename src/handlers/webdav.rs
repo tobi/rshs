@@ -356,7 +356,12 @@ fn write_proppatch_result(
         "{DAV_PREFIX}propstat"
     ))));
     writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}prop"))));
-    writer.ev(Event::Empty(BytesStart::new(prop_name)));
+    let (ns, local) = webdav::parse_clark(prop_name).unwrap_or(("", prop_name));
+    let mut elem = BytesStart::new(local);
+    if !ns.is_empty() {
+        elem.push_attribute(("xmlns", ns));
+    }
+    writer.ev(Event::Empty(elem));
     writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))));
 
     writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}status"))));
@@ -376,9 +381,13 @@ mod tests {
 
     use std::sync::Arc;
 
+    use axum::extract::State;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
     use axum::{Router, body::Body, extract::Request, routing::any};
     use tower::ServiceExt;
 
+    use crate::webdav;
     use crate::{AppState, AuthConfig};
 
     // -- PROPFIND tests -----------------------------------------------------
@@ -995,5 +1004,76 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    fn make_app_combined(dir: &tempfile::TempDir) -> Router {
+        Router::new()
+            .fallback(any(
+                |State(state): State<Arc<AppState>>, req: Request| async move {
+                    if req.method() == &*webdav::M_PROPFIND {
+                        super::handle_propfind(State(state), req).await
+                    } else if req.method() == &*webdav::M_PROPPATCH {
+                        super::handle_proppatch(State(state), req).await
+                    } else {
+                        StatusCode::METHOD_NOT_ALLOWED.into_response()
+                    }
+                },
+            ))
+            .with_state(std::sync::Arc::new(AppState::new(
+                dir.path().to_path_buf(),
+                AuthConfig::new(),
+            )))
+    }
+
+    #[tokio::test]
+    async fn test_propfind_invalid_xml_rejected() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let app = make_app_propfind(&dir);
+
+        let req = Request::builder()
+            .method(axum::http::Method::from_bytes(b"PROPFIND").unwrap())
+            .uri("/")
+            .header("depth", "0")
+            .body(Body::from("<foo>"))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_proppatch_namespace_roundtrip() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("f.txt"), b"hello").unwrap();
+        let app = make_app_combined(&dir);
+
+        let body = Body::from(
+            r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><prop0 xmlns="http://example.com/neon/litmus/">value0</prop0></D:prop></D:set></D:propertyupdate>"#,
+        );
+        let req = Request::builder()
+            .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
+            .uri("/f.txt")
+            .body(body)
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 207);
+
+        let body = Body::from(
+            r#"<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:prop><prop0 xmlns="http://example.com/neon/litmus/"/></D:prop></D:propfind>"#,
+        );
+        let req = Request::builder()
+            .method(axum::http::Method::from_bytes(b"PROPFIND").unwrap())
+            .uri("/f.txt")
+            .header("depth", "0")
+            .body(body)
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 207);
+
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(text.contains("xmlns=\"http://example.com/neon/litmus/\""));
+        assert!(text.contains(">value0<"));
     }
 }

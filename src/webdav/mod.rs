@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use axum::http::{HeaderMap, Method as HttpMethod};
 use percent_encoding::percent_decode_str;
 use quick_xml::Reader;
-use quick_xml::events::Event;
+use quick_xml::events::{BytesStart, Event};
 
 type Method = LazyLock<HttpMethod>;
 
@@ -364,6 +364,52 @@ impl From<quick_xml::Error> for ParseError {
     }
 }
 
+pub fn clark_key(ns: &str, local: &str) -> String {
+    if ns.is_empty() {
+        local.to_string()
+    } else {
+        format!("{{{}}}{}", ns, local)
+    }
+}
+
+pub fn parse_clark(key: &str) -> Option<(&str, &str)> {
+    if let Some(rest) = key.strip_prefix('{') {
+        let (ns, local) = rest.split_once('}')?;
+        Some((ns, local))
+    } else {
+        Some(("", key))
+    }
+}
+
+fn extract_element_ns(e: &BytesStart) -> (String, String) {
+    let qname = e.name();
+    let name = qname.as_ref();
+    let (prefix, local) = match name.iter().position(|&b| b == b':') {
+        Some(pos) => (
+            Some(String::from_utf8_lossy(&name[..pos]).to_string()),
+            String::from_utf8_lossy(&name[pos + 1..]).to_string(),
+        ),
+        None => (None, String::from_utf8_lossy(name).to_string()),
+    };
+    let ns = match prefix {
+        Some(ref p) => {
+            let key = format!("xmlns:{}", p);
+            e.attributes()
+                .flatten()
+                .find(|a| String::from_utf8_lossy(a.key.as_ref()) == key)
+                .map(|a| String::from_utf8_lossy(&a.value).to_string())
+                .unwrap_or_default()
+        }
+        None => e
+            .attributes()
+            .flatten()
+            .find(|a| a.key.as_ref() == b"xmlns")
+            .map(|a| String::from_utf8_lossy(&a.value).to_string())
+            .unwrap_or_default(),
+    };
+    (ns, local)
+}
+
 pub fn parse_propfind_request(xml: &[u8]) -> Result<PropRequest, ParseError> {
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(true);
@@ -372,32 +418,40 @@ pub fn parse_propfind_request(xml: &[u8]) -> Result<PropRequest, ParseError> {
     let mut in_prop = false;
     let mut found_allprop = false;
     let mut found_propname = false;
+    let mut seen_element = false;
 
     loop {
         match reader.read_event()? {
             Event::Start(e) | Event::Empty(e) => {
-                let local = e.local_name();
-                let name = local.as_ref();
+                seen_element = true;
+                let (ns, local) = extract_element_ns(&e);
+                let name = local.as_bytes();
                 match name {
                     b"prop" => in_prop = true,
                     b"allprop" => found_allprop = true,
                     b"propname" => found_propname = true,
                     _ if in_prop => {
-                        props.push(String::from_utf8_lossy(name).to_string());
+                        props.push(clark_key(&ns, &local));
                     }
                     _ => {}
                 }
             }
-            Event::End(e) if e.local_name().as_ref() == b"prop" => {
-                in_prop = false;
+            Event::End(e) => {
+                let local_name = e.local_name();
+                let local = String::from_utf8_lossy(local_name.as_ref());
+                if local == "prop" {
+                    in_prop = false;
+                }
             }
             Event::Eof => break,
             _ => {}
         }
     }
 
-    if found_allprop || props.is_empty() {
+    if found_allprop || (props.is_empty() && !seen_element) {
         Ok(PropRequest::AllProp)
+    } else if props.is_empty() && seen_element {
+        Err(ParseError::InvalidBody("invalid PROPFIND request body"))
     } else if found_propname {
         Ok(PropRequest::PropName)
     } else {
@@ -450,33 +504,32 @@ pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, ParseError> {
     loop {
         match reader.read_event()? {
             Event::Start(e) => {
-                let local = e.local_name();
-                let name = local.as_ref();
-                match name {
-                    b"set" => {
+                let (ns, local) = extract_element_ns(&e);
+                match &*local {
+                    "set" => {
                         in_set = true;
                         found_any = true;
                     }
-                    b"remove" => {
+                    "remove" => {
                         in_remove = true;
                         found_any = true;
                     }
-                    _ if in_set && name != b"prop" => {
-                        current_name = Some(String::from_utf8_lossy(name).to_string());
+                    "prop" => {}
+                    _ if in_set => {
+                        current_name = Some(clark_key(&ns, &local));
                     }
-                    _ if in_remove && name != b"prop" && name != b"set" => {
-                        remove_props.push(String::from_utf8_lossy(name).to_string());
+                    _ if in_remove => {
+                        remove_props.push(clark_key(&ns, &local));
                     }
                     _ => {}
                 }
             }
             Event::Empty(e) => {
-                let local = e.local_name();
-                let name = local.as_ref();
-                if in_remove && name != b"prop" {
-                    remove_props.push(String::from_utf8_lossy(name).to_string());
-                } else if in_set && name != b"prop" {
-                    set_props.insert(String::from_utf8_lossy(name).to_string(), String::new());
+                let (ns, local) = extract_element_ns(&e);
+                if in_remove && local != "prop" {
+                    remove_props.push(clark_key(&ns, &local));
+                } else if in_set && local != "prop" {
+                    set_props.insert(clark_key(&ns, &local), String::new());
                 }
             }
             Event::Text(t) if in_set && current_name.is_some() => {
@@ -484,11 +537,11 @@ pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, ParseError> {
                 set_props.insert(current_name.take().unwrap(), val);
             }
             Event::End(e) => {
-                let local = e.local_name();
-                let name = local.as_ref();
-                match name {
-                    b"set" => in_set = false,
-                    b"remove" => in_remove = false,
+                let local_name = e.local_name();
+                let local = String::from_utf8_lossy(local_name.as_ref());
+                match &*local {
+                    "set" => in_set = false,
+                    "remove" => in_remove = false,
                     _ if in_set && current_name.is_some() => {
                         set_props.insert(current_name.take().unwrap(), String::new());
                     }
@@ -690,5 +743,78 @@ mod tests {
             ],
         };
         assert!(list.has_lock_token());
+    }
+
+    #[test]
+    fn test_clark_key_with_ns() {
+        assert_eq!(
+            clark_key("http://example.com", "prop0"),
+            "{http://example.com}prop0"
+        );
+    }
+
+    #[test]
+    fn test_clark_key_empty_ns() {
+        assert_eq!(clark_key("", "prop0"), "prop0");
+    }
+
+    #[test]
+    fn test_parse_clark_with_ns() {
+        assert_eq!(
+            parse_clark("{http://example.com}prop0"),
+            Some(("http://example.com", "prop0"))
+        );
+    }
+
+    #[test]
+    fn test_parse_clark_empty_ns() {
+        assert_eq!(parse_clark("prop0"), Some(("", "prop0")));
+    }
+
+    #[test]
+    fn test_parse_clark_invalid() {
+        assert_eq!(parse_clark("{broken"), None);
+    }
+
+    #[test]
+    fn test_extract_element_ns_default_ns() {
+        let mut elem = BytesStart::new("prop0");
+        elem.push_attribute(("xmlns", "http://example.com/neon/litmus/"));
+        let (ns, local) = extract_element_ns(&elem);
+        assert_eq!(ns, "http://example.com/neon/litmus/");
+        assert_eq!(local, "prop0");
+    }
+
+    #[test]
+    fn test_extract_element_ns_no_ns() {
+        let elem = BytesStart::new("prop0");
+        let (ns, local) = extract_element_ns(&elem);
+        assert_eq!(ns, "");
+        assert_eq!(local, "prop0");
+    }
+
+    #[test]
+    fn test_extract_element_ns_prefixed() {
+        let mut elem = BytesStart::new("X:prop0");
+        elem.push_attribute(("xmlns:X", "http://example.com/ns"));
+        let (ns, local) = extract_element_ns(&elem);
+        assert_eq!(ns, "http://example.com/ns");
+        assert_eq!(local, "prop0");
+    }
+
+    #[test]
+    fn test_parse_propfind_invalid_xml_returns_error() {
+        let result = parse_propfind_request(b"<foo>");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_proppatch_preserves_namespace() {
+        let xml = br#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><prop0 xmlns="http://example.com/neon/litmus/">value0</prop0></D:prop></D:set></D:propertyupdate>"#;
+        let op = parse_proppatch_request(xml).unwrap();
+        assert_eq!(
+            op.set.get("{http://example.com/neon/litmus/}prop0"),
+            Some(&"value0".to_string())
+        );
     }
 }

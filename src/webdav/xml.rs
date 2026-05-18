@@ -5,7 +5,7 @@ use axum::{body::Body, http::StatusCode, response::Response};
 use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
-use crate::webdav::{PropEntry, PropRequest};
+use crate::webdav::{self, PropEntry, PropRequest};
 
 pub const DAV_PREFIX: &str = "D:";
 const DAV_NS: &str = "DAV:";
@@ -92,12 +92,21 @@ fn write_response(
         PropRequest::Named(names) => {
             let found: Vec<&str> = SUPPORTED_PROPS
                 .iter()
-                .filter(|p| names.iter().any(|n| n == **p))
+                .filter(|p| {
+                    names.iter().any(|n| {
+                        webdav::parse_clark(n)
+                            .map(|(_, l)| l == **p)
+                            .unwrap_or(false)
+                    })
+                })
                 .copied()
                 .collect();
             let missing: Vec<&str> = names
                 .iter()
-                .filter(|n| !SUPPORTED_PROPS.contains(&n.as_str()))
+                .filter(|n| {
+                    let local = webdav::parse_clark(n).map(|(_, l)| l).unwrap_or(n);
+                    !SUPPORTED_PROPS.contains(&local)
+                })
                 .map(|s| s.as_str())
                 .collect();
             (found, missing)
@@ -281,9 +290,12 @@ fn write_propstat_404(writer: &mut Writer<Cursor<Vec<u8>>>, props: &[String]) {
     writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}prop"))));
 
     for prop_name in props {
-        writer.ev(Event::Empty(BytesStart::new(format!(
-            "{DAV_PREFIX}{prop_name}"
-        ))));
+        let (ns, local) = webdav::parse_clark(prop_name).unwrap_or(("", prop_name));
+        let mut elem = BytesStart::new(local);
+        if !ns.is_empty() {
+            elem.push_attribute(("xmlns", ns));
+        }
+        writer.ev(Event::Empty(elem));
     }
 
     writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))));
@@ -384,10 +396,15 @@ fn write_dead_propstat(
     ))));
     writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}prop"))));
 
-    for (name, value) in props {
-        writer.ev(Event::Start(BytesStart::new(name.as_str())));
+    for (clark_key, value) in props {
+        let (ns, local) = webdav::parse_clark(clark_key).unwrap_or(("", clark_key));
+        let mut elem = BytesStart::new(local);
+        if !ns.is_empty() {
+            elem.push_attribute(("xmlns", ns));
+        }
+        writer.ev(Event::Start(elem));
         writer.ev(Event::Text(BytesText::new(value)));
-        writer.ev(Event::End(BytesEnd::new(name.as_str())));
+        writer.ev(Event::End(BytesEnd::new(local)));
     }
 
     writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))));
