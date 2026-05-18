@@ -140,9 +140,7 @@ src/
   and rejects with `423 Locked` unless the request carries a matching condition.
   Expired locks pruned every 30s by background task in `start_server()`; lock enforcement
   filters expired locks lazily via the `active()` helper (`infos.iter().filter(|l| !l.is_expired())`),
-  short-circuiting on first unexpired lock. The `DAV:no-lock` condition follows RFC 4918
-  by default (checking for any unexpired lock); the `litmus-compat` Cargo feature makes
-  `DAV:no-lock` always return `false` to pass litmus test 21.
+  short-circuiting on first unexpired lock.
   `write_activelock` outputs the lock's actual `depth` value (`"0"`, `"1"`, or `"infinity"`)
   for correct litmus depth:infinity lock semantics.
   Locks are ephemeral (lost on restart).
@@ -190,7 +188,6 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 | Conditional If header     | ✅       | Full RFC 4918 §10.4 recursive-descent parser: `Not`, `DAV:no-lock`, resource-tags, AND semantics; `eval_condition` + `evaluate_if` in lock middleware |
 | Collection lock semantics | ✅       | Depth:infinity ancestor chain enforcement in `lock_enforce` + indirect refresh via ancestor lock discovery in `handle_lock`                           |
 | Lock timeout cleanup      | ✅       | Expired locks pruned every 30s by background task; lock enforcement filters expired locks lazily via `active()` iterator (zero-clone, short-circuit)  |
-| `DAV:no-lock` RFC gap     | 🔧       | Default follows RFC 4918 (checks for any unexpired lock). litmus test 21 expects always-fail behavior; `litmus-compat` feature provides workaround    |
 | Dead property persistence | Accepted | In-memory only (`DeadPropertyStore`), lost on restart. Accepted as architectural trade-off; sidecar persistence deferred                              |
 | `getetag` format          | Accepted | Uses mtime+size hex hash (`format!("{:x}-{:x}", mtime_secs, size)`). No inode available on macOS via `std::fs`                                        |
 | HTML directory listing    | Accepted | Single-line HTML output (no indentation). Adequate for browser rendering                                                                              |
@@ -211,22 +208,16 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 
 ### Litmus compliance testing
 
-The [litmus](https://github.com/tolsen/litmus) WebDAV test suite can be run against the server
-to verify protocol compliance. By default, `DAV:no-lock` condition evaluation follows RFC 4918
-(litmus test 21 `fail_cond_put_unlocked` will fail). To pass ALL litmus lock tests, build with
-the `litmus-compat` feature:
+The [litmus](https://github.com/notroj/litmus) WebDAV test suite can be run against the server
+to verify protocol compliance.
 
 ```sh
-# Start server with litmus-compat mode
-cargo run --release --features litmus-compat -- ./docs -vv
+# Start server
+cargo run --release -- ./docs -vv
 
 # Run litmus (from another terminal)
-litmus http://localhost:8080 basic http copymove locks
+TESTS="basic http copymove locks props" TESTROOT=. ./litmus http://localhost:8080
 ```
-
-Without the feature, 35/36 lock tests pass; with it, 36/36 pass.
-The `litmus-compat` feature makes `DAV:no-lock` always evaluate to `false`,
-which is non-RFC-compliant but matches litmus's test expectation.
 
 ## Authentication
 

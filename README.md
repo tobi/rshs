@@ -11,7 +11,7 @@ A lightweight file server with WebDAV support.
 - **Auth**: optional HTTP Basic Auth for access control
 - **TLS/HTTPS**: built-in support for secure connections with custom certs
 - **HTTP/2**: automatic HTTP/2 support when using TLS (ALPN negotiation)
-- **WebDAV conformance**: 35/37 on litmus (94.6%) — basic/http/copymove 100%; 2 litmus 0.14 deviations ([report][litmus-report])
+- **Litmus compliance**: 102/102 (100%) on [litmus](https://github.com/notroj/litmus) 0.17 — all five suites pass ([report](docs/litmus-test-report.md))
 
 ## Installation
 
