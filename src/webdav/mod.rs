@@ -381,7 +381,7 @@ pub fn parse_clark(key: &str) -> Option<(&str, &str)> {
     }
 }
 
-fn extract_element_ns(e: &BytesStart) -> (String, String) {
+fn extract_element_ns(e: &BytesStart) -> Result<(String, String), ParseError> {
     let qname = e.name();
     let name = qname.as_ref();
     let (prefix, local) = match name.iter().position(|&b| b == b':') {
@@ -394,11 +394,22 @@ fn extract_element_ns(e: &BytesStart) -> (String, String) {
     let ns = match prefix {
         Some(ref p) => {
             let key = format!("xmlns:{}", p);
-            e.attributes()
+            let attr = e
+                .attributes()
                 .flatten()
-                .find(|a| String::from_utf8_lossy(a.key.as_ref()) == key)
-                .map(|a| String::from_utf8_lossy(&a.value).to_string())
-                .unwrap_or_default()
+                .find(|a| String::from_utf8_lossy(a.key.as_ref()) == key);
+            match attr {
+                Some(a) => {
+                    let value = String::from_utf8_lossy(&a.value);
+                    if value.is_empty() {
+                        return Err(ParseError::InvalidBody(
+                            "invalid namespace declaration: empty URI",
+                        ));
+                    }
+                    value.to_string()
+                }
+                None => String::new(),
+            }
         }
         None => e
             .attributes()
@@ -407,7 +418,7 @@ fn extract_element_ns(e: &BytesStart) -> (String, String) {
             .map(|a| String::from_utf8_lossy(&a.value).to_string())
             .unwrap_or_default(),
     };
-    (ns, local)
+    Ok((ns, local))
 }
 
 pub fn parse_propfind_request(xml: &[u8]) -> Result<PropRequest, ParseError> {
@@ -424,7 +435,7 @@ pub fn parse_propfind_request(xml: &[u8]) -> Result<PropRequest, ParseError> {
         match reader.read_event()? {
             Event::Start(e) | Event::Empty(e) => {
                 seen_element = true;
-                let (ns, local) = extract_element_ns(&e);
+                let (ns, local) = extract_element_ns(&e)?;
                 let name = local.as_bytes();
                 match name {
                     b"prop" => in_prop = true,
@@ -504,7 +515,7 @@ pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, ParseError> {
     loop {
         match reader.read_event()? {
             Event::Start(e) => {
-                let (ns, local) = extract_element_ns(&e);
+                let (ns, local) = extract_element_ns(&e)?;
                 match &*local {
                     "set" => {
                         in_set = true;
@@ -525,7 +536,7 @@ pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, ParseError> {
                 }
             }
             Event::Empty(e) => {
-                let (ns, local) = extract_element_ns(&e);
+                let (ns, local) = extract_element_ns(&e)?;
                 if in_remove && local != "prop" {
                     remove_props.push(clark_key(&ns, &local));
                 } else if in_set && local != "prop" {
@@ -780,7 +791,7 @@ mod tests {
     fn test_extract_element_ns_default_ns() {
         let mut elem = BytesStart::new("prop0");
         elem.push_attribute(("xmlns", "http://example.com/neon/litmus/"));
-        let (ns, local) = extract_element_ns(&elem);
+        let (ns, local) = extract_element_ns(&elem).unwrap();
         assert_eq!(ns, "http://example.com/neon/litmus/");
         assert_eq!(local, "prop0");
     }
@@ -788,7 +799,7 @@ mod tests {
     #[test]
     fn test_extract_element_ns_no_ns() {
         let elem = BytesStart::new("prop0");
-        let (ns, local) = extract_element_ns(&elem);
+        let (ns, local) = extract_element_ns(&elem).unwrap();
         assert_eq!(ns, "");
         assert_eq!(local, "prop0");
     }
@@ -797,9 +808,16 @@ mod tests {
     fn test_extract_element_ns_prefixed() {
         let mut elem = BytesStart::new("X:prop0");
         elem.push_attribute(("xmlns:X", "http://example.com/ns"));
-        let (ns, local) = extract_element_ns(&elem);
+        let (ns, local) = extract_element_ns(&elem).unwrap();
         assert_eq!(ns, "http://example.com/ns");
         assert_eq!(local, "prop0");
+    }
+
+    #[test]
+    fn test_extract_element_ns_invalid_empty_uri() {
+        let mut elem = BytesStart::new("bar:foo");
+        elem.push_attribute(("xmlns:bar", ""));
+        assert!(extract_element_ns(&elem).is_err());
     }
 
     #[test]

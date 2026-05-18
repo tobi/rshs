@@ -206,6 +206,16 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
         }
     }
 
+    // Migrate dead properties for COPY/MOVE
+    let mut dead_props = state.dead_props.write().await;
+    if let Some(props) = dead_props.remove(&fs_src) {
+        if !is_move {
+            dead_props.insert(fs_src.clone(), props.clone());
+        }
+        dead_props.insert(dest.clone(), props);
+    }
+    drop(dead_props);
+
     tracing::debug!(verb, src = %fs_src.display(), dest = %dest.display(), "completed");
     if dest_existed {
         StatusCode::NO_CONTENT.into_response()

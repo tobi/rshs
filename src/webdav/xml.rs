@@ -130,6 +130,12 @@ fn write_response(
         .collect();
     not_found.extend(missing.iter().map(|p| p.to_string()));
 
+    // Exclude properties that have dead-prop values — they appear in the
+    // 200 dead-propstat below, not here in the 404 section.
+    if let Some(ref dead) = entry.dead_props {
+        not_found.retain(|n| !dead.contains_key(n));
+    }
+
     if !not_found.is_empty() {
         write_propstat_404(writer, &not_found);
     }
