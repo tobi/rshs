@@ -15,7 +15,7 @@ use crate::utils::error::OrStatus;
 use crate::utils::path;
 use crate::webdav::{
     self,
-    xml::{DAV_PREFIX, XmlWriterExt},
+    xml::{XmlWriterExt, dav_qname},
 };
 
 // ---------------------------------------------------------------------------
@@ -336,7 +336,7 @@ fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> Str
         .write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)))
         .unwrap();
 
-    let mut ms = BytesStart::new(format!("{DAV_PREFIX}multistatus"));
+    let mut ms = BytesStart::new(dav_qname("multistatus"));
     ms.push_attribute(("xmlns:D", "DAV:"));
     writer.write_event(Event::Start(ms)).unwrap();
 
@@ -345,9 +345,7 @@ fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> Str
     }
 
     writer
-        .write_event(Event::End(BytesEnd::new(format!(
-            "{DAV_PREFIX}multistatus"
-        ))))
+        .write_event(Event::End(BytesEnd::new(dav_qname("multistatus"))))
         .unwrap();
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
@@ -359,31 +357,29 @@ fn write_proppatch_result(
     prop_name: &str,
     status: &str,
 ) {
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}response"
-    ))));
-    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}href"))));
-    writer.ev(Event::Text(BytesText::new(href)));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}href"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("response"))));
 
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}propstat"
-    ))));
-    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}prop"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("href"))));
+    writer.ev(Event::Text(BytesText::new(href)));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("href"))));
+
+    writer.ev(Event::Start(BytesStart::new(dav_qname("propstat"))));
+
+    writer.ev(Event::Start(BytesStart::new(dav_qname("prop"))));
     let (ns, local) = webdav::parse_clark(prop_name).unwrap_or(("", prop_name));
     let mut elem = BytesStart::new(local);
     if !ns.is_empty() {
         elem.push_attribute(("xmlns", ns));
     }
     writer.ev(Event::Empty(elem));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("prop"))));
 
-    writer.ev(Event::Start(BytesStart::new(format!("{DAV_PREFIX}status"))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("status"))));
     writer.ev(Event::Text(BytesText::new(&format!("HTTP/1.1 {status}"))));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}status"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("status"))));
 
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}propstat"))));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}response"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("propstat"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("response"))));
 }
 
 // ---------------------------------------------------------------------------

@@ -192,6 +192,10 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 | `getetag` format          | Accepted | Uses mtime+size hex hash (`format!("{:x}-{:x}", mtime_secs, size)`). No inode available on macOS via `std::fs`                                        |
 | HTML directory listing    | Accepted | Single-line HTML output (no indentation). Adequate for browser rendering                                                                              |
 
+## TODO
+
+- [ ] **Split `handle_lock`** (`src/handlers/locks.rs:76-170`): 170-line function with depth-4 nesting. Extract `check_existing_exclusive`, `try_acquire_exclusive`, `try_acquire_shared`, and `ensure_lock_null_resource` sub-functions. Also consolidate 5 repeated `drop(locks); return StatusCode::LOCKED` patterns.
+
 ## Conventions
 
 - Standard Rust conventions; no custom formatter or lint config overrides

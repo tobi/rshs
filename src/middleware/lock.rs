@@ -81,21 +81,10 @@ fn is_path_locked(
         return true;
     }
 
-    let mut current = path.parent();
-    while let Some(parent) = current {
-        if !parent.starts_with(root_canonical) {
-            break;
-        }
-        if let Some(infos) = locks.get(parent) {
-            if active_lock(infos).any(|l| l.depth == Depth::Infinity)
-                && !evaluate_if(lists, infos, request_path)
-            {
-                return true;
-            }
-        }
-        current = parent.parent();
-    }
-    false
+    webdav::walk_locked_ancestors(locks, path, root_canonical, |infos| {
+        active_lock(infos).any(|l| l.depth == Depth::Infinity)
+            && !evaluate_if(lists, infos, request_path)
+    })
 }
 
 fn eval_condition(cond: &IfCondition, infos: &[LockInfo]) -> bool {

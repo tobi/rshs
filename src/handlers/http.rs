@@ -77,19 +77,35 @@ async fn do_get_or_head(fs_path: PathBuf, request_path: String, method: &Method)
     }
 }
 
-async fn generate_dir_listing(dir_path: &Path, request_path: &str) -> (String, usize) {
-    let mut read_dir = match tokio::fs::read_dir(dir_path).await {
-        Ok(rd) => rd,
-        Err(_) => {
-            return (
-                "<!DOCTYPE html><html><head><title>Error</title></head><body><h1>Cannot read directory</h1></body></html>"
-                    .to_string(),
-                0,
-            );
-        }
-    };
+struct DirEntry {
+    name: String,
+    is_dir: bool,
+    size: u64,
+    modified: SystemTime,
+}
 
-    let mut entries: Vec<(String, bool, u64, SystemTime)> = Vec::new();
+impl DirEntry {
+    fn display_name(&self) -> String {
+        if self.is_dir {
+            format!("{}/", self.name)
+        } else {
+            self.name.clone()
+        }
+    }
+
+    fn size_label(&self) -> String {
+        if self.is_dir {
+            "-".to_string()
+        } else {
+            self.size.to_string()
+        }
+    }
+}
+
+async fn collect_dir_entries(dir_path: &Path) -> Option<Vec<DirEntry>> {
+    let mut read_dir = tokio::fs::read_dir(dir_path).await.ok()?;
+
+    let mut entries = Vec::new();
     loop {
         let entry = match read_dir.next_entry().await {
             Ok(Some(e)) => e,
@@ -104,65 +120,80 @@ async fn generate_dir_listing(dir_path: &Path, request_path: &str) -> (String, u
             .as_ref()
             .and_then(|m| m.modified().ok())
             .unwrap_or(UNIX_EPOCH);
-        entries.push((name, is_dir, size, modified));
+        entries.push(DirEntry {
+            name,
+            is_dir,
+            size,
+            modified,
+        });
     }
+    Some(entries)
+}
 
-    entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+fn render_dir_html(request_path: &str, entries: &[DirEntry]) -> (String, usize) {
+    let mut entries: Vec<_> = entries.iter().collect();
+    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
 
-    let display = |e: &(String, bool, u64, SystemTime)| {
-        if e.1 {
-            format!("{}/", e.0)
-        } else {
-            e.0.clone()
-        }
-    };
-
-    let size_label = |e: &(String, bool, u64, SystemTime)| {
-        if e.1 {
-            "-".to_string()
-        } else {
-            e.2.to_string()
-        }
-    };
-
-    let max_name_len = entries.iter().map(|e| display(e).len()).max().unwrap_or(0);
+    let max_name_len = entries
+        .iter()
+        .map(|e| e.display_name().len())
+        .max()
+        .unwrap_or(0);
     let max_size_len = entries
         .iter()
-        .map(|e| size_label(e).len())
+        .map(|e| e.size_label().len())
         .max()
         .unwrap_or(0);
     let name_col = max_name_len + 20;
 
+    use std::fmt::Write;
     let mut html = String::new();
-    html.push_str("<!DOCTYPE html><html><head>");
-    html.push_str(&format!("<title>Index of {request_path}</title>"));
-    html.push_str("<meta charset=\"utf-8\"></head><body>");
-    html.push_str(&format!("<h1>Index of {request_path}</h1><hr><pre>"));
+    write!(
+        html,
+        "<!DOCTYPE html><html><head><title>Index of {request_path}</title><meta charset=\"utf-8\"></head><body><h1>Index of {request_path}</h1><hr><pre>"
+    )
+    .unwrap();
     if request_path != "/" {
         html.push_str("<a href=\"../\">../</a>");
     }
 
     for entry in &entries {
-        let disp = display(entry);
-        let size_str = size_label(entry);
-        let date_str = format_rfc850(entry.3);
+        let disp = entry.display_name();
+        let size_str = entry.size_label();
+        let date_str = format_rfc850(entry.modified);
         let pad1 = name_col.saturating_sub(disp.len());
 
-        let anchor = if entry.1 {
-            format!("<a href=\"{}/\">{}/</a>", entry.0, entry.0)
+        let anchor = if entry.is_dir {
+            format!("<a href=\"{}/\">{}/</a>", entry.name, entry.name)
         } else {
-            format!("<a href=\"{}\">{}</a>", entry.0, entry.0)
+            format!("<a href=\"{}\">{}</a>", entry.name, entry.name)
         };
 
-        html.push_str(&format!(
+        write!(
+            html,
             "{anchor}{:pad1$}{date_str}    {:>max_size_len$}",
             "", size_str
-        ));
+        )
+        .unwrap();
     }
 
     let entry_count = entries.len();
     html.push_str("</pre><hr></body></html>");
     (html, entry_count)
+}
+
+async fn generate_dir_listing(dir_path: &Path, request_path: &str) -> (String, usize) {
+    let entries = match collect_dir_entries(dir_path).await {
+        Some(entries) => entries,
+        None => {
+            return (
+                "<!DOCTYPE html><html><head><title>Error</title></head><body><h1>Cannot read directory</h1></body></html>"
+                    .to_string(),
+                0,
+            );
+        }
+    };
+    render_dir_html(request_path, &entries)
 }
 
 // ---------------------------------------------------------------------------

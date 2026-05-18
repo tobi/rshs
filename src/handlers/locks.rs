@@ -13,7 +13,7 @@ use crate::server::AppState;
 use crate::utils::error::OrStatus;
 use crate::webdav::{
     self,
-    xml::{DAV_PREFIX, XmlWriterExt, write_activelock},
+    xml::{XmlWriterExt, dav_qname, write_activelock},
 };
 
 // ---------------------------------------------------------------------------
@@ -268,20 +268,16 @@ fn parse_lock_body(xml: &[u8]) -> (Option<String>, webdav::LockScope) {
 fn build_lock_response(lock: &webdav::LockInfo) -> String {
     let mut writer = Writer::new(Cursor::new(Vec::new()));
 
-    let mut prop = BytesStart::new(format!("{DAV_PREFIX}prop"));
+    let mut prop = BytesStart::new(dav_qname("prop"));
     prop.push_attribute(("xmlns:D", "DAV:"));
     writer.ev(Event::Start(prop));
 
-    writer.ev(Event::Start(BytesStart::new(format!(
-        "{DAV_PREFIX}lockdiscovery"
-    ))));
+    writer.ev(Event::Start(BytesStart::new(dav_qname("lockdiscovery"))));
 
     write_activelock(&mut writer, lock);
 
-    writer.ev(Event::End(BytesEnd::new(format!(
-        "{DAV_PREFIX}lockdiscovery"
-    ))));
-    writer.ev(Event::End(BytesEnd::new(format!("{DAV_PREFIX}prop"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("lockdiscovery"))));
+    writer.ev(Event::End(BytesEnd::new(dav_qname("prop"))));
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
