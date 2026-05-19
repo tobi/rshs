@@ -10,7 +10,9 @@ use futures_util::TryStreamExt;
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::{ReaderStream, StreamReader};
 
+use crate::ok_or_return;
 use crate::server::AppState;
+use crate::utils::error::OrStatus;
 use crate::utils::time::format_rfc850;
 
 pub use axum::http::Method;
@@ -22,25 +24,15 @@ pub use axum::http::Method;
 pub async fn handle_get_head(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
-    let fs_path = match state.resolve_existing(&request_path).await {
-        Some(p) => p,
-        None => {
-            tracing::debug!("path resolution failed");
-            return StatusCode::NOT_FOUND.into_response();
-        }
-    };
+    let fs_path = state.resolve_existing(&request_path).await;
+    let fs_path = ok_or_return!(fs_path.or_404("path resolution failed"));
 
     do_get_or_head(fs_path, request_path, req.method()).await
 }
 
 async fn do_get_or_head(fs_path: PathBuf, request_path: String, method: &Method) -> Response {
-    let meta = match tokio::fs::metadata(&fs_path).await {
-        Ok(m) => m,
-        Err(_) => {
-            tracing::debug!("metadata failed");
-            return StatusCode::NOT_FOUND.into_response();
-        }
-    };
+    let meta = tokio::fs::metadata(&fs_path).await;
+    let meta = ok_or_return!(meta.or_404("metadata failed for GET/HEAD"));
 
     if meta.is_dir() {
         let (html, entry_count) = generate_dir_listing(&fs_path, &request_path).await;
@@ -264,21 +256,11 @@ pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Res
 pub async fn handle_delete(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
-    let fs_path = match state.resolve_existing(&request_path).await {
-        Some(p) => p,
-        None => {
-            tracing::debug!("path resolution failed for DELETE");
-            return StatusCode::NOT_FOUND.into_response();
-        }
-    };
+    let fs_path = state.resolve_existing(&request_path).await;
+    let fs_path = ok_or_return!(fs_path.or_404("path resolution failed for DELETE"));
 
-    let meta = match tokio::fs::metadata(&fs_path).await {
-        Ok(m) => m,
-        Err(_) => {
-            tracing::debug!("metadata failed for DELETE");
-            return StatusCode::NOT_FOUND.into_response();
-        }
-    };
+    let meta = tokio::fs::metadata(&fs_path).await;
+    let meta = ok_or_return!(meta.or_404("metadata failed for DELETE"));
 
     if meta.is_dir() {
         if fs_path == state.root_canonical {

@@ -23,10 +23,8 @@ use crate::webdav::{
 pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().trim_end_matches('/').to_owned();
 
-    let target = match state.resolve_and_guard(&request_path).await {
-        Ok(t) => t,
-        Err(e) => return e.status(StatusCode::FORBIDDEN).into_response(),
-    };
+    let target = state.resolve_and_guard(&request_path).await;
+    let target = ok_or_return!(target.or_403("failed to resolve LOCK target"));
 
     let timeout = webdav::parse_timeout(req.headers());
     let depth = webdav::parse_depth(req.headers());
@@ -36,11 +34,8 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
         .flat_map(|e| e.positive_tokens_iter())
         .map(|t| t.to_string())
         .collect();
-    let body_bytes = ok_or_return!(
-        body::to_bytes(req.into_body(), 65536)
-            .await
-            .or_400("failed to read LOCK body")
-    );
+    let body_bytes = body::to_bytes(req.into_body(), 65536).await;
+    let body_bytes = ok_or_return!(body_bytes.or_400("failed to read LOCK body"));
 
     let (owner, lock_scope) = parse_lock_body(&body_bytes);
 
@@ -116,15 +111,12 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
 
 pub async fn handle_unlock(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
-    let token = match webdav::parse_lock_token_header(req.headers()) {
-        Some(t) => t,
-        None => return StatusCode::BAD_REQUEST.into_response(),
-    };
 
-    let fs_path = match state.resolve_existing(&request_path).await {
-        Some(p) => p,
-        None => return StatusCode::NOT_FOUND.into_response(),
-    };
+    let token = webdav::parse_lock_token_header(req.headers());
+    let token = ok_or_return!(token.or_400("missing or invalid lock-token header for UNLOCK"));
+
+    let fs_path = state.resolve_existing(&request_path).await;
+    let fs_path = ok_or_return!(fs_path.or_404("resource not found for UNLOCK"));
 
     let mut locks = state.locks.write().await;
     if let Some(entry) = locks.get_mut(&fs_path) {
@@ -206,6 +198,7 @@ fn build_lock_response(lock: &webdav::LockInfo) -> String {
 
 async fn ensure_lock_null_resource(target: &std::path::Path) -> Result<(), StatusCode> {
     if tokio::fs::metadata(target).await.is_ok() {
+        tracing::debug!(path = %target.display(), "lock-null resource already exists");
         return Ok(());
     }
 

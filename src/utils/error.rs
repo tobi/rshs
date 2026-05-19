@@ -11,41 +11,71 @@ use axum::response::{IntoResponse, Response};
 ///   5xx codes → `error!` (server error, requires attention)
 #[allow(clippy::result_large_err)]
 pub trait OrStatus<T> {
-    fn or_400(self, msg: &str) -> Result<T, Response>;
-    fn or_404(self, msg: &str) -> Result<T, Response>;
-    fn or_409(self, msg: &str) -> Result<T, Response>;
-    fn or_500(self, msg: &str) -> Result<T, Response>;
-    fn or_503(self, msg: &str) -> Result<T, Response>;
     fn or_status(self, status: StatusCode, msg: &str) -> Result<T, Response>;
-}
 
-impl<T, E: Display> OrStatus<T> for Result<T, E> {
-    fn or_400(self, msg: &str) -> Result<T, Response> {
+    fn or_400(self, msg: &str) -> Result<T, Response>
+    where
+        Self: Sized,
+    {
         self.or_status(StatusCode::BAD_REQUEST, msg)
     }
 
-    fn or_404(self, msg: &str) -> Result<T, Response> {
+    fn or_403(self, msg: &str) -> Result<T, Response>
+    where
+        Self: Sized,
+    {
+        self.or_status(StatusCode::FORBIDDEN, msg)
+    }
+
+    fn or_404(self, msg: &str) -> Result<T, Response>
+    where
+        Self: Sized,
+    {
         self.or_status(StatusCode::NOT_FOUND, msg)
     }
 
-    fn or_409(self, msg: &str) -> Result<T, Response> {
+    fn or_409(self, msg: &str) -> Result<T, Response>
+    where
+        Self: Sized,
+    {
         self.or_status(StatusCode::CONFLICT, msg)
     }
 
-    fn or_500(self, msg: &str) -> Result<T, Response> {
+    fn or_500(self, msg: &str) -> Result<T, Response>
+    where
+        Self: Sized,
+    {
         self.or_status(StatusCode::INTERNAL_SERVER_ERROR, msg)
     }
 
-    fn or_503(self, msg: &str) -> Result<T, Response> {
+    fn or_503(self, msg: &str) -> Result<T, Response>
+    where
+        Self: Sized,
+    {
         self.or_status(StatusCode::SERVICE_UNAVAILABLE, msg)
     }
+}
 
+impl<T, E: Display> OrStatus<T> for Result<T, E> {
     fn or_status(self, status: StatusCode, msg: &str) -> Result<T, Response> {
         self.map_err(|e| {
             if status.is_server_error() {
                 tracing::error!(error = %e, "{msg}");
             } else {
                 tracing::debug!(error = %e, "{msg}");
+            }
+            status.into_response()
+        })
+    }
+}
+
+impl<T> OrStatus<T> for Option<T> {
+    fn or_status(self, status: StatusCode, msg: &str) -> Result<T, Response> {
+        self.ok_or_else(|| {
+            if status.is_server_error() {
+                tracing::error!("{msg}");
+            } else {
+                tracing::debug!("{msg}");
             }
             status.into_response()
         })

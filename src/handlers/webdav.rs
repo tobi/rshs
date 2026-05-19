@@ -26,19 +26,12 @@ pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -
     let depth = webdav::parse_depth(req.headers());
     let request_path = req.uri().path().to_owned();
 
-    let fs_path = match state.resolve_existing(&request_path).await {
-        Some(p) => p,
-        None => {
-            tracing::debug!("path resolution failed for PROPFIND");
-            return StatusCode::NOT_FOUND.into_response();
-        }
-    };
+    let fs_path = state.resolve_existing(&request_path).await;
+    let fs_path = ok_or_return!(fs_path.or_404("path resolution failed for PROPFIND"));
 
-    let body_bytes = ok_or_return!(
-        body::to_bytes(req.into_body(), 65536)
-            .await
-            .or_400("failed to read PROPFIND body")
-    );
+    let body_bytes = body::to_bytes(req.into_body(), 65536).await;
+    let body_bytes = ok_or_return!(body_bytes.or_400("failed to read PROPFIND body"));
+
     let prop_request = ok_or_return!(
         webdav::parse_propfind_request(&body_bytes).or_400("failed to parse PROPFIND request")
     );
@@ -132,17 +125,14 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
     };
     let src_path = req.uri().path().to_owned();
 
-    let fs_src = match state.resolve_existing(&src_path).await {
-        Some(p) => p,
-        None => return StatusCode::NOT_FOUND.into_response(),
-    };
+    let fs_src = state.resolve_existing(&src_path).await;
+    let fs_src = ok_or_return!(fs_src.or_404("source not found"));
 
-    let fs_dest = match state.resolve_write_target(&dest_str) {
-        Some(p) => p,
-        None => return StatusCode::FORBIDDEN.into_response(),
-    };
+    let fs_dest = state.resolve_write_target(&dest_str);
+    let fs_dest = ok_or_return!(fs_dest.or_403("invalid destination path"));
 
     if fs_src == fs_dest {
+        tracing::debug!(verb, "source and destination are the same");
         return StatusCode::FORBIDDEN.into_response();
     }
 
@@ -164,10 +154,8 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
         return StatusCode::PRECONDITION_FAILED.into_response();
     }
 
-    let meta = match tokio::fs::metadata(&fs_src).await {
-        Ok(m) => m,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
-    };
+    let meta = tokio::fs::metadata(&fs_src).await;
+    let meta = ok_or_return!(meta.or_404("source not found for COPY/MOVE"));
 
     // Type-incompatible overwrite with Overwrite:T — clean up target first
     if overwrite && dest_existed {
@@ -217,6 +205,7 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
     drop(dead_props);
 
     tracing::debug!(verb, src = %fs_src.display(), dest = %dest.display(), "completed");
+
     if dest_existed {
         StatusCode::NO_CONTENT.into_response()
     } else {
@@ -268,7 +257,9 @@ async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), Res
                 continue;
             } else {
                 tokio::fs::copy(entry.path(), &entry_dest).await.map_err(|e| {
-                    tracing::error!(error = %e, src = %entry.path().display(), dest = %entry_dest.display(), "copy file failed");
+                    tracing::error!(
+                        error = %e, src = %entry.path().display(), dest = %entry_dest.display(), "copy file failed"
+                    );
                     StatusCode::INTERNAL_SERVER_ERROR.into_response()
                 })?;
             }
@@ -284,19 +275,11 @@ async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), Res
 pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
-    let fs_path = match state.resolve_existing(&request_path).await {
-        Some(p) => p,
-        None => {
-            tracing::debug!("path resolution failed for PROPPATCH");
-            return StatusCode::NOT_FOUND.into_response();
-        }
-    };
+    let fs_path = state.resolve_existing(&request_path).await;
+    let fs_path = ok_or_return!(fs_path.or_404("path resolution failed for PROPPATCH"));
 
-    let body_bytes = ok_or_return!(
-        body::to_bytes(req.into_body(), 65536)
-            .await
-            .or_400("failed to read PROPPATCH body")
-    );
+    let body_bytes = body::to_bytes(req.into_body(), 65536).await;
+    let body_bytes = ok_or_return!(body_bytes.or_400("failed to read PROPPATCH body"));
 
     let op = ok_or_return!(
         webdav::parse_proppatch_request(&body_bytes).or_400("failed to parse PROPPATCH request")
@@ -322,7 +305,9 @@ pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) 
 
     let xml = build_proppatch_response(&request_path, &op);
 
-    tracing::debug!(path = %fs_path.display(), set = set_count, remove = remove_count, "PROPPATCH completed");
+    tracing::debug!(
+        path = %fs_path.display(), set = set_count, remove = remove_count, "PROPPATCH completed"
+    );
 
     drop(dead_props);
 
@@ -332,21 +317,19 @@ pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) 
 fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> String {
     let mut writer = Writer::new(Cursor::new(Vec::new()));
 
-    writer
-        .write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)))
-        .unwrap();
+    writer.ev(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
 
     let mut ms = BytesStart::new(dav_qname("multistatus"));
+
     ms.push_attribute(("xmlns:D", "DAV:"));
-    writer.write_event(Event::Start(ms)).unwrap();
+
+    writer.ev(Event::Start(ms));
 
     for action in &op.actions {
         write_proppatch_result(&mut writer, request_path, &action.name, "200 OK");
     }
 
-    writer
-        .write_event(Event::End(BytesEnd::new(dav_qname("multistatus"))))
-        .unwrap();
+    writer.ev(Event::End(BytesEnd::new(dav_qname("multistatus"))));
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
