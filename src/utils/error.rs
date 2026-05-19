@@ -11,7 +11,9 @@ use axum::response::{IntoResponse, Response};
 ///   5xx codes → `error!` (server error, requires attention)
 #[allow(clippy::result_large_err)]
 pub trait OrStatus<T> {
-    fn or_status(self, status: StatusCode, msg: &str) -> Result<T, Response>;
+    fn or_status(self, status: StatusCode, msg: &str) -> Result<T, Response>
+    where
+        Self: Sized;
 
     fn or_400(self, msg: &str) -> Result<T, Response>
     where
