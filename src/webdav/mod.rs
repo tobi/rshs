@@ -755,8 +755,22 @@ mod tests {
                 IfCondition::StateToken("t3".into()),
             ],
         };
-        let tokens: Vec<&str> = list.positive_tokens_iter().collect();
+        let tokens = list.positive_tokens();
         assert_eq!(tokens, vec!["t1", "t3"]);
+    }
+
+    #[test]
+    fn test_positive_tokens_iter() {
+        let list = IfList {
+            resource_tag: None,
+            conditions: vec![
+                IfCondition::StateToken("t1".into()),
+                IfCondition::Not(Box::new(IfCondition::StateToken("t2".into()))),
+                IfCondition::StateToken("t3".into()),
+            ],
+        };
+        let tokens = list.positive_tokens_iter();
+        assert_eq!(tokens.collect::<Vec<_>>(), vec!["t1", "t3"]);
     }
 
     #[test]
