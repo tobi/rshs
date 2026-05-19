@@ -23,8 +23,13 @@ use crate::webdav::{
 pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().trim_end_matches('/').to_owned();
 
-    let target = state.resolve_and_guard(&request_path).await;
-    let target = ok_or_return!(target.or_403("failed to resolve LOCK target"));
+    let target = match state.resolve_and_guard(&request_path).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::debug!(error = %e, "path resolution failed for LOCK");
+            return e.status(StatusCode::FORBIDDEN).into_response();
+        }
+    };
 
     let timeout = webdav::parse_timeout(req.headers());
     let depth = webdav::parse_depth(req.headers());

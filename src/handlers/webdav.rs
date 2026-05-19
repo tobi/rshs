@@ -12,7 +12,6 @@ use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use crate::ok_or_return;
 use crate::server::AppState;
 use crate::utils::error::OrStatus;
-use crate::utils::path;
 use crate::webdav::{
     self,
     xml::{XmlWriterExt, dav_qname},
@@ -138,14 +137,10 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
 
     let dest = match state.resolve_and_guard(&dest_str).await {
         Ok(t) => t,
-        Err(path::ResolveTargetError::ParentCanonicalizeFailed(_)) => {
-            tracing::debug!("dest parent not found for COPY/MOVE");
-            return StatusCode::CONFLICT.into_response();
+        Err(e) => {
+            tracing::debug!(error = %e, "path resolution failed for {verb}");
+            return e.status(StatusCode::BAD_REQUEST).into_response();
         }
-        Err(path::ResolveTargetError::TraversalBlocked) => {
-            return StatusCode::FORBIDDEN.into_response();
-        }
-        _ => unreachable!(),
     };
     let mut dest_existed = tokio::fs::metadata(&dest).await.is_ok();
 
