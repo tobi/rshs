@@ -34,7 +34,7 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
     let if_entries = webdav::parse_if_header(req.headers());
     let if_tokens: Vec<String> = if_entries
         .iter()
-        .flat_map(|e| e.positive_tokens())
+        .flat_map(|e| e.positive_tokens_iter())
         .map(|t| t.to_string())
         .collect();
     let body_bytes = ok_or_return!(
@@ -96,15 +96,8 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
             // Exclusive requested, no exclusive exists — check for shared conflict
             // Exclusive cannot coexist with any shared locks
             if !entry.is_empty() {
-                // Shared locks exist — only allow if token matches one of them (upgrade?)
-                // RFC 4918: shared locks don't block exclusive from same owner...
-                // Actually, shared locks block exclusive regardless
-                // But wait, if tokens match one of the shared locks, is that ok?
-                // Per RFC 4918, any existing lock blocks a conflicting new lock
-                // unless the request carries matching tokens for ALL existing locks
-                // For simplicity: if shared locks exist, reject exclusive unless
-                // the request carries a token that unlocks all shared locks
-                // (unlock + relock scenario)
+                // if shared locks exist, reject exclusive unless the request carries
+                //a token that unlocks all shared locks (unlock + relock scenario)
                 let all_owned = entry.iter().all(|l| if_tokens.contains(&l.token));
                 if all_owned {
                     // Request carries tokens for all existing shared locks —
@@ -119,7 +112,9 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
                 let file_existed = tokio::fs::metadata(&target).await.is_ok();
                 if !file_existed {
                     if let Err(e) = tokio::fs::File::create(&target).await {
-                        tracing::error!(error = %e, path = %target.display(), "failed to create lock-null resource");
+                        tracing::error!(
+                        error = %e, path = %target.display(), "failed to create lock-null resource"
+                        );
                         drop(locks);
                         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
                     }
@@ -159,7 +154,9 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
                 let file_existed = tokio::fs::metadata(&target).await.is_ok();
                 if !file_existed {
                     if let Err(e) = tokio::fs::File::create(&target).await {
-                        tracing::error!(error = %e, path = %target.display(), "failed to create lock-null resource");
+                        tracing::error!(
+                            error = %e, path = %target.display(), "failed to create lock-null resource"
+                        );
                         drop(locks);
                         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
                     }
