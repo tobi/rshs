@@ -215,7 +215,7 @@ async fn ensure_lock_null_resource(target: &std::path::Path) -> Result<(), Statu
             tracing::error!(
                 error = %e, path = %target.display(), "failed to create lock-null resource"
             );
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }
