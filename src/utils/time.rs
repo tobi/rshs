@@ -77,6 +77,7 @@ pub fn format_rfc3339(st: SystemTime) -> String {
 
     format!("{year:04}-{month:02}-{day:02}T{hours:02}:{mins:02}:{secs:02}Z")
 }
+
 /// Days-since-Unix-epoch to (year, month, day).
 ///
 /// Howard Hinnant's `civil_from_days` algorithm — a branchless calendar
@@ -99,4 +100,88 @@ fn civil_from_days(z: i32) -> (i32, u32, u32) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     (y as i32, m as u32, d as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn unix_epoch() -> SystemTime {
+        UNIX_EPOCH
+    }
+
+    fn timestamp(secs: u64) -> SystemTime {
+        UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    #[test]
+    fn test_civil_from_days_epoch() {
+        let (y, m, d) = civil_from_days(0);
+        assert_eq!((y, m, d), (1970, 1, 1));
+    }
+
+    #[test]
+    fn test_civil_from_days_known_date() {
+        // 2000-01-01 = 10957 days after 1970-01-01
+        let (y, m, d) = civil_from_days(10957);
+        assert_eq!((y, m, d), (2000, 1, 1));
+    }
+
+    #[test]
+    fn test_civil_from_days_epoch_plus_one_year() {
+        let (y, m, d) = civil_from_days(365);
+        assert_eq!((y, m, d), (1971, 1, 1));
+    }
+
+    #[test]
+    fn test_civil_from_days_feb_29_in_leap_year() {
+        // 1972-02-29 = 789 days after epoch (1970+1971 + jan1972 + 28 days of feb)
+        let (y, m, d) = civil_from_days(789);
+        assert_eq!((y, m, d), (1972, 2, 29));
+    }
+
+    #[test]
+    fn test_format_rfc3339_epoch() {
+        let s = format_rfc3339(unix_epoch());
+        assert_eq!(s, "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn test_format_rfc3339_known_date() {
+        let s = format_rfc3339(timestamp(1716134400));
+        assert_eq!(s, "2024-05-19T16:00:00Z");
+    }
+
+    #[test]
+    fn test_format_rfc1123_epoch() {
+        let s = format_rfc1123(unix_epoch());
+        assert_eq!(s, "Thu, 01 Jan 1970 00:00:00 GMT");
+    }
+
+    #[test]
+    fn test_format_rfc1123_known_date() {
+        let s = format_rfc1123(timestamp(1716134400));
+        assert_eq!(s, "Sun, 19 May 2024 16:00:00 GMT");
+    }
+
+    #[test]
+    fn test_format_rfc850_epoch() {
+        let s = format_rfc850(unix_epoch());
+        assert_eq!(s, "01-Jan-1970 00:00");
+    }
+
+    #[test]
+    fn test_format_rfc850_known_date() {
+        let s = format_rfc850(timestamp(1716134400));
+        assert_eq!(s, "19-May-2024 16:00");
+    }
+
+    #[test]
+    fn test_format_before_epoch_returns_empty() {
+        let before = UNIX_EPOCH - Duration::from_secs(86400);
+        assert_eq!(format_rfc3339(before), "");
+        assert_eq!(format_rfc1123(before), "");
+        assert_eq!(format_rfc850(before), "");
+    }
 }
