@@ -10,7 +10,7 @@ use quick_xml::events::{BytesEnd, BytesStart, Event};
 
 use crate::ok_or_return;
 use crate::server::AppState;
-use crate::utils::error::OrStatus;
+use crate::utils::error::{IntoResolved, OrStatus};
 use crate::webdav::{
     self,
     xml::{XmlWriterExt, dav_qname, write_activelock},
@@ -23,13 +23,8 @@ use crate::webdav::{
 pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().trim_end_matches('/').to_owned();
 
-    let target = match state.resolve_and_guard(&request_path).await {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::debug!(error = %e, "path resolution failed for LOCK");
-            return e.status(StatusCode::FORBIDDEN).into_response();
-        }
-    };
+    let target = state.resolve_and_guard(&request_path).await;
+    let target = ok_or_return!(target.or_invalid(StatusCode::FORBIDDEN));
 
     let timeout = webdav::parse_timeout(req.headers());
     let depth = webdav::parse_depth(req.headers());

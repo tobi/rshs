@@ -11,7 +11,7 @@ use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
 use crate::ok_or_return;
 use crate::server::AppState;
-use crate::utils::error::OrStatus;
+use crate::utils::error::{IntoResolved, OrStatus};
 use crate::webdav::{
     self,
     xml::{XmlWriterExt, dav_qname},
@@ -73,13 +73,8 @@ pub async fn handle_mkcol(State(state): State<Arc<AppState>>, req: Request) -> R
     // MKCOL accepts trailing slashes per WebDAV client convention (e.g. litmus)
     let request_path = req.uri().path().trim_end_matches('/').to_owned();
 
-    let target = match state.resolve_and_guard(&request_path).await {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::debug!(error = %e, "path resolution failed for MKCOL");
-            return e.status(StatusCode::FORBIDDEN).into_response();
-        }
-    };
+    let target = state.resolve_and_guard(&request_path).await;
+    let target = ok_or_return!(target.or_invalid(StatusCode::FORBIDDEN));
 
     if tokio::fs::metadata(&target).await.is_ok() {
         tracing::debug!(path = %target.display(), "MKCOL target already exists");
@@ -135,13 +130,8 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
         return StatusCode::FORBIDDEN.into_response();
     }
 
-    let dest = match state.resolve_and_guard(&dest_str).await {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::debug!(error = %e, "path resolution failed for {verb}");
-            return e.status(StatusCode::BAD_REQUEST).into_response();
-        }
-    };
+    let dest = state.resolve_and_guard(&dest_str).await;
+    let dest = ok_or_return!(dest.or_invalid(StatusCode::BAD_REQUEST));
     let mut dest_existed = tokio::fs::metadata(&dest).await.is_ok();
 
     if dest_existed && !overwrite {

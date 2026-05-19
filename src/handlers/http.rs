@@ -12,7 +12,7 @@ use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::ok_or_return;
 use crate::server::AppState;
-use crate::utils::error::OrStatus;
+use crate::utils::error::{IntoResolved, OrStatus};
 use crate::utils::time::format_rfc850;
 
 pub use axum::http::Method;
@@ -196,13 +196,8 @@ pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Res
     let request_path = req.uri().path().to_owned();
 
     // PUT MUST NOT create intermediate collections (RFC 4918 §9.6)
-    let target = match state.resolve_and_guard(&request_path).await {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::debug!(error = %e, "path resolution failed for PUT");
-            return e.status(StatusCode::BAD_REQUEST).into_response();
-        }
-    };
+    let target = state.resolve_and_guard(&request_path).await;
+    let target = ok_or_return!(target.or_invalid(StatusCode::BAD_REQUEST));
 
     let existed = match tokio::fs::metadata(&target).await {
         Ok(m) => m.is_file(),
