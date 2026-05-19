@@ -151,6 +151,11 @@ src/
   CLI credentials (`--user`) can be merged in and optionally written back to disk.
 - **TLS**: `TlsListener` implements `axum::serve::Listener` wrapping a `tokio-rustls` acceptor.
   Both HTTP and HTTPS branches call `axum::serve(listener, router)` — fully symmetric.
+- **Semantic completeness**: Trait methods are provided for all status codes with defined
+  semantics (`or_400`, `or_404`, `or_409`, `or_500`, `or_503` + generic `or_status`),
+  even if not all are currently invoked. `or_status` auto-selects log level based on
+  `is_server_error()` (4xx → `debug!`, 5xx → `error!`). Handlers should use these methods
+  instead of ad-hoc `StatusCode::X.into_response()` calls.
 
 ### Supported Methods
 
