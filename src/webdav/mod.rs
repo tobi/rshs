@@ -1,26 +1,18 @@
 pub mod fs;
+pub mod method;
 pub mod xml;
 
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::LazyLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use axum::http::{HeaderMap, Method as HttpMethod};
+use axum::http::HeaderMap;
 use percent_encoding::percent_decode_str;
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
-type Method = LazyLock<HttpMethod>;
-
-pub static M_PROPFIND: Method = LazyLock::new(|| HttpMethod::from_bytes(b"PROPFIND").unwrap());
-pub static M_MKCOL: Method = LazyLock::new(|| HttpMethod::from_bytes(b"MKCOL").unwrap());
-pub static M_COPY: Method = LazyLock::new(|| HttpMethod::from_bytes(b"COPY").unwrap());
-pub static M_MOVE: Method = LazyLock::new(|| HttpMethod::from_bytes(b"MOVE").unwrap());
-pub static M_PROPPATCH: Method = LazyLock::new(|| HttpMethod::from_bytes(b"PROPPATCH").unwrap());
-pub static M_LOCK: Method = LazyLock::new(|| HttpMethod::from_bytes(b"LOCK").unwrap());
-pub static M_UNLOCK: Method = LazyLock::new(|| HttpMethod::from_bytes(b"UNLOCK").unwrap());
+pub use method::Method;
 
 pub type DeadPropertyStore = HashMap<PathBuf, HashMap<String, String>>;
 

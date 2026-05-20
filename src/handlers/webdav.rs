@@ -360,12 +360,12 @@ mod tests {
     use std::sync::Arc;
 
     use axum::extract::State;
-    use axum::http::StatusCode;
+    use axum::http::{Method as HttpMethod, StatusCode};
     use axum::response::IntoResponse;
     use axum::{Router, body::Body, extract::Request, routing::any};
     use tower::ServiceExt;
 
-    use crate::webdav;
+    use crate::webdav::Method;
     use crate::{AppState, AuthConfig};
 
     // -- PROPFIND tests -----------------------------------------------------
@@ -388,7 +388,7 @@ mod tests {
 
     fn make_propfind(uri: &str, depth: &str, body: Body) -> Request {
         Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPFIND").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPFIND").unwrap())
             .uri(uri)
             .header("depth", depth)
             .body(body)
@@ -597,7 +597,7 @@ mod tests {
 
     fn make_mkcol(uri: &str) -> Request {
         Request::builder()
-            .method(axum::http::Method::from_bytes(b"MKCOL").unwrap())
+            .method(HttpMethod::from_bytes(b"MKCOL").unwrap())
             .uri(uri)
             .body(Body::empty())
             .unwrap()
@@ -679,7 +679,7 @@ mod tests {
 
     fn make_copy_or_move(method: &[u8], uri: &str, dest: &str, overwrite: Option<&str>) -> Request {
         let mut builder = Request::builder()
-            .method(axum::http::Method::from_bytes(method).unwrap())
+            .method(HttpMethod::from_bytes(method).unwrap())
             .uri(uri)
             .header("destination", dest);
         if let Some(ov) = overwrite {
@@ -779,7 +779,7 @@ mod tests {
         let app = make_app_copy(&dir);
 
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"COPY").unwrap())
+            .method(HttpMethod::from_bytes(b"COPY").unwrap())
             .uri("/s.txt")
             .body(Body::empty())
             .unwrap();
@@ -878,7 +878,7 @@ mod tests {
         let app = make_app_move(&dir);
 
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"MOVE").unwrap())
+            .method(HttpMethod::from_bytes(b"MOVE").unwrap())
             .uri("/s.txt")
             .body(Body::empty())
             .unwrap();
@@ -907,7 +907,7 @@ mod tests {
             r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:author>Alice</X:author></D:prop></D:set></D:propertyupdate>"#,
         );
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPPATCH").unwrap())
             .uri("/f.txt")
             .body(body)
             .unwrap();
@@ -932,7 +932,7 @@ mod tests {
             r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:tag>important</X:tag></D:prop></D:set></D:propertyupdate>"#,
         );
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPPATCH").unwrap())
             .uri("/f.txt")
             .body(body)
             .unwrap();
@@ -944,7 +944,7 @@ mod tests {
             r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:remove><D:prop><X:tag/></D:prop></D:remove></D:propertyupdate>"#,
         );
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPPATCH").unwrap())
             .uri("/f.txt")
             .body(body)
             .unwrap();
@@ -961,7 +961,7 @@ mod tests {
             r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:foo>bar</X:foo></D:prop></D:set></D:propertyupdate>"#,
         );
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPPATCH").unwrap())
             .uri("/ghost.txt")
             .body(body)
             .unwrap();
@@ -976,7 +976,7 @@ mod tests {
         let app = make_app_proppatch(&dir);
 
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPPATCH").unwrap())
             .uri("/f.txt")
             .body(Body::from("not xml"))
             .unwrap();
@@ -988,9 +988,10 @@ mod tests {
         Router::new()
             .fallback(any(
                 |State(state): State<Arc<AppState>>, req: Request| async move {
-                    if req.method() == &*webdav::M_PROPFIND {
+                    let method = Method::try_from(req.method()).unwrap();
+                    if method == Method::PROPFIND {
                         super::handle_propfind(State(state), req).await
-                    } else if req.method() == &*webdav::M_PROPPATCH {
+                    } else if method == Method::PROPPATCH {
                         super::handle_proppatch(State(state), req).await
                     } else {
                         StatusCode::METHOD_NOT_ALLOWED.into_response()
@@ -1009,7 +1010,7 @@ mod tests {
         let app = make_app_propfind(&dir);
 
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPFIND").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPFIND").unwrap())
             .uri("/")
             .header("depth", "0")
             .body(Body::from("<foo>"))
@@ -1028,7 +1029,7 @@ mod tests {
             r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><prop0 xmlns="http://example.com/neon/litmus/">value0</prop0></D:prop></D:set></D:propertyupdate>"#,
         );
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPPATCH").unwrap())
             .uri("/f.txt")
             .body(body)
             .unwrap();
@@ -1039,7 +1040,7 @@ mod tests {
             r#"<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:prop><prop0 xmlns="http://example.com/neon/litmus/"/></D:prop></D:propfind>"#,
         );
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPFIND").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPFIND").unwrap())
             .uri("/f.txt")
             .header("depth", "0")
             .body(body)
