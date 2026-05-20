@@ -8,7 +8,18 @@ use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use crate::webdav::{self, PropEntry, PropRequest};
 
 pub const DAV_PREFIX: &str = "D:";
+
 const DAV_NS: &str = "DAV:";
+const SUPPORTED_PROPS: &[&str] = &[
+    "creationdate",
+    "getcontentlength",
+    "getcontenttype",
+    "getetag",
+    "getlastmodified",
+    "lockdiscovery",
+    "resourcetype",
+    "supportedlock",
+];
 
 pub(crate) fn dav_qname(name: &str) -> String {
     format!("{DAV_PREFIX}{name}")
@@ -39,17 +50,6 @@ fn xml_response(status: StatusCode, xml: String) -> Response {
         .body(Body::from(xml))
         .unwrap()
 }
-
-const SUPPORTED_PROPS: &[&str] = &[
-    "creationdate",
-    "getcontentlength",
-    "getcontenttype",
-    "getetag",
-    "getlastmodified",
-    "lockdiscovery",
-    "resourcetype",
-    "supportedlock",
-];
 
 pub fn build_multistatus(entries: &[PropEntry], prop_request: &PropRequest) -> String {
     let mut writer = Writer::new(Cursor::new(Vec::new()));
