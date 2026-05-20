@@ -490,7 +490,7 @@ mod tests {
 
         let req = make_propfind("/ghost", "0", propfind_body("<D:resourcetype/>"));
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -610,7 +610,7 @@ mod tests {
 
         let req = make_mkcol("/newdir");
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::CREATED);
+        assert_eq!(resp.status(), StatusCode::CREATED);
         assert!(dir.path().join("newdir").is_dir());
     }
 
@@ -621,7 +621,7 @@ mod tests {
 
         let req = make_mkcol("/no_parent/newdir");
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::CONFLICT);
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]
@@ -632,7 +632,7 @@ mod tests {
 
         let req = make_mkcol("/d");
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 
     #[tokio::test]
@@ -643,7 +643,7 @@ mod tests {
 
         let req = make_mkcol("/f.txt");
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 
     #[tokio::test]
@@ -653,7 +653,7 @@ mod tests {
 
         let req = make_mkcol("/");
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::FORBIDDEN);
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -663,7 +663,7 @@ mod tests {
 
         let req = make_mkcol("/../outside");
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::FORBIDDEN);
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     // -- COPY tests ---------------------------------------------------------
@@ -704,7 +704,7 @@ mod tests {
 
         let req = make_copy("/s.txt", "http://x/d.txt", None);
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::CREATED);
+        assert_eq!(resp.status(), StatusCode::CREATED);
         assert_eq!(
             std::fs::read_to_string(dir.path().join("d.txt")).unwrap(),
             "hello"
@@ -721,7 +721,7 @@ mod tests {
 
         let req = make_copy("/s.txt", "http://x/d.txt", None);
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NO_CONTENT);
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
         assert_eq!(
             std::fs::read_to_string(dir.path().join("d.txt")).unwrap(),
             "new"
@@ -737,7 +737,7 @@ mod tests {
 
         let req = make_copy("/s.txt", "http://x/d.txt", Some("F"));
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::PRECONDITION_FAILED);
+        assert_eq!(resp.status(), StatusCode::PRECONDITION_FAILED);
     }
 
     #[tokio::test]
@@ -747,7 +747,7 @@ mod tests {
 
         let req = make_copy("/ghost", "http://x/d.txt", None);
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -760,7 +760,7 @@ mod tests {
 
         let req = make_copy("/sd", "http://x/dd", None);
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::CREATED);
+        assert_eq!(resp.status(), StatusCode::CREATED);
         assert!(dir.path().join("dd").is_dir());
         assert_eq!(
             std::fs::read_to_string(dir.path().join("dd/a.txt")).unwrap(),
@@ -784,7 +784,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     // -- MOVE tests ---------------------------------------------------------
@@ -806,7 +806,7 @@ mod tests {
 
         let req = make_move("/s.txt", "http://x/d.txt", None);
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::CREATED);
+        assert_eq!(resp.status(), StatusCode::CREATED);
         assert_eq!(
             std::fs::read_to_string(dir.path().join("d.txt")).unwrap(),
             "hello"
@@ -823,7 +823,7 @@ mod tests {
 
         let req = make_move("/s.txt", "http://x/d.txt", None);
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NO_CONTENT);
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
         assert_eq!(
             std::fs::read_to_string(dir.path().join("d.txt")).unwrap(),
             "new"
@@ -840,7 +840,7 @@ mod tests {
 
         let req = make_move("/s.txt", "http://x/d.txt", Some("F"));
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::PRECONDITION_FAILED);
+        assert_eq!(resp.status(), StatusCode::PRECONDITION_FAILED);
     }
 
     #[tokio::test]
@@ -850,7 +850,7 @@ mod tests {
 
         let req = make_move("/ghost", "http://x/d.txt", None);
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -862,7 +862,7 @@ mod tests {
 
         let req = make_move("/sd", "http://x/dd", None);
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::CREATED);
+        assert_eq!(resp.status(), StatusCode::CREATED);
         assert!(dir.path().join("dd").is_dir());
         assert_eq!(
             std::fs::read_to_string(dir.path().join("dd/a.txt")).unwrap(),
@@ -883,7 +883,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     // -- PROPPATCH tests ----------------------------------------------------
@@ -966,7 +966,7 @@ mod tests {
             .body(body)
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -981,7 +981,7 @@ mod tests {
             .body(Body::from("not xml"))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     fn make_app_combined(dir: &tempfile::TempDir) -> Router {
@@ -1016,7 +1016,7 @@ mod tests {
             .body(Body::from("<foo>"))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
