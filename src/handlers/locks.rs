@@ -105,37 +105,6 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
         .unwrap()
 }
 
-// ---------------------------------------------------------------------------
-// UNLOCK
-// ---------------------------------------------------------------------------
-
-pub async fn handle_unlock(State(state): State<Arc<AppState>>, req: Request) -> Response {
-    let request_path = req.uri().path().to_owned();
-
-    let token = webdav::parse_lock_token_header(req.headers());
-    let token = ok_or_return!(token.or_400("missing or invalid lock-token header for UNLOCK"));
-
-    let fs_path = state.resolve_existing(&request_path).await;
-    let fs_path = ok_or_return!(fs_path.or_404("resource not found for UNLOCK"));
-
-    let mut locks = state.locks.write().await;
-    if let Some(entry) = locks.get_mut(&fs_path) {
-        let before = entry.len();
-        entry.retain(|l| l.token != token);
-        if entry.len() < before {
-            tracing::debug!(path = %fs_path.display(), token = %token, "UNLOCK completed");
-            drop(locks);
-            return StatusCode::NO_CONTENT.into_response();
-        }
-    }
-    drop(locks);
-    StatusCode::FORBIDDEN.into_response()
-}
-
-// ---------------------------------------------------------------------------
-// Lock handling logic
-// ---------------------------------------------------------------------------
-
 fn parse_lock_body(xml: &[u8]) -> (Option<String>, webdav::LockScope) {
     use quick_xml::Reader;
     use quick_xml::events::Event;
@@ -268,6 +237,33 @@ async fn try_acquire_shared(
 
     ensure_lock_null_resource(target).await?;
     Ok((webdav::generate_lock_token(), false))
+}
+
+// ---------------------------------------------------------------------------
+// UNLOCK
+// ---------------------------------------------------------------------------
+
+pub async fn handle_unlock(State(state): State<Arc<AppState>>, req: Request) -> Response {
+    let request_path = req.uri().path().to_owned();
+
+    let token = webdav::parse_lock_token_header(req.headers());
+    let token = ok_or_return!(token.or_400("missing or invalid lock-token header for UNLOCK"));
+
+    let fs_path = state.resolve_existing(&request_path).await;
+    let fs_path = ok_or_return!(fs_path.or_404("resource not found for UNLOCK"));
+
+    let mut locks = state.locks.write().await;
+    if let Some(entry) = locks.get_mut(&fs_path) {
+        let before = entry.len();
+        entry.retain(|l| l.token != token);
+        if entry.len() < before {
+            tracing::debug!(path = %fs_path.display(), token = %token, "UNLOCK completed");
+            drop(locks);
+            return StatusCode::NO_CONTENT.into_response();
+        }
+    }
+    drop(locks);
+    StatusCode::FORBIDDEN.into_response()
 }
 
 // ---------------------------------------------------------------------------
