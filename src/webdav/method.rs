@@ -90,6 +90,7 @@ impl Method {
     }
 
     /// Get the string representation of the method.
+    #[inline]
     pub(crate) fn as_str(&self) -> &'static str {
         match self.0 {
             Inner::Head => "HEAD",
