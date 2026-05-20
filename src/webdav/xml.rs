@@ -103,13 +103,14 @@ fn write_response(writer: &mut XmlWriter, entry: &PropEntry, prop_request: &Prop
         PropRequest::PropName => unreachable!(),
     };
 
-    let applicable: Vec<&&str> = found
+    let applicable = found
         .iter()
         .filter(|p| is_applicable(p, entry.is_dir))
-        .collect();
+        .copied();
+    let mut applicable = applicable.peekable();
 
-    if !applicable.is_empty() {
-        write_propstat_200(writer, entry, &applicable);
+    if applicable.peek().is_some() {
+        write_propstat_200(writer, entry, applicable);
     }
 
     let mut not_found: Vec<String> = found
@@ -152,12 +153,15 @@ fn write_prop_text(writer: &mut XmlWriter, qname: &str, value: &str) {
     writer.ev(Event::End(BytesEnd::new(qname)));
 }
 
-fn write_propstat_200(writer: &mut XmlWriter, entry: &PropEntry, props: &[&&str]) {
+fn write_propstat_200<'a, I>(writer: &mut XmlWriter, entry: &PropEntry, props: I)
+where
+    I: Iterator<Item = &'a str>,
+{
     writer.ev(Event::Start(BytesStart::new(dav_qname("propstat"))));
     writer.ev(Event::Start(BytesStart::new(dav_qname("prop"))));
 
     for prop_name in props {
-        match **prop_name {
+        match prop_name {
             "creationdate" => {
                 let date = entry
                     .created
