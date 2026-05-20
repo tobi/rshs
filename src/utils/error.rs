@@ -93,6 +93,7 @@ impl<T> OrStatus<T> for Option<T> {
     }
 }
 
+#[allow(clippy::result_large_err)]
 pub trait IntoResolved<T> {
     fn or_invalid(self, on_invalid: StatusCode) -> Result<T, Response>;
 }
