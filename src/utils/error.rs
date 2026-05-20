@@ -100,7 +100,9 @@ pub trait IntoResolved<T> {
 
 impl<T> IntoResolved<T> for Result<T, ResolveTargetError> {
     fn or_invalid(self, on_invalid: StatusCode) -> Result<T, Response> {
-        tracing::debug!(error = ?self.as_ref().err(), "path resolution failed");
+        if let Err(e) = self.as_ref() {
+            tracing::debug!(error = ?e, "path resolution failed");
+        }
         self.map_err(|e| e.status(on_invalid).into_response())
     }
 }
