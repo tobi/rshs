@@ -139,13 +139,14 @@ pub struct IfList {
 
 impl IfList {
     pub fn positive_tokens(&self) -> Vec<&str> {
-        self.conditions
-            .iter()
-            .filter_map(|c| match c {
-                IfCondition::StateToken(t) => Some(t.as_str()),
-                _ => None,
-            })
-            .collect()
+        self.positive_tokens_iter().collect()
+    }
+
+    pub fn positive_tokens_iter(&self) -> impl Iterator<Item = &str> + '_ {
+        self.conditions.iter().filter_map(|c| match c {
+            IfCondition::StateToken(t) => Some(t.as_str()),
+            _ => None,
+        })
     }
 
     pub fn has_lock_token(&self) -> bool {
@@ -746,16 +747,30 @@ mod tests {
 
     #[test]
     fn test_positive_tokens() {
-        let lists = [IfList {
+        let list = IfList {
             resource_tag: None,
             conditions: vec![
                 IfCondition::StateToken("t1".into()),
                 IfCondition::Not(Box::new(IfCondition::StateToken("t2".into()))),
                 IfCondition::StateToken("t3".into()),
             ],
-        }];
-        let tokens = lists[0].positive_tokens();
+        };
+        let tokens = list.positive_tokens();
         assert_eq!(tokens, vec!["t1", "t3"]);
+    }
+
+    #[test]
+    fn test_positive_tokens_iter() {
+        let list = IfList {
+            resource_tag: None,
+            conditions: vec![
+                IfCondition::StateToken("t1".into()),
+                IfCondition::Not(Box::new(IfCondition::StateToken("t2".into()))),
+                IfCondition::StateToken("t3".into()),
+            ],
+        };
+        let tokens = list.positive_tokens_iter();
+        assert_eq!(tokens.collect::<Vec<_>>(), vec!["t1", "t3"]);
     }
 
     #[test]

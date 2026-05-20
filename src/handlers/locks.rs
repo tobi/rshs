@@ -10,7 +10,7 @@ use quick_xml::events::{BytesEnd, BytesStart, Event};
 
 use crate::ok_or_return;
 use crate::server::AppState;
-use crate::utils::error::OrStatus;
+use crate::utils::error::{IntoResolved, OrStatus};
 use crate::webdav::{
     self,
     xml::{XmlWriterExt, dav_qname, write_activelock},
@@ -21,33 +21,26 @@ use crate::webdav::{
 // ---------------------------------------------------------------------------
 
 pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Response {
-    // LOCK accepts trailing slashes for collections
     let request_path = req.uri().path().trim_end_matches('/').to_owned();
 
-    let target = match state.resolve_and_guard(&request_path).await {
-        Ok(t) => t,
-        Err(e) => return e.status(StatusCode::FORBIDDEN).into_response(),
-    };
+    let target = state.resolve_and_guard(&request_path).await;
+    let target = ok_or_return!(target.or_invalid(StatusCode::FORBIDDEN));
 
     let timeout = webdav::parse_timeout(req.headers());
     let depth = webdav::parse_depth(req.headers());
     let if_entries = webdav::parse_if_header(req.headers());
     let if_tokens: Vec<String> = if_entries
         .iter()
-        .flat_map(|e| e.positive_tokens())
+        .flat_map(|e| e.positive_tokens_iter())
         .map(|t| t.to_string())
         .collect();
-    let body_bytes = ok_or_return!(
-        body::to_bytes(req.into_body(), 65536)
-            .await
-            .or_400("failed to read LOCK body")
-    );
+    let body_bytes = body::to_bytes(req.into_body(), 65536).await;
+    let body_bytes = ok_or_return!(body_bytes.or_400("failed to read LOCK body"));
 
     let (owner, lock_scope) = parse_lock_body(&body_bytes);
 
     let mut locks = state.locks.write().await;
 
-    // Check ancestor depth:infinity locks for indirect refresh
     if let Some(al) = webdav::find_ancestor_lock(&locks, &target, &state.root_canonical, |l| {
         if_tokens.contains(&l.token)
     }) {
@@ -70,103 +63,23 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
 
     let entry = locks.entry(target.clone()).or_default();
 
-    // Check existing locks for conflict
-    let has_exclusive = entry.iter().any(|l| l.is_exclusive());
-
-    let (token, is_refresh) = if matches!(lock_scope, webdav::LockScope::Exclusive) {
-        if has_exclusive {
-            // Existing exclusive lock — must be owner to refresh
-            let existing_token = entry
-                .iter()
-                .find(|l| l.is_exclusive())
-                .map(|l| l.token.clone());
-            if let Some(t) = existing_token {
-                if if_tokens.contains(&t) {
-                    entry.retain(|l| !l.is_exclusive());
-                    (t, true)
-                } else {
+    let (token, is_refresh) = match lock_scope {
+        webdav::LockScope::Exclusive => {
+            match try_acquire_exclusive(entry, &if_tokens, &target).await {
+                Ok(v) => v,
+                Err(status) => {
                     drop(locks);
-                    return StatusCode::LOCKED.into_response();
+                    return status.into_response();
                 }
-            } else {
-                drop(locks);
-                return StatusCode::LOCKED.into_response();
-            }
-        } else {
-            // Exclusive requested, no exclusive exists — check for shared conflict
-            // Exclusive cannot coexist with any shared locks
-            if !entry.is_empty() {
-                // Shared locks exist — only allow if token matches one of them (upgrade?)
-                // RFC 4918: shared locks don't block exclusive from same owner...
-                // Actually, shared locks block exclusive regardless
-                // But wait, if tokens match one of the shared locks, is that ok?
-                // Per RFC 4918, any existing lock blocks a conflicting new lock
-                // unless the request carries matching tokens for ALL existing locks
-                // For simplicity: if shared locks exist, reject exclusive unless
-                // the request carries a token that unlocks all shared locks
-                // (unlock + relock scenario)
-                let all_owned = entry.iter().all(|l| if_tokens.contains(&l.token));
-                if all_owned {
-                    // Request carries tokens for all existing shared locks —
-                    // replace them with the new exclusive lock
-                    entry.clear();
-                    (webdav::generate_lock_token(), false)
-                } else {
-                    drop(locks);
-                    return StatusCode::LOCKED.into_response();
-                }
-            } else {
-                let file_existed = tokio::fs::metadata(&target).await.is_ok();
-                if !file_existed {
-                    if let Err(e) = tokio::fs::File::create(&target).await {
-                        tracing::error!(error = %e, path = %target.display(), "failed to create lock-null resource");
-                        drop(locks);
-                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-                    }
-                }
-                (webdav::generate_lock_token(), false)
             }
         }
-    } else {
-        // Shared lock requested
-        if has_exclusive {
-            // Existing exclusive — must be owner to refresh (or replace)
-            let existing_token = entry
-                .iter()
-                .find(|l| l.is_exclusive())
-                .map(|l| l.token.clone());
-            if let Some(t) = existing_token {
-                if if_tokens.contains(&t) {
-                    // Owner is switching to shared? Remove exclusive and add shared
-                    entry.retain(|l| !l.is_exclusive());
-                    (webdav::generate_lock_token(), false)
-                } else {
-                    drop(locks);
-                    return StatusCode::LOCKED.into_response();
-                }
-            } else {
+        webdav::LockScope::Shared => match try_acquire_shared(entry, &if_tokens, &target).await {
+            Ok(v) => v,
+            Err(status) => {
                 drop(locks);
-                return StatusCode::LOCKED.into_response();
+                return status.into_response();
             }
-        } else {
-            // No exclusive, only shared locks may exist — allow new shared
-            // If token matches an existing shared lock, refresh that one
-            if let Some(existing) = entry.iter().find(|l| if_tokens.contains(&l.token)) {
-                let token = existing.token.clone();
-                entry.retain(|l| l.token != token);
-                (token, true)
-            } else {
-                let file_existed = tokio::fs::metadata(&target).await.is_ok();
-                if !file_existed {
-                    if let Err(e) = tokio::fs::File::create(&target).await {
-                        tracing::error!(error = %e, path = %target.display(), "failed to create lock-null resource");
-                        drop(locks);
-                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-                    }
-                }
-                (webdav::generate_lock_token(), false)
-            }
-        }
+        },
     };
 
     let lock = webdav::LockInfo {
@@ -190,36 +103,6 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
         .header("lock-token", format!("<{token}>"))
         .body(Body::from(xml))
         .unwrap()
-}
-
-// ---------------------------------------------------------------------------
-// UNLOCK
-// ---------------------------------------------------------------------------
-
-pub async fn handle_unlock(State(state): State<Arc<AppState>>, req: Request) -> Response {
-    let request_path = req.uri().path().to_owned();
-    let token = match webdav::parse_lock_token_header(req.headers()) {
-        Some(t) => t,
-        None => return StatusCode::BAD_REQUEST.into_response(),
-    };
-
-    let fs_path = match state.resolve_existing(&request_path).await {
-        Some(p) => p,
-        None => return StatusCode::NOT_FOUND.into_response(),
-    };
-
-    let mut locks = state.locks.write().await;
-    if let Some(entry) = locks.get_mut(&fs_path) {
-        let before = entry.len();
-        entry.retain(|l| l.token != token);
-        if entry.len() < before {
-            tracing::debug!(path = %fs_path.display(), token = %token, "UNLOCK completed");
-            drop(locks);
-            return StatusCode::NO_CONTENT.into_response();
-        }
-    }
-    drop(locks);
-    StatusCode::FORBIDDEN.into_response()
 }
 
 fn parse_lock_body(xml: &[u8]) -> (Option<String>, webdav::LockScope) {
@@ -280,6 +163,107 @@ fn build_lock_response(lock: &webdav::LockInfo) -> String {
     writer.ev(Event::End(BytesEnd::new(dav_qname("prop"))));
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
+}
+
+async fn ensure_lock_null_resource(target: &std::path::Path) -> Result<(), StatusCode> {
+    if tokio::fs::metadata(target).await.is_ok() {
+        tracing::debug!(path = %target.display(), "lock-null resource already exists");
+        return Ok(());
+    }
+
+    match tokio::fs::File::create(target).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            tracing::error!(
+                error = %e, path = %target.display(), "failed to create lock-null resource"
+            );
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+fn check_existing_exclusive(
+    entry: &[webdav::LockInfo],
+    if_tokens: &[String],
+) -> Result<Option<String>, StatusCode> {
+    let token = entry
+        .iter()
+        .find(|l| l.is_exclusive())
+        .map(|l| l.token.clone());
+    match token {
+        Some(t) if if_tokens.contains(&t) => Ok(Some(t)),
+        Some(_) => Err(StatusCode::LOCKED),
+        None => Ok(None),
+    }
+}
+
+async fn try_acquire_exclusive(
+    entry: &mut Vec<webdav::LockInfo>,
+    if_tokens: &[String],
+    target: &std::path::Path,
+) -> Result<(String, bool), StatusCode> {
+    if let Some(token) = check_existing_exclusive(entry, if_tokens)? {
+        entry.retain(|l| !l.is_exclusive());
+        return Ok((token, true));
+    }
+
+    if !entry.is_empty() {
+        if entry.iter().all(|l| if_tokens.contains(&l.token)) {
+            entry.clear();
+            return Ok((webdav::generate_lock_token(), false));
+        }
+        return Err(StatusCode::LOCKED);
+    }
+
+    ensure_lock_null_resource(target).await?;
+    Ok((webdav::generate_lock_token(), false))
+}
+
+async fn try_acquire_shared(
+    entry: &mut Vec<webdav::LockInfo>,
+    if_tokens: &[String],
+    target: &std::path::Path,
+) -> Result<(String, bool), StatusCode> {
+    if check_existing_exclusive(entry, if_tokens)?.is_some() {
+        entry.retain(|l| !l.is_exclusive());
+        return Ok((webdav::generate_lock_token(), false));
+    }
+
+    if let Some(existing) = entry.iter().find(|l| if_tokens.contains(&l.token)) {
+        let token = existing.token.clone();
+        entry.retain(|l| l.token != token);
+        return Ok((token, true));
+    }
+
+    ensure_lock_null_resource(target).await?;
+    Ok((webdav::generate_lock_token(), false))
+}
+
+// ---------------------------------------------------------------------------
+// UNLOCK
+// ---------------------------------------------------------------------------
+
+pub async fn handle_unlock(State(state): State<Arc<AppState>>, req: Request) -> Response {
+    let request_path = req.uri().path().to_owned();
+
+    let token = webdav::parse_lock_token_header(req.headers());
+    let token = ok_or_return!(token.or_400("missing or invalid lock-token header for UNLOCK"));
+
+    let fs_path = state.resolve_existing(&request_path).await;
+    let fs_path = ok_or_return!(fs_path.or_404("resource not found for UNLOCK"));
+
+    let mut locks = state.locks.write().await;
+    if let Some(entry) = locks.get_mut(&fs_path) {
+        let before = entry.len();
+        entry.retain(|l| l.token != token);
+        if entry.len() < before {
+            tracing::debug!(path = %fs_path.display(), token = %token, "UNLOCK completed");
+            drop(locks);
+            return StatusCode::NO_CONTENT.into_response();
+        }
+    }
+    drop(locks);
+    StatusCode::FORBIDDEN.into_response()
 }
 
 // ---------------------------------------------------------------------------

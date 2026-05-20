@@ -151,6 +151,11 @@ src/
   CLI credentials (`--user`) can be merged in and optionally written back to disk.
 - **TLS**: `TlsListener` implements `axum::serve::Listener` wrapping a `tokio-rustls` acceptor.
   Both HTTP and HTTPS branches call `axum::serve(listener, router)` — fully symmetric.
+- **Semantic completeness**: Trait methods are provided for all status codes with defined
+  semantics (`or_400`, `or_404`, `or_409`, `or_500`, `or_503` + generic `or_status`),
+  even if not all are currently invoked. `or_status` auto-selects log level based on
+  `is_server_error()` (4xx → `debug!`, 5xx → `error!`). Handlers should use these methods
+  instead of ad-hoc `StatusCode::X.into_response()` calls.
 
 ### Supported Methods
 
@@ -182,19 +187,11 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 
 ### Known Limitations
 
-| Item                      | Status   | Description                                                                                                                                           |
-| ------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Shared lock scope         | ✅       | Shared locks (`LockScope::Shared`) + conflict resolution (shared/exclusive) implemented; `lock_shared` litmus test passes                             |
-| Conditional If header     | ✅       | Full RFC 4918 §10.4 recursive-descent parser: `Not`, `DAV:no-lock`, resource-tags, AND semantics; `eval_condition` + `evaluate_if` in lock middleware |
-| Collection lock semantics | ✅       | Depth:infinity ancestor chain enforcement in `lock_enforce` + indirect refresh via ancestor lock discovery in `handle_lock`                           |
-| Lock timeout cleanup      | ✅       | Expired locks pruned every 30s by background task; lock enforcement filters expired locks lazily via `active()` iterator (zero-clone, short-circuit)  |
-| Dead property persistence | Accepted | In-memory only (`DeadPropertyStore`), lost on restart. Accepted as architectural trade-off; sidecar persistence deferred                              |
-| `getetag` format          | Accepted | Uses mtime+size hex hash (`format!("{:x}-{:x}", mtime_secs, size)`). No inode available on macOS via `std::fs`                                        |
-| HTML directory listing    | Accepted | Single-line HTML output (no indentation). Adequate for browser rendering                                                                              |
-
-## TODO
-
-- [ ] **Split `handle_lock`** (`src/handlers/locks.rs:76-170`): 170-line function with depth-4 nesting. Extract `check_existing_exclusive`, `try_acquire_exclusive`, `try_acquire_shared`, and `ensure_lock_null_resource` sub-functions. Also consolidate 5 repeated `drop(locks); return StatusCode::LOCKED` patterns.
+| Item                      | Status   | Description                                                                                                              |
+| ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Dead property persistence | Accepted | In-memory only (`DeadPropertyStore`), lost on restart. Accepted as architectural trade-off; sidecar persistence deferred |
+| `getetag` format          | Accepted | Uses mtime+size hex hash (`format!("{:x}-{:x}", mtime_secs, size)`). No inode available on macOS via `std::fs`           |
+| HTML directory listing    | Accepted | Single-line HTML output (no indentation). Adequate for browser rendering                                                 |
 
 ## Conventions
 
