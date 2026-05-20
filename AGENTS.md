@@ -35,9 +35,10 @@ src/
     locks.rs                    # LOCK/UNLOCK handler
 
   webdav/
-    mod.rs                      # WebDAV Method constants, lock types (LockInfo/LockStore/LockScope),
-                                #   If header types (IfCondition/IfList), parse helpers,
-                                #   find_ancestor_lock utility, ParseError
+    mod.rs                      # Lock types (LockInfo/LockStore/LockScope), If header types
+                                #   (IfCondition/IfList), parse helpers, find_ancestor_lock,
+                                #   ParseError, DeadPropertyStore
+    method.rs                   # Method type (enum-like struct for HTTP/WebDAV method constants)
     xml.rs                      # Multistatus XML generation, write_activelock (shared lock XML)
     fs.rs                       # Filesystem traversal + href encoding
 
@@ -103,18 +104,19 @@ src/
   no users are configured (`auth_config.is_empty()`). LockEnforce checks write operations
   (PUT/DELETE/MKCOL/PROPPATCH) against the lock store before the handler runs.
 - **Request dispatch**: `.fallback(any(dispatch))` routes all requests through a single
-  `dispatch` function that branches by HTTP method:
-  `GET`/`HEAD` → `http::handle_get_head`,
-  `PUT` → `http::handle_put`,
-  `DELETE` → `http::handle_delete`,
-  `OPTIONS` → `http::handle_options`,
-  `PROPFIND` → `webdav::handle_propfind`,
-  `MKCOL` → `webdav::handle_mkcol`,
-  `COPY` → `webdav::handle_copy`,
-  `MOVE` → `webdav::handle_move`,
-  `PROPPATCH` → `webdav::handle_proppatch`,
-  `LOCK` → `locks::handle_lock`,
-  `UNLOCK` → `locks::handle_unlock`,
+  `dispatch` function that converts `req.method()` to `webdav::Method` via
+  `Method::try_from()` and matches on type-safe constants:
+  `Ok(Method::GET)` | `Ok(Method::HEAD)` → `http::handle_get_head`,
+  `Ok(Method::PUT)` → `http::handle_put`,
+  `Ok(Method::DELETE)` → `http::handle_delete`,
+  `Ok(Method::OPTIONS)` → `http::handle_options`,
+  `Ok(Method::PROPFIND)` → `webdav::handle_propfind`,
+  `Ok(Method::MKCOL)` → `webdav::handle_mkcol`,
+  `Ok(Method::COPY)` → `webdav::handle_copy`,
+  `Ok(Method::MOVE)` → `webdav::handle_move`,
+  `Ok(Method::PROPPATCH)` → `webdav::handle_proppatch`,
+  `Ok(Method::LOCK)` → `locks::handle_lock`,
+  `Ok(Method::UNLOCK)` → `locks::handle_unlock`,
   unknown → `501 Not Implemented`.
 - **Path resolution**: `utils::path` provides three functions + one error type:
   - `resolve_existing()` — canonicalize + traversal check for read ops (GET/HEAD) and delete ops (DELETE)
@@ -136,8 +138,9 @@ src/
   Full RFC 4918 §10.4 conditional `If` header evaluation: `Not`, `DAV:no-lock`, resource-tags, AND semantics.
   Depth:infinity ancestor chain enforcement in `lock_enforce` + indirect refresh via
   ancestor lock discovery in `handle_lock`. Lock enforcement via tower Layer middleware
-  (`middleware::lock::lock_enforce`), which intercepts PUT/DELETE/MKCOL/PROPPATCH/MOVE/COPY
-  and rejects with `423 Locked` unless the request carries a matching condition.
+  (`middleware::lock::lock_enforce`), which converts the request method to `webdav::Method`
+  via `Method::try_from()` and intercepts `Method::PUT/DELETE/MKCOL/PROPPATCH/MOVE/COPY`
+  with `423 Locked` unless the request carries a matching condition.
   Expired locks pruned every 30s by background task in `start_server()`; lock enforcement
   filters expired locks lazily via the `active()` helper (`infos.iter().filter(|l| !l.is_expired())`),
   short-circuiting on first unexpired lock.

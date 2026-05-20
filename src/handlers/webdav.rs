@@ -360,12 +360,12 @@ mod tests {
     use std::sync::Arc;
 
     use axum::extract::State;
-    use axum::http::StatusCode;
+    use axum::http::{Method as HttpMethod, StatusCode};
     use axum::response::IntoResponse;
     use axum::{Router, body::Body, extract::Request, routing::any};
     use tower::ServiceExt;
 
-    use crate::webdav;
+    use crate::webdav::Method;
     use crate::{AppState, AuthConfig};
 
     // -- PROPFIND tests -----------------------------------------------------
@@ -388,7 +388,7 @@ mod tests {
 
     fn make_propfind(uri: &str, depth: &str, body: Body) -> Request {
         Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPFIND").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPFIND").unwrap())
             .uri(uri)
             .header("depth", depth)
             .body(body)
@@ -490,7 +490,7 @@ mod tests {
 
         let req = make_propfind("/ghost", "0", propfind_body("<D:resourcetype/>"));
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -597,7 +597,7 @@ mod tests {
 
     fn make_mkcol(uri: &str) -> Request {
         Request::builder()
-            .method(axum::http::Method::from_bytes(b"MKCOL").unwrap())
+            .method(HttpMethod::from_bytes(b"MKCOL").unwrap())
             .uri(uri)
             .body(Body::empty())
             .unwrap()
@@ -610,7 +610,7 @@ mod tests {
 
         let req = make_mkcol("/newdir");
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::CREATED);
+        assert_eq!(resp.status(), StatusCode::CREATED);
         assert!(dir.path().join("newdir").is_dir());
     }
 
@@ -621,7 +621,7 @@ mod tests {
 
         let req = make_mkcol("/no_parent/newdir");
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::CONFLICT);
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]
@@ -632,7 +632,7 @@ mod tests {
 
         let req = make_mkcol("/d");
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 
     #[tokio::test]
@@ -643,7 +643,7 @@ mod tests {
 
         let req = make_mkcol("/f.txt");
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 
     #[tokio::test]
@@ -653,7 +653,7 @@ mod tests {
 
         let req = make_mkcol("/");
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::FORBIDDEN);
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -663,7 +663,7 @@ mod tests {
 
         let req = make_mkcol("/../outside");
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::FORBIDDEN);
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     // -- COPY tests ---------------------------------------------------------
@@ -679,7 +679,7 @@ mod tests {
 
     fn make_copy_or_move(method: &[u8], uri: &str, dest: &str, overwrite: Option<&str>) -> Request {
         let mut builder = Request::builder()
-            .method(axum::http::Method::from_bytes(method).unwrap())
+            .method(HttpMethod::from_bytes(method).unwrap())
             .uri(uri)
             .header("destination", dest);
         if let Some(ov) = overwrite {
@@ -704,7 +704,7 @@ mod tests {
 
         let req = make_copy("/s.txt", "http://x/d.txt", None);
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::CREATED);
+        assert_eq!(resp.status(), StatusCode::CREATED);
         assert_eq!(
             std::fs::read_to_string(dir.path().join("d.txt")).unwrap(),
             "hello"
@@ -721,7 +721,7 @@ mod tests {
 
         let req = make_copy("/s.txt", "http://x/d.txt", None);
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NO_CONTENT);
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
         assert_eq!(
             std::fs::read_to_string(dir.path().join("d.txt")).unwrap(),
             "new"
@@ -737,7 +737,7 @@ mod tests {
 
         let req = make_copy("/s.txt", "http://x/d.txt", Some("F"));
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::PRECONDITION_FAILED);
+        assert_eq!(resp.status(), StatusCode::PRECONDITION_FAILED);
     }
 
     #[tokio::test]
@@ -747,7 +747,7 @@ mod tests {
 
         let req = make_copy("/ghost", "http://x/d.txt", None);
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -760,7 +760,7 @@ mod tests {
 
         let req = make_copy("/sd", "http://x/dd", None);
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::CREATED);
+        assert_eq!(resp.status(), StatusCode::CREATED);
         assert!(dir.path().join("dd").is_dir());
         assert_eq!(
             std::fs::read_to_string(dir.path().join("dd/a.txt")).unwrap(),
@@ -779,12 +779,12 @@ mod tests {
         let app = make_app_copy(&dir);
 
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"COPY").unwrap())
+            .method(HttpMethod::from_bytes(b"COPY").unwrap())
             .uri("/s.txt")
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     // -- MOVE tests ---------------------------------------------------------
@@ -806,7 +806,7 @@ mod tests {
 
         let req = make_move("/s.txt", "http://x/d.txt", None);
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::CREATED);
+        assert_eq!(resp.status(), StatusCode::CREATED);
         assert_eq!(
             std::fs::read_to_string(dir.path().join("d.txt")).unwrap(),
             "hello"
@@ -823,7 +823,7 @@ mod tests {
 
         let req = make_move("/s.txt", "http://x/d.txt", None);
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NO_CONTENT);
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
         assert_eq!(
             std::fs::read_to_string(dir.path().join("d.txt")).unwrap(),
             "new"
@@ -840,7 +840,7 @@ mod tests {
 
         let req = make_move("/s.txt", "http://x/d.txt", Some("F"));
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::PRECONDITION_FAILED);
+        assert_eq!(resp.status(), StatusCode::PRECONDITION_FAILED);
     }
 
     #[tokio::test]
@@ -850,7 +850,7 @@ mod tests {
 
         let req = make_move("/ghost", "http://x/d.txt", None);
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -862,7 +862,7 @@ mod tests {
 
         let req = make_move("/sd", "http://x/dd", None);
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::CREATED);
+        assert_eq!(resp.status(), StatusCode::CREATED);
         assert!(dir.path().join("dd").is_dir());
         assert_eq!(
             std::fs::read_to_string(dir.path().join("dd/a.txt")).unwrap(),
@@ -878,12 +878,12 @@ mod tests {
         let app = make_app_move(&dir);
 
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"MOVE").unwrap())
+            .method(HttpMethod::from_bytes(b"MOVE").unwrap())
             .uri("/s.txt")
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     // -- PROPPATCH tests ----------------------------------------------------
@@ -907,7 +907,7 @@ mod tests {
             r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:author>Alice</X:author></D:prop></D:set></D:propertyupdate>"#,
         );
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPPATCH").unwrap())
             .uri("/f.txt")
             .body(body)
             .unwrap();
@@ -932,7 +932,7 @@ mod tests {
             r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:tag>important</X:tag></D:prop></D:set></D:propertyupdate>"#,
         );
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPPATCH").unwrap())
             .uri("/f.txt")
             .body(body)
             .unwrap();
@@ -944,7 +944,7 @@ mod tests {
             r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:remove><D:prop><X:tag/></D:prop></D:remove></D:propertyupdate>"#,
         );
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPPATCH").unwrap())
             .uri("/f.txt")
             .body(body)
             .unwrap();
@@ -961,12 +961,12 @@ mod tests {
             r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:foo>bar</X:foo></D:prop></D:set></D:propertyupdate>"#,
         );
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPPATCH").unwrap())
             .uri("/ghost.txt")
             .body(body)
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -976,21 +976,22 @@ mod tests {
         let app = make_app_proppatch(&dir);
 
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPPATCH").unwrap())
             .uri("/f.txt")
             .body(Body::from("not xml"))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     fn make_app_combined(dir: &tempfile::TempDir) -> Router {
         Router::new()
             .fallback(any(
                 |State(state): State<Arc<AppState>>, req: Request| async move {
-                    if req.method() == &*webdav::M_PROPFIND {
+                    let method = Method::try_from(req.method()).unwrap();
+                    if method == Method::PROPFIND {
                         super::handle_propfind(State(state), req).await
-                    } else if req.method() == &*webdav::M_PROPPATCH {
+                    } else if method == Method::PROPPATCH {
                         super::handle_proppatch(State(state), req).await
                     } else {
                         StatusCode::METHOD_NOT_ALLOWED.into_response()
@@ -1009,13 +1010,13 @@ mod tests {
         let app = make_app_propfind(&dir);
 
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPFIND").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPFIND").unwrap())
             .uri("/")
             .header("depth", "0")
             .body(Body::from("<foo>"))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
@@ -1028,7 +1029,7 @@ mod tests {
             r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><prop0 xmlns="http://example.com/neon/litmus/">value0</prop0></D:prop></D:set></D:propertyupdate>"#,
         );
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPPATCH").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPPATCH").unwrap())
             .uri("/f.txt")
             .body(body)
             .unwrap();
@@ -1039,7 +1040,7 @@ mod tests {
             r#"<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:prop><prop0 xmlns="http://example.com/neon/litmus/"/></D:prop></D:propfind>"#,
         );
         let req = Request::builder()
-            .method(axum::http::Method::from_bytes(b"PROPFIND").unwrap())
+            .method(HttpMethod::from_bytes(b"PROPFIND").unwrap())
             .uri("/f.txt")
             .header("depth", "0")
             .body(body)

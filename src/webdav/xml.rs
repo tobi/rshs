@@ -14,11 +14,13 @@ pub(crate) fn dav_qname(name: &str) -> String {
     format!("{DAV_PREFIX}{name}")
 }
 
+pub type XmlWriter = Writer<Cursor<Vec<u8>>>;
+
 pub(crate) trait XmlWriterExt {
     fn ev(&mut self, event: Event<'_>);
 }
 
-impl XmlWriterExt for Writer<Cursor<Vec<u8>>> {
+impl XmlWriterExt for XmlWriter {
     fn ev(&mut self, event: Event<'_>) {
         self.write_event(event).unwrap();
     }
@@ -67,11 +69,7 @@ pub fn build_multistatus(entries: &[PropEntry], prop_request: &PropRequest) -> S
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
 
-fn write_response(
-    writer: &mut Writer<Cursor<Vec<u8>>>,
-    entry: &PropEntry,
-    prop_request: &PropRequest,
-) {
+fn write_response(writer: &mut XmlWriter, entry: &PropEntry, prop_request: &PropRequest) {
     writer.ev(Event::Start(BytesStart::new(dav_qname("response"))));
 
     writer.ev(Event::Start(BytesStart::new(dav_qname("href"))));
@@ -157,13 +155,13 @@ fn is_applicable(prop: &str, is_dir: bool) -> bool {
     }
 }
 
-fn write_prop_text(writer: &mut Writer<Cursor<Vec<u8>>>, qname: &str, value: &str) {
+fn write_prop_text(writer: &mut XmlWriter, qname: &str, value: &str) {
     writer.ev(Event::Start(BytesStart::new(qname)));
     writer.ev(Event::Text(BytesText::new(value)));
     writer.ev(Event::End(BytesEnd::new(qname)));
 }
 
-fn write_propstat_200(writer: &mut Writer<Cursor<Vec<u8>>>, entry: &PropEntry, props: &[&&str]) {
+fn write_propstat_200(writer: &mut XmlWriter, entry: &PropEntry, props: &[&&str]) {
     writer.ev(Event::Start(BytesStart::new(dav_qname("propstat"))));
     writer.ev(Event::Start(BytesStart::new(dav_qname("prop"))));
 
@@ -239,7 +237,7 @@ fn write_propstat_200(writer: &mut Writer<Cursor<Vec<u8>>>, entry: &PropEntry, p
     writer.ev(Event::End(BytesEnd::new(dav_qname("propstat"))));
 }
 
-fn write_lockentry(writer: &mut Writer<Cursor<Vec<u8>>>, scope: &str) {
+fn write_lockentry(writer: &mut XmlWriter, scope: &str) {
     writer.ev(Event::Start(BytesStart::new(dav_qname("lockentry"))));
     writer.ev(Event::Start(BytesStart::new(dav_qname("lockscope"))));
     writer.ev(Event::Empty(BytesStart::new(dav_qname(scope))));
@@ -250,7 +248,7 @@ fn write_lockentry(writer: &mut Writer<Cursor<Vec<u8>>>, scope: &str) {
     writer.ev(Event::End(BytesEnd::new(dav_qname("lockentry"))));
 }
 
-fn write_propstat_404(writer: &mut Writer<Cursor<Vec<u8>>>, props: &[String]) {
+fn write_propstat_404(writer: &mut XmlWriter, props: &[String]) {
     writer.ev(Event::Start(BytesStart::new(dav_qname("propstat"))));
     writer.ev(Event::Start(BytesStart::new(dav_qname("prop"))));
 
@@ -270,7 +268,7 @@ fn write_propstat_404(writer: &mut Writer<Cursor<Vec<u8>>>, props: &[String]) {
     writer.ev(Event::End(BytesEnd::new(dav_qname("propstat"))));
 }
 
-fn write_propname(writer: &mut Writer<Cursor<Vec<u8>>>, props: &[&str]) {
+fn write_propname(writer: &mut XmlWriter, props: &[&str]) {
     writer.ev(Event::Start(BytesStart::new(dav_qname("propstat"))));
     writer.ev(Event::Start(BytesStart::new(dav_qname("prop"))));
 
@@ -285,7 +283,7 @@ fn write_propname(writer: &mut Writer<Cursor<Vec<u8>>>, props: &[&str]) {
     writer.ev(Event::End(BytesEnd::new(dav_qname("propstat"))));
 }
 
-pub(crate) fn write_activelock(writer: &mut Writer<Cursor<Vec<u8>>>, lock: &super::LockInfo) {
+pub(crate) fn write_activelock(writer: &mut XmlWriter, lock: &super::LockInfo) {
     writer.ev(Event::Start(BytesStart::new(dav_qname("activelock"))));
 
     writer.ev(Event::Start(BytesStart::new(dav_qname("lockscope"))));
@@ -336,10 +334,7 @@ pub(crate) fn write_activelock(writer: &mut Writer<Cursor<Vec<u8>>>, lock: &supe
     writer.ev(Event::End(BytesEnd::new(dav_qname("activelock"))));
 }
 
-fn write_dead_propstat(
-    writer: &mut Writer<Cursor<Vec<u8>>>,
-    props: &std::collections::HashMap<String, String>,
-) {
+fn write_dead_propstat(writer: &mut XmlWriter, props: &std::collections::HashMap<String, String>) {
     writer.ev(Event::Start(BytesStart::new(dav_qname("propstat"))));
     writer.ev(Event::Start(BytesStart::new(dav_qname("prop"))));
 

@@ -6,19 +6,24 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
 use crate::server::AppState;
-use crate::webdav::{self, Depth, IfCondition, LockInfo, LockStore};
+use crate::webdav::{self, IfCondition, LockInfo, Method};
 
 pub async fn lock_enforce(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     req: axum::extract::Request,
     next: Next,
 ) -> Result<Response, Response> {
-    let method = req.method().as_str();
+    let Ok(method) = Method::try_from(req.method()) else {
+        return Ok(next.run(req).await);
+    };
 
-    if !matches!(
-        method,
-        "PUT" | "DELETE" | "MKCOL" | "PROPPATCH" | "MOVE" | "COPY"
-    ) {
+    if method != Method::PUT
+        && method != Method::DELETE
+        && method != Method::MKCOL
+        && method != Method::PROPPATCH
+        && method != Method::MOVE
+        && method != Method::COPY
+    {
         return Ok(next.run(req).await);
     }
 
@@ -35,7 +40,7 @@ pub async fn lock_enforce(
     let locks = state.locks.read().await;
 
     // Source check (skip for COPY — source is read-only)
-    if method != "COPY" {
+    if method != Method::COPY {
         if let Ok(src) = state.resolve_and_guard(&request_path).await {
             if is_path_locked(&locks, &src, &lists, &state.root_canonical, &request_path) {
                 tracing::debug!(path = %src.display(), "source locked, rejecting write");
@@ -45,7 +50,7 @@ pub async fn lock_enforce(
     }
 
     // Destination check (COPY/MOVE only)
-    if method == "COPY" || method == "MOVE" {
+    if method == Method::COPY || method == Method::MOVE {
         if let Some(dest) = webdav::parse_destination(req.headers()) {
             let dest_norm = dest.trim_end_matches('/');
             if let Ok(dest_path) = state.resolve_and_guard(dest_norm).await {
@@ -66,7 +71,7 @@ fn active_lock(infos: &[LockInfo]) -> impl Iterator<Item = &LockInfo> + '_ {
 }
 
 fn is_path_locked(
-    locks: &LockStore,
+    locks: &webdav::LockStore,
     path: &Path,
     lists: &[webdav::IfList],
     root_canonical: &Path,
@@ -82,7 +87,7 @@ fn is_path_locked(
     }
 
     webdav::walk_locked_ancestors(locks, path, root_canonical, |infos| {
-        active_lock(infos).any(|l| l.depth == Depth::Infinity)
+        active_lock(infos).any(|l| l.depth == webdav::Depth::Infinity)
             && !evaluate_if(lists, infos, request_path)
     })
 }

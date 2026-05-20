@@ -16,10 +16,10 @@ use tokio::sync::{Notify, RwLock};
 use tower_http::trace::TraceLayer;
 
 use crate::auth::AuthConfig;
-use crate::handlers::{locks, webdav as webdav_handler};
+use crate::handlers::{http, locks, webdav as webdav_handler};
 use crate::middleware;
 use crate::utils::path::{self, ResolveTargetError};
-use crate::webdav::{DeadPropertyStore, LockStore};
+use crate::webdav::{DeadPropertyStore, LockStore, Method};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -137,34 +137,19 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
 }
 
 async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response {
-    use crate::{handlers::http, webdav};
-
-    let method = req.method();
-
-    if method == http::Method::GET || method == http::Method::HEAD {
-        http::handle_get_head(State(state), req).await
-    } else if method == http::Method::PUT {
-        http::handle_put(State(state), req).await
-    } else if method == http::Method::DELETE {
-        http::handle_delete(State(state), req).await
-    } else if method == http::Method::OPTIONS {
-        http::handle_options().await
-    } else if method == *webdav::M_PROPFIND {
-        webdav_handler::handle_propfind(State(state), req).await
-    } else if method == *webdav::M_MKCOL {
-        webdav_handler::handle_mkcol(State(state), req).await
-    } else if method == *webdav::M_COPY {
-        webdav_handler::handle_copy(State(state), req).await
-    } else if method == *webdav::M_MOVE {
-        webdav_handler::handle_move(State(state), req).await
-    } else if method == *webdav::M_PROPPATCH {
-        webdav_handler::handle_proppatch(State(state), req).await
-    } else if method == *webdav::M_LOCK {
-        locks::handle_lock(State(state), req).await
-    } else if method == *webdav::M_UNLOCK {
-        locks::handle_unlock(State(state), req).await
-    } else {
-        StatusCode::NOT_IMPLEMENTED.into_response()
+    match Method::try_from(req.method()) {
+        Ok(Method::GET) | Ok(Method::HEAD) => http::handle_get_head(State(state), req).await,
+        Ok(Method::PUT) => http::handle_put(State(state), req).await,
+        Ok(Method::DELETE) => http::handle_delete(State(state), req).await,
+        Ok(Method::OPTIONS) => http::handle_options().await,
+        Ok(Method::PROPFIND) => webdav_handler::handle_propfind(State(state), req).await,
+        Ok(Method::MKCOL) => webdav_handler::handle_mkcol(State(state), req).await,
+        Ok(Method::COPY) => webdav_handler::handle_copy(State(state), req).await,
+        Ok(Method::MOVE) => webdav_handler::handle_move(State(state), req).await,
+        Ok(Method::PROPPATCH) => webdav_handler::handle_proppatch(State(state), req).await,
+        Ok(Method::LOCK) => locks::handle_lock(State(state), req).await,
+        Ok(Method::UNLOCK) => locks::handle_unlock(State(state), req).await,
+        _ => StatusCode::NOT_IMPLEMENTED.into_response(),
     }
 }
 
