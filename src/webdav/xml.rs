@@ -83,30 +83,21 @@ fn write_response(writer: &mut XmlWriter, entry: &PropEntry, prop_request: &Prop
     }
 
     let (found, missing) = match prop_request {
-        PropRequest::AllProp => {
-            let all: Vec<&str> = SUPPORTED_PROPS.to_vec();
-            (all, vec![])
-        }
+        PropRequest::AllProp => (SUPPORTED_PROPS.to_vec(), vec![]),
         PropRequest::Named(names) => {
-            let found: Vec<&str> = SUPPORTED_PROPS
-                .iter()
-                .filter(|p| {
-                    names.iter().any(|n| {
-                        webdav::parse_clark(n)
-                            .map(|(_, l)| l == **p)
-                            .unwrap_or(false)
-                    })
-                })
-                .copied()
-                .collect();
-            let missing: Vec<&str> = names
-                .iter()
-                .filter(|n| {
-                    let local = webdav::parse_clark(n).map(|(_, l)| l).unwrap_or(n);
-                    !SUPPORTED_PROPS.contains(&local)
-                })
-                .map(|s| s.as_str())
-                .collect();
+            let (mut found, mut missing) = (Vec::new(), Vec::new());
+
+            for n in names {
+                let local = webdav::parse_clark(n).map(|(_, l)| l).unwrap_or(n.as_str());
+                if SUPPORTED_PROPS.contains(&local) {
+                    if !found.contains(&local) {
+                        found.push(local);
+                    }
+                } else {
+                    missing.push(n.as_str());
+                }
+            }
+
             (found, missing)
         }
         PropRequest::PropName => unreachable!(),
