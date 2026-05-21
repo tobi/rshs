@@ -166,13 +166,9 @@ fn build_lock_response(lock: &webdav::LockInfo) -> String {
 }
 
 async fn ensure_lock_null_resource(target: &std::path::Path) -> Result<(), StatusCode> {
-    if tokio::fs::metadata(target).await.is_ok() {
-        tracing::debug!(path = %target.display(), "lock-null resource already exists");
-        return Ok(());
-    }
-
-    match tokio::fs::File::create(target).await {
+    match tokio::fs::File::create_new(target).await {
         Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(e) => {
             tracing::error!(
                 error = %e, path = %target.display(), "failed to create lock-null resource"
