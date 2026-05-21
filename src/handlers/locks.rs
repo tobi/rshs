@@ -82,14 +82,14 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
         },
     };
 
-    let lock = webdav::LockInfo {
-        token: token.clone(),
-        scope: lock_scope,
+    let lock = webdav::LockInfo::new(
+        lock_scope,
+        token.clone(),
         owner,
+        std::time::SystemTime::now(),
         timeout,
-        created: std::time::SystemTime::now(),
         depth,
-    };
+    );
     let xml = build_lock_response(&lock);
     entry.push(lock);
 

@@ -276,13 +276,13 @@ pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) 
     let mut set_count = 0u32;
     let mut remove_count = 0u32;
     for action in &op.actions {
-        match &action.value {
+        match &action.1 {
             Some(value) => {
-                entry.insert(action.name.clone(), value.clone());
+                entry.insert(action.0.clone(), value.clone());
                 set_count += 1;
             }
             None => {
-                entry.remove(&action.name);
+                entry.remove(&action.0);
                 remove_count += 1;
             }
         }
@@ -311,7 +311,7 @@ fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> Str
     writer.ev(Event::Start(ms));
 
     for action in &op.actions {
-        write_proppatch_result(&mut writer, request_path, &action.name, "200 OK");
+        write_proppatch_result(&mut writer, request_path, &action.0, "200 OK");
     }
 
     writer.ev(Event::End(BytesEnd::new(dav_qname("multistatus"))));

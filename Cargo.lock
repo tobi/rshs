@@ -293,6 +293,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive-new"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2cdc8d50f426189eef89dac62fabfa0abb27d5cc008f25bf4156a0203325becc"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "digest"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -849,6 +860,7 @@ dependencies = [
  "axum",
  "base64",
  "clap",
+ "derive-new",
  "futures-util",
  "mime_guess",
  "percent-encoding",

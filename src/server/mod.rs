@@ -12,6 +12,7 @@ use axum::http::StatusCode;
 use axum::middleware as axum_mw;
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
+use derive_new::new;
 use tokio::sync::{Notify, RwLock};
 use tower_http::trace::TraceLayer;
 
@@ -58,31 +59,13 @@ impl AppState {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, new)]
 pub struct ServerConfig {
     pub root_dir: PathBuf,
     pub host: String,
     pub port: u16,
     pub tls_config: Option<tls::TlsConfig>,
     pub auth_config: AuthConfig,
-}
-
-impl ServerConfig {
-    pub fn new(
-        root_dir: PathBuf,
-        host: String,
-        port: u16,
-        tls_config: Option<tls::TlsConfig>,
-        auth_config: AuthConfig,
-    ) -> Self {
-        Self {
-            root_dir,
-            host,
-            port,
-            tls_config,
-            auth_config,
-        }
-    }
 }
 
 pub async fn start_server(config: ServerConfig) -> io::Result<()> {

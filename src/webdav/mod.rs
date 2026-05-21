@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::http::HeaderMap;
+use derive_new::new;
 use percent_encoding::percent_decode_str;
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
@@ -18,12 +19,9 @@ pub use method::Method;
 pub type DeadPropertyStore = HashMap<PathBuf, HashMap<String, String>>;
 
 #[derive(Debug, Clone)]
-pub struct PropPatchAction {
-    pub name: String,
-    pub value: Option<String>,
-}
+pub struct PropPatchAction(pub String, pub Option<String>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, new)]
 pub struct PropPatchOp {
     pub actions: Vec<PropPatchAction>,
 }
@@ -42,54 +40,38 @@ pub enum PropRequest {
     Named(Vec<String>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, new)]
 pub struct PropEntry {
-    pub canonical_path: Option<PathBuf>,
     pub href: String,
-    pub content_type: Option<String>,
     pub modified: SystemTime,
     pub created: Option<SystemTime>,
     pub size: u64,
     pub is_dir: bool,
+    pub content_type: Option<String>,
     pub dead_props: Option<HashMap<String, String>>,
     pub active_locks: Option<Vec<LockInfo>>,
+    pub canonical_path: Option<PathBuf>,
 }
 
 impl PropEntry {
-    pub fn new(
-        href: String,
-        is_dir: bool,
-        size: u64,
-        modified: SystemTime,
-        created: Option<SystemTime>,
-    ) -> Self {
-        Self {
-            canonical_path: None,
-            content_type: None,
-            dead_props: None,
-            active_locks: None,
-            href,
-            modified,
-            created,
-            size,
-            is_dir,
-        }
-    }
-
     pub fn from_meta(href: String, is_dir: bool, meta: &std::fs::Metadata) -> Self {
         Self::new(
             href,
-            is_dir,
-            meta.len(),
-            meta.modified().unwrap_or(UNIX_EPOCH),
+            meta.modified().unwrap_or_else(|_| UNIX_EPOCH),
             meta.created().ok(),
+            meta.len(),
+            is_dir,
+            None,
+            None,
+            None,
+            None,
         )
     }
 }
 
 pub type LockStore = HashMap<PathBuf, Vec<LockInfo>>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, new)]
 pub struct LockInfo {
     pub scope: LockScope,
     pub token: String,
@@ -124,7 +106,7 @@ pub enum IfCondition {
     Not(Box<IfCondition>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, new)]
 pub struct IfList {
     pub resource_tag: Option<String>,
     pub conditions: Vec<IfCondition>,
@@ -211,10 +193,7 @@ pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
                 chars.next(); // consume '('
             } else {
                 // Bare token without enclosing (...) — single-condition list
-                lists.push(IfList {
-                    resource_tag: None,
-                    conditions: vec![IfCondition::StateToken(tag)],
-                });
+                lists.push(IfList::new(None, vec![IfCondition::StateToken(tag)]));
                 continue;
             }
         } else if chars.peek().unwrap().1 == '(' {
@@ -282,10 +261,7 @@ pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
             }
         }
 
-        lists.push(IfList {
-            resource_tag,
-            conditions,
-        });
+        lists.push(IfList::new(resource_tag, conditions));
     }
 
     lists
@@ -527,10 +503,7 @@ pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, ParseError> {
                         current_name = Some(clark_key(&ns, &local));
                     }
                     _ if in_remove => {
-                        actions.push(PropPatchAction {
-                            name: clark_key(&ns, &local),
-                            value: None,
-                        });
+                        actions.push(PropPatchAction(clark_key(&ns, &local), None));
                     }
                     _ => {}
                 }
@@ -538,24 +511,15 @@ pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, ParseError> {
             Event::Empty(e) => {
                 let (ns, local) = extract_element_ns(&e)?;
                 if in_remove && local != "prop" {
-                    actions.push(PropPatchAction {
-                        name: clark_key(&ns, &local),
-                        value: None,
-                    });
+                    actions.push(PropPatchAction(clark_key(&ns, &local), None));
                 } else if in_set && local != "prop" {
-                    actions.push(PropPatchAction {
-                        name: clark_key(&ns, &local),
-                        value: Some(String::new()),
-                    });
+                    actions.push(PropPatchAction(clark_key(&ns, &local), Some(String::new())));
                 }
             }
             Event::Text(t) if in_set && current_name.is_some() => {
                 let raw = String::from_utf8_lossy(t.as_ref());
                 let val = decode_xml_char_refs(&raw);
-                actions.push(PropPatchAction {
-                    name: current_name.take().unwrap(),
-                    value: Some(val),
-                });
+                actions.push(PropPatchAction(current_name.take().unwrap(), Some(val)));
             }
             Event::End(e) => {
                 let local_name = e.local_name();
@@ -564,10 +528,10 @@ pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, ParseError> {
                     "set" => in_set = false,
                     "remove" => in_remove = false,
                     _ if in_set && current_name.is_some() => {
-                        actions.push(PropPatchAction {
-                            name: current_name.take().unwrap(),
-                            value: Some(String::new()),
-                        });
+                        actions.push(PropPatchAction(
+                            current_name.take().unwrap(),
+                            Some(String::new()),
+                        ));
                     }
                     _ => {}
                 }
@@ -581,7 +545,7 @@ pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, ParseError> {
         return Err(ParseError::InvalidBody("invalid PROPPATCH body"));
     }
 
-    Ok(PropPatchOp { actions })
+    Ok(PropPatchOp::new(actions))
 }
 
 #[cfg(test)]
@@ -590,14 +554,14 @@ mod tests {
     use std::time::Duration;
 
     fn make_lock_info(timeout: Option<Duration>, created_offset: Duration) -> LockInfo {
-        LockInfo {
-            token: "opaquelocktoken:test".into(),
-            scope: LockScope::Exclusive,
-            owner: None,
+        LockInfo::new(
+            LockScope::Exclusive,
+            "opaquelocktoken:test".into(),
+            None,
+            SystemTime::now() - created_offset,
             timeout,
-            created: SystemTime::now() - created_offset,
-            depth: Depth::Zero,
-        }
+            Depth::Zero,
+        )
     }
 
     #[test]
@@ -702,81 +666,78 @@ mod tests {
 
     #[test]
     fn test_positive_tokens() {
-        let list = IfList {
-            resource_tag: None,
-            conditions: vec![
+        let list = IfList::new(
+            None,
+            vec![
                 IfCondition::StateToken("t1".into()),
                 IfCondition::Not(Box::new(IfCondition::StateToken("t2".into()))),
                 IfCondition::StateToken("t3".into()),
             ],
-        };
+        );
         let tokens = list.positive_tokens();
         assert_eq!(tokens, vec!["t1", "t3"]);
     }
 
     #[test]
     fn test_positive_tokens_iter() {
-        let list = IfList {
-            resource_tag: None,
-            conditions: vec![
+        let list = IfList::new(
+            None,
+            vec![
                 IfCondition::StateToken("t1".into()),
                 IfCondition::Not(Box::new(IfCondition::StateToken("t2".into()))),
                 IfCondition::StateToken("t3".into()),
             ],
-        };
+        );
         let tokens = list.positive_tokens_iter();
         assert_eq!(tokens.collect::<Vec<_>>(), vec!["t1", "t3"]);
     }
 
     #[test]
     fn test_has_lock_token_with_lock_token() {
-        let list = IfList {
-            resource_tag: None,
-            conditions: vec![IfCondition::StateToken("opaquelocktoken:abc".into())],
-        };
+        let list = IfList::new(
+            None,
+            vec![IfCondition::StateToken("opaquelocktoken:abc".into())],
+        );
         assert!(list.has_lock_token());
     }
 
     #[test]
     fn test_has_lock_token_dav_no_lock_only() {
-        let list = IfList {
-            resource_tag: None,
-            conditions: vec![IfCondition::StateToken("DAV:no-lock".into())],
-        };
+        let list = IfList::new(None, vec![IfCondition::StateToken("DAV:no-lock".into())]);
         assert!(!list.has_lock_token());
     }
 
     #[test]
     fn test_has_lock_token_not_dav_no_lock() {
-        let list = IfList {
-            resource_tag: None,
-            conditions: vec![IfCondition::Not(Box::new(IfCondition::StateToken(
+        let list = IfList::new(
+            None,
+            vec![IfCondition::Not(Box::new(IfCondition::StateToken(
                 "DAV:no-lock".into(),
             )))],
-        };
+        );
         assert!(!list.has_lock_token());
     }
 
     #[test]
     fn test_has_lock_token_not_lock_token() {
-        let list = IfList {
-            resource_tag: None,
-            conditions: vec![IfCondition::Not(Box::new(IfCondition::StateToken(
+        let list = IfList::new(
+            None,
+            vec![IfCondition::Not(Box::new(IfCondition::StateToken(
                 "opaquelocktoken:abc".into(),
             )))],
-        };
+        );
         assert!(list.has_lock_token());
     }
 
     #[test]
     fn test_has_lock_token_mixed() {
-        let list = IfList {
-            resource_tag: None,
-            conditions: vec![
+        let list = IfList::new(
+            None,
+            vec![
                 IfCondition::StateToken("DAV:no-lock".into()),
                 IfCondition::StateToken("opaquelocktoken:xyz".into()),
             ],
-        };
+        );
         assert!(list.has_lock_token());
     }
 
@@ -855,10 +816,9 @@ mod tests {
         let xml = br#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><prop0 xmlns="http://example.com/neon/litmus/">value0</prop0></D:prop></D:set></D:propertyupdate>"#;
         let op = parse_proppatch_request(xml).unwrap();
         let value = op.actions.iter().find_map(|a| match a {
-            PropPatchAction {
-                name,
-                value: Some(v),
-            } if name == "{http://example.com/neon/litmus/}prop0" => Some(v.as_str()),
+            PropPatchAction(name, Some(v)) if name == "{http://example.com/neon/litmus/}prop0" => {
+                Some(v.as_str())
+            }
             _ => None,
         });
         assert_eq!(value, Some("value0"));
@@ -869,10 +829,10 @@ mod tests {
         let xml = br#"<?xml version="1.0"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:p>val</X:p></D:prop></D:set><D:remove><D:prop><X:p/></D:prop></D:remove></D:propertyupdate>"#;
         let op = parse_proppatch_request(xml).unwrap();
         assert_eq!(op.actions.len(), 2);
-        assert_eq!(op.actions[0].name, "p");
-        assert_eq!(op.actions[0].value.as_deref(), Some("val"));
-        assert_eq!(op.actions[1].name, "p");
-        assert!(op.actions[1].value.is_none());
+        assert_eq!(op.actions[0].0.as_str(), "p");
+        assert_eq!(op.actions[0].1.as_deref(), Some("val"));
+        assert_eq!(op.actions[1].0.as_str(), "p");
+        assert!(op.actions[1].1.is_none());
     }
 
     #[test]
@@ -880,10 +840,11 @@ mod tests {
         let xml = br#"<?xml version="1.0" encoding="utf-8" ?><propertyupdate xmlns='DAV:'><set><prop><high-unicode xmlns='http://example.com/neon/litmus/'>&#65536;</high-unicode></prop></set></propertyupdate>"#;
         let op = parse_proppatch_request(xml).unwrap();
         let value = op.actions.iter().find_map(|a| match a {
-            PropPatchAction {
-                name,
-                value: Some(v),
-            } if name == "{http://example.com/neon/litmus/}high-unicode" => Some(v.as_str()),
+            PropPatchAction(name, Some(v))
+                if name == "{http://example.com/neon/litmus/}high-unicode" =>
+            {
+                Some(v.as_str())
+            }
             _ => None,
         });
         assert_eq!(value, Some("𐀀"), "high-unicode value should be U+10000 (𐀀)");
@@ -892,10 +853,7 @@ mod tests {
         let xml = br#"<?xml version="1.0"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:p>&#65;&#66;&#67;</X:p></D:prop></D:set></D:propertyupdate>"#;
         let op = parse_proppatch_request(xml).unwrap();
         let val = op.actions.iter().find_map(|a| match a {
-            PropPatchAction {
-                name,
-                value: Some(v),
-            } if name == "p" => Some(v.as_str()),
+            PropPatchAction(name, Some(v)) if name == "p" => Some(v.as_str()),
             _ => None,
         });
         assert_eq!(val, Some("ABC"), "&#65;&#66;&#67; should decode to ABC");

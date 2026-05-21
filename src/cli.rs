@@ -1,11 +1,12 @@
 use clap::Parser;
+use derive_new::new;
 
 use crate::DEFAULT_LOG_LEVEL;
 use crate::auth::AuthConfig;
 use crate::server::tls::TlsConfig;
 
 /// Arguments for shadow file access mode
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, new)]
 pub struct ShadowFileArg {
     /// Path to the shadow file
     pub path: String,
@@ -97,20 +98,11 @@ impl Cli {
     pub fn to_shadow_file_arg(&self) -> Option<ShadowFileArg> {
         self.shadow_file.as_ref().map(|s| {
             if let Some(path) = s.strip_suffix(":rw") {
-                ShadowFileArg {
-                    path: path.to_string(),
-                    writable: true,
-                }
+                ShadowFileArg::new(path.to_string(), true)
             } else if let Some(path) = s.strip_suffix(":ro") {
-                ShadowFileArg {
-                    path: path.to_string(),
-                    writable: false,
-                }
+                ShadowFileArg::new(path.to_string(), false)
             } else {
-                ShadowFileArg {
-                    path: s.clone(),
-                    writable: true,
-                }
+                ShadowFileArg::new(s.clone(), true)
             }
         })
     }
