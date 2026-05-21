@@ -9,8 +9,10 @@ COPY ./LICENSE /app/LICENSE
 COPY ./README.md /app/README.md
 
 ARG FEATURES="default"
-RUN cargo install \
-        --features "${FEATURES}" --locked --path . --root /app/ \
+RUN cargo build --features "${FEATURES}" --locked --release && \
+    cargo install \
+        --features "${FEATURES}" --locked \
+        --path . --root /app/ \
         --bin rshs
 
 FROM gcr.io/distroless/cc-debian13
