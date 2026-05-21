@@ -78,12 +78,12 @@ fn is_path_locked(
         None => &[],
     };
 
-    if !ls::evaluate_if(lists, infos, request_path) {
+    if !ls::eval_if(lists, infos, request_path) {
         return true;
     }
 
     webdav::walk_locked_ancestors(locks, path, root_canonical, |infos| {
         ls::active_slice(infos).any(|l| l.depth == webdav::Depth::Infinity)
-            && !ls::evaluate_if(lists, infos, request_path)
+            && !ls::eval_if(lists, infos, request_path)
     })
 }

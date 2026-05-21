@@ -56,7 +56,7 @@ pub fn eval_condition(cond: &IfCondition, infos: &[LockInfo]) -> bool {
     }
 }
 
-pub fn evaluate_if(lists: &[IfList], infos: &[LockInfo], request_path: &str) -> bool {
+pub fn eval_if(lists: &[IfList], infos: &[LockInfo], request_path: &str) -> bool {
     if lists.is_empty() {
         return active_slice(infos).next().is_none();
     }
@@ -160,41 +160,41 @@ mod tests {
     }
 
     #[test]
-    fn test_evaluate_if_no_lists_unlocked() {
+    fn test_eval_if_no_lists_unlocked() {
         let lists: Vec<IfList> = vec![];
         let infos: Vec<LockInfo> = vec![];
-        assert!(evaluate_if(&lists, &infos, "/a"));
+        assert!(eval_if(&lists, &infos, "/a"));
     }
 
     #[test]
-    fn test_evaluate_if_no_lists_locked() {
+    fn test_eval_if_no_lists_locked() {
         let lists: Vec<IfList> = vec![];
         let infos = vec![make_lock(LockScope::Exclusive, "t1")];
-        assert!(!evaluate_if(&lists, &infos, "/a"));
+        assert!(!eval_if(&lists, &infos, "/a"));
     }
 
     #[test]
-    fn test_evaluate_if_matched_token() {
+    fn test_eval_if_matched_token() {
         let lists = vec![IfList::new(
             None,
             vec![IfCondition::StateToken("t1".into())],
         )];
         let infos = vec![make_lock(LockScope::Exclusive, "t1")];
-        assert!(evaluate_if(&lists, &infos, "/a"));
+        assert!(eval_if(&lists, &infos, "/a"));
     }
 
     #[test]
-    fn test_evaluate_if_wrong_token() {
+    fn test_eval_if_wrong_token() {
         let lists = vec![IfList::new(
             None,
             vec![IfCondition::StateToken("t2".into())],
         )];
         let infos = vec![make_lock(LockScope::Exclusive, "t1")];
-        assert!(!evaluate_if(&lists, &infos, "/a"));
+        assert!(!eval_if(&lists, &infos, "/a"));
     }
 
     #[test]
-    fn test_evaluate_if_not_no_lock_locked() {
+    fn test_eval_if_not_no_lock_locked() {
         let lists = vec![IfList::new(
             None,
             vec![IfCondition::Not(Box::new(IfCondition::StateToken(
@@ -202,11 +202,11 @@ mod tests {
             )))],
         )];
         let infos = vec![make_lock(LockScope::Exclusive, "t1")];
-        assert!(evaluate_if(&lists, &infos, "/a"));
+        assert!(eval_if(&lists, &infos, "/a"));
     }
 
     #[test]
-    fn test_evaluate_if_not_no_lock_unlocked() {
+    fn test_eval_if_not_no_lock_unlocked() {
         let lists = vec![IfList::new(
             None,
             vec![IfCondition::Not(Box::new(IfCondition::StateToken(
@@ -214,36 +214,36 @@ mod tests {
             )))],
         )];
         let infos: Vec<LockInfo> = vec![];
-        assert!(!evaluate_if(&lists, &infos, "/a"));
+        assert!(!eval_if(&lists, &infos, "/a"));
     }
 
     #[test]
-    fn test_evaluate_if_resource_tag_mismatch() {
+    fn test_eval_if_resource_tag_mismatch() {
         let lists = vec![IfList::new(
             Some("/b".into()),
             vec![IfCondition::StateToken("t2".into())],
         )];
         let infos = vec![make_lock(LockScope::Exclusive, "t1")];
         // Tag doesn't match /a → list is skipped → passes
-        assert!(evaluate_if(&lists, &infos, "/a"));
+        assert!(eval_if(&lists, &infos, "/a"));
     }
 
     #[test]
-    fn test_evaluate_if_resource_tag_match() {
+    fn test_eval_if_resource_tag_match() {
         let lists = vec![IfList::new(
             Some("/a".into()),
             vec![IfCondition::StateToken("t1".into())],
         )];
         let infos = vec![make_lock(LockScope::Exclusive, "t1")];
-        assert!(evaluate_if(&lists, &infos, "/a"));
+        assert!(eval_if(&lists, &infos, "/a"));
     }
 
     #[test]
-    fn test_evaluate_if_no_lists_expired_ignored() {
+    fn test_eval_if_no_lists_expired_ignored() {
         let lists: Vec<IfList> = vec![];
         let infos = vec![make_expired_lock("t1")];
         // Expired lock ignored lazily → effectively unlocked → passes
-        assert!(evaluate_if(&lists, &infos, "/a"));
+        assert!(eval_if(&lists, &infos, "/a"));
     }
 
     #[test]
@@ -262,13 +262,13 @@ mod tests {
     }
 
     #[test]
-    fn test_evaluate_if_dav_no_lock_unlocked() {
+    fn test_eval_if_dav_no_lock_unlocked() {
         let lists = vec![IfList::new(
             None,
             vec![IfCondition::StateToken("DAV:no-lock".into())],
         )];
         let infos: Vec<LockInfo> = vec![];
-        assert!(evaluate_if(&lists, &infos, "/a"));
+        assert!(eval_if(&lists, &infos, "/a"));
     }
 
     #[test]
@@ -313,12 +313,12 @@ mod tests {
     }
 
     #[test]
-    fn test_evaluate_if_dav_no_lock_locked() {
+    fn test_eval_if_dav_no_lock_locked() {
         let lists = vec![IfList::new(
             None,
             vec![IfCondition::StateToken("DAV:no-lock".into())],
         )];
         let infos = vec![make_lock(LockScope::Exclusive, "t1")];
-        assert!(!evaluate_if(&lists, &infos, "/a"));
+        assert!(!eval_if(&lists, &infos, "/a"));
     }
 }
