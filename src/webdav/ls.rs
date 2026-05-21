@@ -80,11 +80,8 @@ pub fn check_existing_exclusive(
     entry: &[LockInfo],
     if_tokens: &[String],
 ) -> Result<Option<String>, StatusCode> {
-    let token = entry
-        .iter()
-        .find(|l| l.is_exclusive())
-        .map(|l| l.token.clone());
-    match token {
+    let token_info = active_slice(entry).find(|l| l.is_exclusive());
+    match token_info.map(|l| l.token.clone()) {
         Some(t) if if_tokens.contains(&t) => Ok(Some(t)),
         Some(_) => Err(StatusCode::LOCKED),
         None => Ok(None),
@@ -272,6 +269,47 @@ mod tests {
         )];
         let infos: Vec<LockInfo> = vec![];
         assert!(evaluate_if(&lists, &infos, "/a"));
+    }
+
+    #[test]
+    fn test_check_existing_exclusive_empty() {
+        let entry: Vec<LockInfo> = vec![];
+        let tokens: Vec<String> = vec![];
+        assert_eq!(check_existing_exclusive(&entry, &tokens), Ok(None));
+    }
+
+    #[test]
+    fn test_check_existing_exclusive_matching_token() {
+        let entry = vec![make_lock(LockScope::Exclusive, "t1")];
+        let tokens = vec!["t1".into()];
+        assert_eq!(
+            check_existing_exclusive(&entry, &tokens),
+            Ok(Some("t1".into()))
+        );
+    }
+
+    #[test]
+    fn test_check_existing_exclusive_wrong_token() {
+        let entry = vec![make_lock(LockScope::Exclusive, "t1")];
+        let tokens = vec!["t2".into()];
+        assert_eq!(
+            check_existing_exclusive(&entry, &tokens),
+            Err(StatusCode::LOCKED)
+        );
+    }
+
+    #[test]
+    fn test_check_existing_exclusive_expired_ignored() {
+        let entry = vec![make_expired_lock("t1")];
+        let tokens: Vec<String> = vec![];
+        assert_eq!(check_existing_exclusive(&entry, &tokens), Ok(None));
+    }
+
+    #[test]
+    fn test_check_existing_exclusive_shared_only() {
+        let entry = vec![make_lock(LockScope::Shared, "t1")];
+        let tokens: Vec<String> = vec![];
+        assert_eq!(check_existing_exclusive(&entry, &tokens), Ok(None));
     }
 
     #[test]
