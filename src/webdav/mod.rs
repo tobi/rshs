@@ -1,4 +1,5 @@
 pub mod fs;
+pub mod ls;
 pub mod method;
 pub mod xml;
 
@@ -163,45 +164,7 @@ pub fn generate_lock_token() -> String {
     format!("opaquelocktoken:{:016x}", h.finish())
 }
 
-pub fn walk_locked_ancestors<'a>(
-    locks: &'a LockStore,
-    target: &std::path::Path,
-    root_canonical: &std::path::Path,
-    mut f: impl FnMut(&'a [LockInfo]) -> bool,
-) -> bool {
-    let mut current = target.parent();
-    while let Some(parent) = current {
-        if !parent.starts_with(root_canonical) {
-            break;
-        }
-        if let Some(infos) = locks.get(parent) {
-            if f(infos) {
-                return true;
-            }
-        }
-        current = parent.parent();
-    }
-    false
-}
-
-pub fn find_ancestor_lock<'a>(
-    locks: &'a LockStore,
-    target: &std::path::Path,
-    root_canonical: &std::path::Path,
-    predicate: impl Fn(&LockInfo) -> bool,
-) -> Option<&'a LockInfo> {
-    let mut result: Option<&'a LockInfo> = None;
-    walk_locked_ancestors(locks, target, root_canonical, |infos| {
-        for lock in infos {
-            if lock.depth == Depth::Infinity && predicate(lock) {
-                result = Some(lock);
-                return true;
-            }
-        }
-        false
-    });
-    result
-}
+pub use ls::{find_ancestor_lock, walk_locked_ancestors};
 
 pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
     let value = match headers.get("if").and_then(|v| v.to_str().ok()) {

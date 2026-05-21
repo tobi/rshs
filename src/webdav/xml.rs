@@ -5,7 +5,7 @@ use axum::{body::Body, http::StatusCode, response::Response};
 use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
-use crate::webdav::{self, PropEntry, PropRequest};
+use super::{PropEntry, PropRequest};
 
 pub const DAV_PREFIX: &str = "D:";
 
@@ -88,7 +88,7 @@ fn write_response(writer: &mut XmlWriter, entry: &PropEntry, prop_request: &Prop
             let (mut found, mut missing) = (Vec::new(), Vec::new());
 
             for n in names {
-                let local = webdav::parse_clark(n).map(|(_, l)| l).unwrap_or(n.as_str());
+                let local = super::parse_clark(n).map(|(_, l)| l).unwrap_or(n.as_str());
                 if SUPPORTED_PROPS.contains(&local) {
                     if !found.contains(&local) {
                         found.push(local);
@@ -248,7 +248,7 @@ fn write_propstat_404(writer: &mut XmlWriter, props: &[String]) {
     writer.ev(Event::Start(BytesStart::new(dav_qname("prop"))));
 
     for prop_name in props {
-        let (ns, local) = webdav::parse_clark(prop_name).unwrap_or(("", prop_name));
+        let (ns, local) = super::parse_clark(prop_name).unwrap_or(("", prop_name));
         let mut elem = BytesStart::new(local);
         if !ns.is_empty() {
             elem.push_attribute(("xmlns", ns));
@@ -334,7 +334,7 @@ fn write_dead_propstat(writer: &mut XmlWriter, props: &std::collections::HashMap
     writer.ev(Event::Start(BytesStart::new(dav_qname("prop"))));
 
     for (clark_key, value) in props {
-        let (ns, local) = webdav::parse_clark(clark_key).unwrap_or(("", clark_key));
+        let (ns, local) = super::parse_clark(clark_key).unwrap_or(("", clark_key));
         let mut elem = BytesStart::new(local);
         if !ns.is_empty() {
             elem.push_attribute(("xmlns", ns));

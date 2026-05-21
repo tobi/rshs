@@ -37,7 +37,9 @@ src/
   webdav/
     mod.rs                      # Lock types (LockInfo/LockStore/LockScope), If header types
                                 #   (IfCondition/IfList), parse helpers, find_ancestor_lock,
-                                #   ParseError, DeadPropertyStore
+                                #   ParseError, DeadPropertyStore, PropEntry
+    ls.rs                       # Lock system: ancestor walk, If-condition evaluation,
+                                #   active-slice filter, exclusive-lock check
     method.rs                   # Method type (enum-like struct for HTTP/WebDAV method constants)
     xml.rs                      # Multistatus XML generation, write_activelock (shared lock XML)
     fs.rs                       # Filesystem traversal + href encoding
@@ -46,7 +48,7 @@ src/
     mod.rs
     health.rs                   # Health check middleware (tower Layer)
     auth.rs                     # Basic Auth middleware (auto-skips when no users configured)
-    lock.rs                     # Lock enforcement middleware (tower Layer)
+    lock.rs                     # Lock enforcement middleware — uses webdav::ls for evaluation
 
   server/
     mod.rs                      # AppState, ServerConfig, Router construction, serve
@@ -136,6 +138,8 @@ src/
 - **Lock system**: In-memory lock support via `LockStore` (`Arc<RwLock<HashMap<PathBuf, Vec<LockInfo>>>>`).
   Shared and exclusive locks with conflict resolution (shared+shared ok, exclusive blocks all).
   Full RFC 4918 §10.4 conditional `If` header evaluation: `Not`, `DAV:no-lock`, resource-tags, AND semantics.
+  Core lock logic lives in `webdav::ls` (`walk_locked_ancestors`, `find_ancestor_lock`,
+  `active_slice`, `eval_condition`, `evaluate_if`, `check_existing_exclusive`).
   Depth:infinity ancestor chain enforcement in `lock_enforce` + indirect refresh via
   ancestor lock discovery in `handle_lock`. Lock enforcement via tower Layer middleware
   (`middleware::lock::lock_enforce`), which converts the request method to `webdav::Method`
