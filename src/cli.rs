@@ -1,18 +1,8 @@
 use clap::Parser;
-use derive_new::new;
 
 use crate::DEFAULT_LOG_LEVEL;
-use crate::auth::AuthConfig;
+use crate::auth::{AuthConfig, ShadowFileArg};
 use crate::server::tls::TlsConfig;
-
-/// Arguments for shadow file access mode
-#[derive(Debug, Clone, new)]
-pub struct ShadowFileArg {
-    /// Path to the shadow file
-    pub path: String,
-    /// Whether the file is writable (:rw suffix)
-    pub writable: bool,
-}
 
 /// Simple HTTP/WebDAV Server
 #[derive(Parser)]
@@ -96,15 +86,9 @@ impl Cli {
     }
 
     pub fn to_shadow_file_arg(&self) -> Option<ShadowFileArg> {
-        self.shadow_file.as_ref().map(|s| {
-            if let Some(path) = s.strip_suffix(":rw") {
-                ShadowFileArg::new(path.to_string(), true)
-            } else if let Some(path) = s.strip_suffix(":ro") {
-                ShadowFileArg::new(path.to_string(), false)
-            } else {
-                ShadowFileArg::new(s.clone(), true)
-            }
-        })
+        self.shadow_file
+            .as_ref()
+            .map(|s| ShadowFileArg::from_arg(s))
     }
 
     pub fn to_auth_config(&self) -> AuthConfig {
