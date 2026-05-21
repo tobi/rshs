@@ -40,6 +40,7 @@ pub enum PropRequest {
     Named(Vec<String>),
 }
 
+#[allow(clippy::too_many_arguments)]
 #[derive(Debug, Clone, new)]
 pub struct PropEntry {
     pub href: String,
@@ -57,7 +58,7 @@ impl PropEntry {
     pub fn from_meta(href: String, is_dir: bool, meta: &std::fs::Metadata) -> Self {
         Self::new(
             href,
-            meta.modified().unwrap_or_else(|_| UNIX_EPOCH),
+            meta.modified().unwrap_or(UNIX_EPOCH),
             meta.created().ok(),
             meta.len(),
             is_dir,
