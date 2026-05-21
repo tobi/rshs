@@ -199,13 +199,15 @@ pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Res
     let target = state.resolve_and_guard(&request_path).await;
     let target = ok_or_return!(target.or_invalid(StatusCode::BAD_REQUEST));
 
-    let existed = match tokio::fs::metadata(&target).await {
-        Ok(m) => m.is_file(),
-        Err(_) => false,
+    let result = match tokio::fs::File::create_new(&target).await {
+        Ok(f) => Ok((f, false)),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            tokio::fs::File::create(&target).await.map(|f| (f, true))
+        }
+        Err(e) => Err(e),
     };
-
-    let mut file = match tokio::fs::File::create(&target).await {
-        Ok(f) => f,
+    let (mut file, existed) = match result {
+        Ok(pair) => pair,
         Err(e) => {
             tracing::error!(
                 error = %e, path = %target.display(), "failed to create file for PUT"
