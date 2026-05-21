@@ -58,24 +58,22 @@ pub fn eval_condition(cond: &IfCondition, infos: &[LockInfo]) -> bool {
 
 pub fn evaluate_if(lists: &[IfList], infos: &[LockInfo], request_path: &str) -> bool {
     if lists.is_empty() {
-        return !active_slice(infos).any(|_| true);
+        return active_slice(infos).next().is_none();
     }
 
-    let applicable: Vec<_> = lists
+    let mut applicable = lists
         .iter()
         .filter(|l| match &l.resource_tag {
             Some(tag) => tag == request_path,
             None => true,
         })
-        .collect();
+        .peekable();
 
-    if applicable.is_empty() {
+    if applicable.peek().is_none() {
         return true;
     }
 
-    applicable
-        .iter()
-        .all(|l| l.conditions.iter().all(|c| eval_condition(c, infos)))
+    applicable.all(|l| l.conditions.iter().all(|c| eval_condition(c, infos)))
 }
 
 pub fn check_existing_exclusive(
