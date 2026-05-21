@@ -4,6 +4,7 @@ use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+use derive_new::new;
 use sha_crypt::{PasswordHasher, PasswordVerifier, ShaCrypt};
 
 use crate::cli::Cli;
@@ -12,6 +13,25 @@ use crate::cli::Cli;
 pub enum Credential {
     Plaintext(String),
     Sha512Crypt(String),
+}
+
+#[derive(Debug, Clone, new)]
+pub struct ShadowFileArg {
+    pub path: String,
+    pub writable: bool,
+}
+
+impl ShadowFileArg {
+    /// Parse a shadow file spec string: `PATH[:rw|:ro]`. Defaults to `:rw`.
+    pub fn from_arg(s: &str) -> Self {
+        if let Some(path) = s.strip_suffix(":rw") {
+            Self::new(path.to_string(), true)
+        } else if let Some(path) = s.strip_suffix(":ro") {
+            Self::new(path.to_string(), false)
+        } else {
+            Self::new(s.to_string(), true)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]

@@ -6,6 +6,7 @@ use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use derive_new::new;
 use futures_util::TryStreamExt;
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::{ReaderStream, StreamReader};
@@ -69,6 +70,7 @@ async fn do_get_or_head(fs_path: PathBuf, request_path: String, method: &Method)
     }
 }
 
+#[derive(new)]
 struct DirEntry {
     name: String,
     is_dir: bool,
@@ -112,12 +114,7 @@ async fn collect_dir_entries(dir_path: &Path) -> Option<Vec<DirEntry>> {
             .as_ref()
             .and_then(|m| m.modified().ok())
             .unwrap_or(UNIX_EPOCH);
-        entries.push(DirEntry {
-            name,
-            is_dir,
-            size,
-            modified,
-        });
+        entries.push(DirEntry::new(name, is_dir, size, modified));
     }
     Some(entries)
 }
@@ -199,13 +196,15 @@ pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Res
     let target = state.resolve_and_guard(&request_path).await;
     let target = ok_or_return!(target.or_invalid(StatusCode::BAD_REQUEST));
 
-    let existed = match tokio::fs::metadata(&target).await {
-        Ok(m) => m.is_file(),
-        Err(_) => false,
+    let result = match tokio::fs::File::create_new(&target).await {
+        Ok(f) => Ok((f, false)),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            tokio::fs::File::create(&target).await.map(|f| (f, true))
+        }
+        Err(e) => Err(e),
     };
-
-    let mut file = match tokio::fs::File::create(&target).await {
-        Ok(f) => f,
+    let (mut file, existed) = match result {
+        Ok(pair) => pair,
         Err(e) => {
             tracing::error!(
                 error = %e, path = %target.display(), "failed to create file for PUT"

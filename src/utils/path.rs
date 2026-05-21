@@ -4,6 +4,37 @@ use std::path::{Path, PathBuf};
 use axum::http::StatusCode;
 use percent_encoding::percent_decode_str;
 
+/// Errors returned by `resolve_and_guard`.
+#[derive(Debug)]
+pub enum ResolveTargetError {
+    /// Path contains `..`, `.`, or is a directory path.
+    InvalidPath,
+    /// Canonicalize of parent directory failed (doesn't exist, I/O error).
+    ParentCanonicalizeFailed(std::io::Error),
+    /// Canonical parent is outside the root directory.
+    TraversalBlocked,
+}
+
+impl fmt::Display for ResolveTargetError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPath => write!(f, "invalid path"),
+            Self::ParentCanonicalizeFailed(e) => write!(f, "parent not found: {e}"),
+            Self::TraversalBlocked => write!(f, "path traversal blocked"),
+        }
+    }
+}
+
+impl ResolveTargetError {
+    pub fn status(&self, on_invalid: StatusCode) -> StatusCode {
+        match self {
+            Self::InvalidPath => on_invalid,
+            Self::ParentCanonicalizeFailed(_) => StatusCode::CONFLICT,
+            Self::TraversalBlocked => StatusCode::FORBIDDEN,
+        }
+    }
+}
+
 /// Resolve a path for read operations (GET/HEAD).
 /// Canonicalizes and verifies the target is within the root directory.
 /// Returns `None` if the path doesn't exist or is outside the root.
@@ -44,37 +75,6 @@ pub fn resolve_write_target(root_dir: &Path, request_path: &str) -> Option<PathB
     Some(root_dir.join(trimmed))
 }
 
-/// Errors returned by `resolve_and_guard`.
-#[derive(Debug)]
-pub enum ResolveTargetError {
-    /// Path contains `..`, `.`, or is a directory path.
-    InvalidPath,
-    /// Canonicalize of parent directory failed (doesn't exist, I/O error).
-    ParentCanonicalizeFailed(std::io::Error),
-    /// Canonical parent is outside the root directory.
-    TraversalBlocked,
-}
-
-impl fmt::Display for ResolveTargetError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidPath => write!(f, "invalid path"),
-            Self::ParentCanonicalizeFailed(e) => write!(f, "parent not found: {e}"),
-            Self::TraversalBlocked => write!(f, "path traversal blocked"),
-        }
-    }
-}
-
-impl ResolveTargetError {
-    pub fn status(&self, on_invalid: StatusCode) -> StatusCode {
-        match self {
-            Self::InvalidPath => on_invalid,
-            Self::ParentCanonicalizeFailed(_) => StatusCode::CONFLICT,
-            Self::TraversalBlocked => StatusCode::FORBIDDEN,
-        }
-    }
-}
-
 /// Resolves a write target: validates path, canonicalizes parent,
 /// verifies traversal safety.
 ///
@@ -84,21 +84,23 @@ pub async fn resolve_and_guard(
     root_canonical: &Path,
     request_path: &str,
 ) -> Result<PathBuf, ResolveTargetError> {
-    let fs_path =
-        resolve_write_target(root_dir, request_path).ok_or(ResolveTargetError::InvalidPath)?;
+    let fs_path = match resolve_write_target(root_dir, request_path) {
+        Some(p) => p,
+        None => return Err(ResolveTargetError::InvalidPath),
+    };
 
     let parent = fs_path.parent().unwrap_or(root_dir);
 
-    let parent_canonical = tokio::fs::canonicalize(parent)
-        .await
-        .map_err(ResolveTargetError::ParentCanonicalizeFailed)?;
+    let parent_canonical = match tokio::fs::canonicalize(parent).await {
+        Ok(pc) => pc,
+        Err(e) => return Err(ResolveTargetError::ParentCanonicalizeFailed(e)),
+    };
 
     if !parent_canonical.starts_with(root_canonical) {
         return Err(ResolveTargetError::TraversalBlocked);
     }
 
-    let filename = fs_path.file_name().unwrap();
-    Ok(parent_canonical.join(filename))
+    Ok(parent_canonical.join(fs_path.file_name().unwrap()))
 }
 
 #[cfg(test)]

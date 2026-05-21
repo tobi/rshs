@@ -12,7 +12,7 @@ use crate::ok_or_return;
 use crate::server::AppState;
 use crate::utils::error::{IntoResolved, OrStatus};
 use crate::webdav::{
-    self,
+    self, ls,
     xml::{XmlWriterExt, dav_qname, write_activelock},
 };
 
@@ -82,14 +82,14 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
         },
     };
 
-    let lock = webdav::LockInfo {
-        token: token.clone(),
-        scope: lock_scope,
+    let lock = webdav::LockInfo::new(
+        lock_scope,
+        token.clone(),
         owner,
+        std::time::SystemTime::now(),
         timeout,
-        created: std::time::SystemTime::now(),
         depth,
-    };
+    );
     let xml = build_lock_response(&lock);
     entry.push(lock);
 
@@ -166,13 +166,9 @@ fn build_lock_response(lock: &webdav::LockInfo) -> String {
 }
 
 async fn ensure_lock_null_resource(target: &std::path::Path) -> Result<(), StatusCode> {
-    if tokio::fs::metadata(target).await.is_ok() {
-        tracing::debug!(path = %target.display(), "lock-null resource already exists");
-        return Ok(());
-    }
-
-    match tokio::fs::File::create(target).await {
+    match tokio::fs::File::create_new(target).await {
         Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(e) => {
             tracing::error!(
                 error = %e, path = %target.display(), "failed to create lock-null resource"
@@ -182,27 +178,12 @@ async fn ensure_lock_null_resource(target: &std::path::Path) -> Result<(), Statu
     }
 }
 
-fn check_existing_exclusive(
-    entry: &[webdav::LockInfo],
-    if_tokens: &[String],
-) -> Result<Option<String>, StatusCode> {
-    let token = entry
-        .iter()
-        .find(|l| l.is_exclusive())
-        .map(|l| l.token.clone());
-    match token {
-        Some(t) if if_tokens.contains(&t) => Ok(Some(t)),
-        Some(_) => Err(StatusCode::LOCKED),
-        None => Ok(None),
-    }
-}
-
 async fn try_acquire_exclusive(
     entry: &mut Vec<webdav::LockInfo>,
     if_tokens: &[String],
     target: &std::path::Path,
 ) -> Result<(String, bool), StatusCode> {
-    if let Some(token) = check_existing_exclusive(entry, if_tokens)? {
+    if let Some(token) = ls::check_existing_exclusive(entry, if_tokens)? {
         entry.retain(|l| !l.is_exclusive());
         return Ok((token, true));
     }
@@ -224,7 +205,7 @@ async fn try_acquire_shared(
     if_tokens: &[String],
     target: &std::path::Path,
 ) -> Result<(String, bool), StatusCode> {
-    if check_existing_exclusive(entry, if_tokens)?.is_some() {
+    if ls::check_existing_exclusive(entry, if_tokens)?.is_some() {
         entry.retain(|l| !l.is_exclusive());
         return Ok((webdav::generate_lock_token(), false));
     }
