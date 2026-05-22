@@ -87,11 +87,23 @@ impl DirEntry {
         }
     }
 
+    fn display_name_len(&self) -> usize {
+        self.name.len() + if self.is_dir { 1 } else { 0 }
+    }
+
     fn size_label(&self) -> String {
         if self.is_dir {
             "-".to_string()
         } else {
             self.size.to_string()
+        }
+    }
+
+    fn size_label_len(&self) -> usize {
+        if self.is_dir {
+            1
+        } else {
+            self.size.checked_ilog10().unwrap_or(0) as usize + 1
         }
     }
 }
@@ -119,20 +131,12 @@ async fn collect_dir_entries(dir_path: &Path) -> Option<Vec<DirEntry>> {
     Some(entries)
 }
 
-fn render_dir_html(request_path: &str, entries: &[DirEntry]) -> (String, usize) {
-    let mut entries: Vec<_> = entries.iter().collect();
+fn render_dir_html(request_path: &str, mut entries: Vec<DirEntry>) -> (String, usize) {
     entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
 
-    let max_name_len = entries
-        .iter()
-        .map(|e| e.display_name().len())
-        .max()
-        .unwrap_or(0);
-    let max_size_len = entries
-        .iter()
-        .map(|e| e.size_label().len())
-        .max()
-        .unwrap_or(0);
+    let (max_name_len, max_size_len) = entries.iter().fold((0, 0), |(mn, ms), e| {
+        (mn.max(e.display_name_len()), ms.max(e.size_label_len()))
+    });
     let name_col = max_name_len + 20;
 
     use std::fmt::Write;
@@ -143,7 +147,7 @@ fn render_dir_html(request_path: &str, entries: &[DirEntry]) -> (String, usize) 
     )
     .unwrap();
     if request_path != "/" {
-        html.push_str("<a href=\"../\">../</a>");
+        html.push_str("<a href=\"../\">../</a>\n");
     }
 
     for entry in &entries {
@@ -152,15 +156,15 @@ fn render_dir_html(request_path: &str, entries: &[DirEntry]) -> (String, usize) 
         let date_str = format_rfc850(entry.modified);
         let pad1 = name_col.saturating_sub(disp.len());
 
-        let anchor = if entry.is_dir {
-            format!("<a href=\"{}/\">{}/</a>", entry.name, entry.name)
+        if entry.is_dir {
+            write!(html, "<a href=\"{}/\">{}/</a>", entry.name, entry.name).unwrap();
         } else {
-            format!("<a href=\"{}\">{}</a>", entry.name, entry.name)
-        };
+            write!(html, "<a href=\"{}\">{}</a>", entry.name, entry.name).unwrap();
+        }
 
-        write!(
+        writeln!(
             html,
-            "{anchor}{:pad1$}{date_str}    {:>max_size_len$}",
+            "{:pad1$}{date_str}    {:>max_size_len$}",
             "", size_str
         )
         .unwrap();
@@ -182,7 +186,8 @@ async fn generate_dir_listing(dir_path: &Path, request_path: &str) -> (String, u
             );
         }
     };
-    render_dir_html(request_path, &entries)
+
+    render_dir_html(request_path, entries)
 }
 
 // ---------------------------------------------------------------------------
