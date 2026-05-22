@@ -16,10 +16,11 @@ use crate::webdav::{
     xml::{XmlWriterExt, dav_qname, write_activelock},
 };
 
-// ---------------------------------------------------------------------------
-// LOCK
-// ---------------------------------------------------------------------------
-
+/// LOCK handler — creates or refreshes a WebDAV lock (RFC 4918 §9.10).
+///
+/// Supports exclusive and shared locks. Handles lock-null resource creation
+/// for locking non-existent URLs. Refreshes existing locks when the same
+/// token is presented. Returns the `Lock-Token` header and activelock XML.
 pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().trim_end_matches('/').to_owned();
 
@@ -220,10 +221,10 @@ async fn try_acquire_shared(
     Ok((webdav::generate_lock_token(), false))
 }
 
-// ---------------------------------------------------------------------------
-// UNLOCK
-// ---------------------------------------------------------------------------
-
+/// UNLOCK handler — removes a WebDAV lock (RFC 4918 §9.11).
+///
+/// Requires the `Lock-Token` header. Returns `204 No Content` on success.
+/// Returns `403 Forbidden` if the token does not match any existing lock.
 pub async fn handle_unlock(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 

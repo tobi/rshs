@@ -1,4 +1,7 @@
-pub mod tls;
+//! Router construction, request dispatch, and server startup for both HTTP and HTTPS.
+//! Also provides the lock-cleanup background task.
+
+pub(crate) mod tls;
 
 use std::fs;
 use std::io::{self, Error, ErrorKind};
@@ -9,7 +12,6 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
-use axum::middleware as axum_mw;
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use derive_new::new;
@@ -18,10 +20,13 @@ use tower_http::trace::TraceLayer;
 
 use crate::auth::AuthConfig;
 use crate::handlers::{http, locks, webdav as webdav_handler};
-use crate::middleware;
 use crate::utils::path::{self, ResolveTargetError};
 use crate::webdav::{DeadPropertyStore, LockStore, Method};
 
+/// Shared application state passed to every handler and middleware.
+///
+/// Holds the root directory, auth config, WebDAV dead property store, and lock store.
+/// All fields are behind `Arc` for cheap cloning.
 #[derive(Clone)]
 pub struct AppState {
     pub auth_config: Arc<AuthConfig>,
@@ -43,15 +48,15 @@ impl AppState {
         }
     }
 
-    pub async fn resolve_existing(&self, request_path: &str) -> Option<PathBuf> {
+    pub(crate) async fn resolve_existing(&self, request_path: &str) -> Option<PathBuf> {
         path::resolve_existing(&self.root_dir, &self.root_canonical, request_path).await
     }
 
-    pub fn resolve_write_target(&self, request_path: &str) -> Option<PathBuf> {
+    pub(crate) fn resolve_write_target(&self, request_path: &str) -> Option<PathBuf> {
         path::resolve_write_target(&self.root_dir, request_path)
     }
 
-    pub async fn resolve_and_guard(
+    pub(crate) async fn resolve_and_guard(
         &self,
         request_path: &str,
     ) -> Result<PathBuf, ResolveTargetError> {
@@ -59,6 +64,8 @@ impl AppState {
     }
 }
 
+/// Configuration for starting the server — root directory, bind address,
+/// optional TLS, and authentication.
 #[derive(Clone, new)]
 pub struct ServerConfig {
     pub root_dir: PathBuf,
@@ -68,6 +75,8 @@ pub struct ServerConfig {
     pub auth_config: AuthConfig,
 }
 
+/// Builds the axum router with all middleware layers, then starts the HTTP or HTTPS
+/// server. Also spawns a background task to prune expired WebDAV locks every 30 seconds.
 pub async fn start_server(config: ServerConfig) -> io::Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.host, config.port)
         .parse()
@@ -78,19 +87,7 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
         config.auth_config.clone(),
     ));
 
-    let router = Router::new()
-        .fallback(any(dispatch))
-        .layer(TraceLayer::new_for_http())
-        .layer(axum_mw::from_fn_with_state(
-            state.auth_config.clone(),
-            middleware::auth::auth_middleware,
-        ))
-        .layer(axum_mw::from_fn_with_state(
-            state.clone(),
-            middleware::lock::lock_enforce,
-        ))
-        .layer(middleware::health::HealthCheck)
-        .with_state(state.clone());
+    let router = make_router(state.clone());
 
     let cleanup_notify = Arc::new(Notify::new());
     let task = lock_cleanup_task(state.locks.clone(), cleanup_notify.clone());
@@ -117,6 +114,29 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
     let _ = cleanup_handle.await;
 
     Ok(())
+}
+
+/// Build the full middleware stack and request dispatch router from shared state.
+///
+/// This produces the same Router used by [`start_server`], enabling integration
+/// testing without binding a TCP port. Layers are applied from inside out:
+/// `HealthCheck` (outermost) → `LockEnforce` → `Auth` → `TraceLayer` → dispatch.
+pub fn make_router(state: Arc<AppState>) -> Router {
+    use crate::middleware::{auth, health, lock};
+    use axum::middleware::from_fn_with_state;
+
+    let auth_config = state.auth_config.clone();
+    let auth_mw = from_fn_with_state(auth_config, auth::auth_middleware);
+    let lock_mw = from_fn_with_state(state.clone(), lock::lock_enforce);
+    let health_check_mw = health::HealthCheck;
+
+    Router::new()
+        .fallback(any(dispatch))
+        .layer(TraceLayer::new_for_http())
+        .layer(auth_mw)
+        .layer(lock_mw)
+        .layer(health_check_mw)
+        .with_state(state)
 }
 
 async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response {

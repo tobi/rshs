@@ -9,8 +9,8 @@ use crate::utils::path::ResolveTargetError;
 /// with appropriate status codes and logging.
 ///
 /// Log level convention:
-///   4xx codes → `debug!` (client error, normal operation)
-///   5xx codes → `error!` (server error, requires attention)
+/// - 4xx codes → `debug!` (client error, normal operation)
+/// - 5xx codes → `error!` (server error, requires attention)
 #[allow(clippy::result_large_err)]
 pub trait OrStatus<T> {
     /// Log the error and convert to `Response` with the given status code.
@@ -43,6 +43,7 @@ pub trait OrStatus<T> {
     }
 
     /// Log at `debug` level and return `409 Conflict`.
+    #[allow(dead_code)]
     fn or_409(self, msg: &str) -> Result<T, Response>
     where
         Self: Sized,
@@ -59,6 +60,7 @@ pub trait OrStatus<T> {
     }
 
     /// Log at `error` level and return `503 Service Unavailable`.
+    #[allow(dead_code)]
     fn or_503(self, msg: &str) -> Result<T, Response>
     where
         Self: Sized,
@@ -93,6 +95,12 @@ impl<T> OrStatus<T> for Option<T> {
     }
 }
 
+/// Extension trait for converting `Result<T, ResolveTargetError>` into
+/// `Result<T, Response>` for handler use.
+///
+/// Wraps [`ResolveTargetError`](crate::utils::path::ResolveTargetError) by
+/// logging the failure and converting to the appropriate HTTP status code
+/// via [`ResolveTargetError::status`](crate::utils::path::ResolveTargetError::status).
 #[allow(clippy::result_large_err)]
 pub trait IntoResolved<T> {
     fn or_invalid(self, on_invalid: StatusCode) -> Result<T, Response>;

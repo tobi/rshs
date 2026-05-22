@@ -1,3 +1,6 @@
+//! HTTP Basic Authentication middleware.
+//! Automatically becomes a no-op when no users are configured in `AuthConfig`.
+
 use std::sync::Arc;
 
 use axum::{body::Body, http::StatusCode, middleware::Next, response::Response};
@@ -5,6 +8,10 @@ use base64::{Engine as _, engine::general_purpose};
 
 use crate::auth::AuthConfig;
 
+/// Validates HTTP Basic Authentication credentials against the configured `AuthConfig`.
+/// Skips authentication entirely when no users are configured (backward compatible).
+///
+/// Returns `401 Unauthorized` with `WWW-Authenticate: Basic realm="rshs"` on failure.
 pub async fn auth_middleware(
     axum::extract::State(auth_config): axum::extract::State<Arc<AuthConfig>>,
     req: axum::extract::Request,

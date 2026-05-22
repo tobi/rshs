@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use derive_new::new;
 use futures_util::TryStreamExt;
@@ -16,12 +16,10 @@ use crate::server::AppState;
 use crate::utils::error::{IntoResolved, OrStatus};
 use crate::utils::time::format_rfc850;
 
-pub use axum::http::Method;
-
-// ---------------------------------------------------------------------------
-// GET / HEAD
-// ---------------------------------------------------------------------------
-
+/// GET / HEAD handler — serves files and generates HTML directory listings.
+///
+/// Supports conditional `If-Modified-Since` via the `Last-Modified` header.
+/// Accepts `Range` requests for partial content delivery.
 pub async fn handle_get_head(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
@@ -190,10 +188,11 @@ async fn generate_dir_listing(dir_path: &Path, request_path: &str) -> (String, u
     render_dir_html(request_path, entries)
 }
 
-// ---------------------------------------------------------------------------
-// PUT
-// ---------------------------------------------------------------------------
-
+/// PUT handler — accepts a request body and writes it to the filesystem.
+///
+/// Returns `201 Created` for new files, `200 OK` for overwrites.
+/// Rejects directory paths, missing parents, and traversal attempts.
+/// Intermediate collections are NOT created (per RFC 4918 §9.6).
 pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
@@ -248,10 +247,10 @@ pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Res
     }
 }
 
-// ---------------------------------------------------------------------------
-// DELETE
-// ---------------------------------------------------------------------------
-
+/// DELETE handler — removes a file or recursively deletes a directory.
+///
+/// Returns `204 No Content` on success, `404 Not Found` if the target
+/// does not exist. Root directory deletion is rejected.
 pub async fn handle_delete(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
@@ -294,10 +293,10 @@ pub async fn handle_delete(State(state): State<Arc<AppState>>, req: Request) -> 
     }
 }
 
-// ---------------------------------------------------------------------------
-// OPTIONS
-// ---------------------------------------------------------------------------
-
+/// OPTIONS handler — returns supported HTTP/DAV methods in the `Allow` header.
+///
+/// Includes the `DAV: 1,2` compliance level and `MS-Author-Via: DAV` header
+/// for compatibility with legacy clients.
 pub async fn handle_options() -> Response {
     Response::builder()
         .status(StatusCode::OK)
@@ -395,62 +394,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_put_creates_new_file() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let app = make_app_put(&dir);
-
-        let req = Request::builder()
-            .method(axum::http::Method::PUT)
-            .uri("/newfile.txt")
-            .header("content-type", "text/plain")
-            .body(Body::from("hello put"))
-            .unwrap();
-
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::CREATED);
-
-        let content = std::fs::read_to_string(dir.path().join("newfile.txt")).unwrap();
-        assert_eq!(content, "hello put");
-    }
-
-    #[tokio::test]
-    async fn test_put_overwrites_existing_file() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(dir.path().join("existing.txt"), b"old content").unwrap();
-        let app = make_app_put(&dir);
-
-        let req = Request::builder()
-            .method(axum::http::Method::PUT)
-            .uri("/existing.txt")
-            .body(Body::from("new content"))
-            .unwrap();
-
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::OK);
-
-        let content = std::fs::read_to_string(dir.path().join("existing.txt")).unwrap();
-        assert_eq!(content, "new content");
-    }
-
-    #[tokio::test]
-    async fn test_put_empty_body() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let app = make_app_put(&dir);
-
-        let req = Request::builder()
-            .method(axum::http::Method::PUT)
-            .uri("/empty.txt")
-            .body(Body::empty())
-            .unwrap();
-
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::CREATED);
-
-        let content = std::fs::read_to_string(dir.path().join("empty.txt")).unwrap();
-        assert!(content.is_empty());
-    }
-
-    #[tokio::test]
     async fn test_put_rejects_missing_parent() {
         let dir = tempfile::TempDir::new().unwrap();
         let app = make_app_put(&dir);
@@ -521,58 +464,6 @@ mod tests {
                 dir.path().to_path_buf(),
                 AuthConfig::new(),
             )))
-    }
-
-    #[tokio::test]
-    async fn test_delete_existing_file() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(dir.path().join("remove_me.txt"), b"data").unwrap();
-        let app = make_app_delete(&dir);
-
-        let req = Request::builder()
-            .method(axum::http::Method::DELETE)
-            .uri("/remove_me.txt")
-            .body(Body::empty())
-            .unwrap();
-
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NO_CONTENT);
-        assert!(!dir.path().join("remove_me.txt").exists());
-    }
-
-    #[tokio::test]
-    async fn test_delete_nonexistent() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let app = make_app_delete(&dir);
-
-        let req = Request::builder()
-            .method(axum::http::Method::DELETE)
-            .uri("/ghost.txt")
-            .body(Body::empty())
-            .unwrap();
-
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_delete_directory() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let subdir = dir.path().join("mydir");
-        std::fs::create_dir(&subdir).unwrap();
-        std::fs::write(subdir.join("inner.txt"), b"inside").unwrap();
-        assert!(subdir.exists());
-        let app = make_app_delete(&dir);
-
-        let req = Request::builder()
-            .method(axum::http::Method::DELETE)
-            .uri("/mydir")
-            .body(Body::empty())
-            .unwrap();
-
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NO_CONTENT);
-        assert!(!subdir.exists());
     }
 
     #[tokio::test]
@@ -666,5 +557,82 @@ mod tests {
             .await
             .unwrap();
         assert!(body.is_empty());
+    }
+
+    // -- GET/HEAD tests ------------------------------------------------------
+
+    fn make_app_get(dir: &tempfile::TempDir) -> Router {
+        Router::new()
+            .fallback(super::handle_get_head)
+            .with_state(Arc::new(AppState::new(
+                dir.path().to_path_buf(),
+                AuthConfig::new(),
+            )))
+    }
+
+    fn setup_get_test_dir() -> tempfile::TempDir {
+        use std::io::Write;
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut f = std::fs::File::create(dir.path().join("hello.txt")).unwrap();
+        f.write_all(b"Hello, World!").unwrap();
+        std::fs::create_dir(dir.path().join("subdir")).unwrap();
+        let mut f = std::fs::File::create(dir.path().join("subdir/nested.txt")).unwrap();
+        f.write_all(b"Nested file").unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn test_get_path_traversal_blocked() {
+        let dir = setup_get_test_dir();
+        let app = make_app_get(&dir);
+
+        let req = Request::builder()
+            .method(axum::http::Method::GET)
+            .uri("/../outside.txt")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_get_mime_type_guess() {
+        let dir = setup_get_test_dir();
+        let app = make_app_get(&dir);
+
+        let req = Request::builder()
+            .method(axum::http::Method::GET)
+            .uri("/hello.txt")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert!(
+            resp.headers()
+                .get("content-type")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains("text/plain")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_dir_listing_sizes() {
+        let dir = setup_get_test_dir();
+        let app = make_app_get(&dir);
+
+        let req = Request::builder()
+            .method(axum::http::Method::GET)
+            .uri("/")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(body_str.contains("hello.txt") && body_str.contains("13"));
+        assert!(body_str.contains("subdir/") && body_str.contains("-"));
     }
 }

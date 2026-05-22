@@ -9,12 +9,37 @@ use sha_crypt::{PasswordHasher, PasswordVerifier, ShaCrypt};
 
 use crate::cli::Cli;
 
+/// A stored credential for Basic HTTP authentication.
+///
+/// ```
+/// use rshs::auth::Credential;
+///
+/// let pw = Credential::Plaintext("secret".into());
+/// let hash = Credential::Sha512Crypt("$6$...".into());
+/// ```
 #[derive(Debug, Clone)]
 pub enum Credential {
     Plaintext(String),
     Sha512Crypt(String),
 }
 
+/// Parsed shadow file argument from CLI.
+///
+/// Determines the shadow file path and whether it is writable (`:rw` or `:ro`).
+///
+/// ```
+/// use rshs::auth::ShadowFileArg;
+///
+/// let a = ShadowFileArg::from_arg("/etc/rshs/shadow:rw");
+/// assert_eq!(a.path, "/etc/rshs/shadow");
+/// assert!(a.writable);
+///
+/// let a = ShadowFileArg::from_arg("/etc/rshs/shadow:ro");
+/// assert!(!a.writable);
+///
+/// let a = ShadowFileArg::from_arg("/etc/rshs/shadow");
+/// assert!(a.writable); // default
+/// ```
 #[derive(Debug, Clone, new)]
 pub struct ShadowFileArg {
     pub path: String,
@@ -34,18 +59,41 @@ impl ShadowFileArg {
     }
 }
 
+/// In-memory collection of HTTP Basic Auth credentials.
+///
+/// Holds usernames mapped to either plaintext or SHA-512 crypt hashed
+/// passwords. Supports loading from a shadow file, merging CLI-provided
+/// credentials, and validating authentication attempts.
+///
+/// ```
+/// use rshs::auth::AuthConfig;
+///
+/// let mut config = AuthConfig::new();
+/// assert!(config.is_empty());
+///
+/// config.add_user("admin", "secret");
+/// assert_eq!(config.user_count(), 1);
+/// assert!(config.validate("admin", "secret"));
+/// assert!(!config.validate("admin", "wrong"));
+/// assert!(!config.validate("nobody", "secret"));
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct AuthConfig {
     pub users: HashMap<String, Credential>,
 }
 
 impl AuthConfig {
+    /// Create an empty configuration.
     pub fn new() -> Self {
         Self {
             users: HashMap::new(),
         }
     }
 
+    /// Add a user with a plaintext password.
+    ///
+    /// The password is stored as-is; hashing happens on write to shadow file
+    /// via [`write_to_shadow_file`](Self::write_to_shadow_file).
     pub fn add_user(&mut self, username: &str, password: &str) {
         self.users.insert(
             username.to_string(),
@@ -53,14 +101,30 @@ impl AuthConfig {
         );
     }
 
+    /// Whether no users are configured (auth middleware is skipped).
     pub fn is_empty(&self) -> bool {
         self.users.is_empty()
     }
 
+    /// Number of configured users.
     pub fn user_count(&self) -> usize {
         self.users.len()
     }
 
+    /// Validate a username/password pair against stored credentials.
+    ///
+    /// Supports both plaintext and SHA-512 crypt hash comparison.
+    ///
+    /// ```
+    /// use rshs::auth::{AuthConfig, Credential};
+    /// use std::collections::HashMap;
+    ///
+    /// let mut config = AuthConfig { users: HashMap::new() };
+    /// config.users.insert("admin".into(), Credential::Sha512Crypt(
+    ///     "$6$rounds=5000$abc$XyZ...".into()
+    /// ));
+    /// // Validation logic is tested in the unit test suite with real hashes.
+    /// ```
     pub fn validate(&self, username: &str, password: &str) -> bool {
         match self.users.get(username) {
             Some(Credential::Plaintext(expected)) => expected == password,
@@ -71,12 +135,35 @@ impl AuthConfig {
         }
     }
 
+    /// Merge CLI-provided credentials into this config.
+    ///
+    /// Existing users with the same username are overwritten.
+    ///
+    /// ```
+    /// use rshs::auth::AuthConfig;
+    ///
+    /// let mut base = AuthConfig::new();
+    /// base.add_user("admin", "old");
+    ///
+    /// let mut cli = AuthConfig::new();
+    /// cli.add_user("admin", "new");
+    /// cli.add_user("viewer", "view");
+    ///
+    /// base.merge_cli(&cli);
+    /// assert_eq!(base.user_count(), 2);
+    /// assert!(base.validate("admin", "new"));
+    /// assert!(base.validate("viewer", "view"));
+    /// ```
     pub fn merge_cli(&mut self, other: &AuthConfig) {
         for (username, credential) in &other.users {
             self.users.insert(username.clone(), credential.clone());
         }
     }
 
+    /// Load credentials from a shadow file.
+    ///
+    /// Each line must be in `username:$hash$...` format (SHA-512 crypt).
+    /// Empty lines and malformed entries are skipped with a warning.
     pub fn load_from_shadow_file(path: &Path) -> io::Result<Self> {
         let content = fs::read_to_string(path).map_err(|e| {
             io::Error::new(
@@ -124,6 +211,10 @@ impl AuthConfig {
         Ok(config)
     }
 
+    /// Write credentials to a shadow file.
+    ///
+    /// Plaintext passwords are hashed with SHA-512 crypt before writing.
+    /// If `create` is true, the file is created with `0600` permissions.
     pub fn write_to_shadow_file(&self, path: &Path, create: bool) -> io::Result<()> {
         if create {
             if let Some(parent) = path.parent() {
@@ -181,6 +272,10 @@ impl AuthConfig {
     }
 }
 
+/// Build the authentication configuration from CLI arguments.
+///
+/// Merges credentials from `--user` flags and a shadow file (if specified),
+/// and optionally writes the merged result back to disk via `--shadow-write`.
 pub fn build_auth_config(cli: &Cli) -> AuthConfig {
     let cli_auth = cli.to_auth_config();
 
@@ -297,15 +392,6 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_plaintext() {
-        let mut config = AuthConfig::new();
-        config.add_user("admin", "secret");
-        assert!(config.validate("admin", "secret"));
-        assert!(!config.validate("admin", "wrong"));
-        assert!(!config.validate("nobody", "secret"));
-    }
-
-    #[test]
     fn test_validate_sha512_crypt() {
         let hash = ShaCrypt::default()
             .hash_password("mypassword".as_bytes())
@@ -404,36 +490,6 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_cli_overwrites() {
-        let mut base = AuthConfig::new();
-        base.add_user("admin", "shadow_pass");
-        let mut cli_auth = AuthConfig::new();
-        cli_auth.add_user("admin", "cli_pass");
-        cli_auth.add_user("viewer", "viewer_pass");
-
-        base.merge_cli(&cli_auth);
-
-        assert_eq!(base.user_count(), 2);
-        assert!(base.validate("admin", "cli_pass"));
-        assert!(!base.validate("admin", "shadow_pass"));
-        assert!(base.validate("viewer", "viewer_pass"));
-    }
-
-    #[test]
-    fn test_merge_cli_adds_new_users() {
-        let mut base = AuthConfig::new();
-        base.add_user("existing", "existing_pass");
-        let mut cli_auth = AuthConfig::new();
-        cli_auth.add_user("new_user", "new_pass");
-
-        base.merge_cli(&cli_auth);
-
-        assert_eq!(base.user_count(), 2);
-        assert!(base.validate("existing", "existing_pass"));
-        assert!(base.validate("new_user", "new_pass"));
-    }
-
-    #[test]
     fn test_write_to_shadow_file_roundtrip() {
         let mut config = AuthConfig::new();
         config.add_user("admin", "adminpass");
@@ -482,17 +538,6 @@ mod tests {
         let metadata = std::fs::metadata(&path).unwrap();
         let mode = metadata.permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
-    }
-
-    #[test]
-    fn test_is_empty_and_user_count() {
-        let mut config = AuthConfig::new();
-        assert!(config.is_empty());
-        assert_eq!(config.user_count(), 0);
-
-        config.add_user("admin", "secret");
-        assert!(!config.is_empty());
-        assert_eq!(config.user_count(), 1);
     }
 
     #[test]

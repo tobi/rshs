@@ -1,3 +1,7 @@
+//! WebDAV lock enforcement middleware.
+//! Intercepts write requests (`PUT`, `DELETE`, `MKCOL`, `PROPPATCH`, `MOVE`, `COPY`)
+//! and rejects them with `423 Locked` unless the request presents a matching lock token.
+
 use std::path::Path;
 use std::sync::Arc;
 
@@ -8,6 +12,13 @@ use axum::response::{IntoResponse, Response};
 use crate::server::AppState;
 use crate::webdav::{self, Method, ls};
 
+/// Rejects write requests (`PUT`, `DELETE`, `MKCOL`, `PROPPATCH`, `MOVE`, `COPY`)
+/// with `423 Locked` if the target resource or an ancestor with `Depth::Infinity` is
+/// locked and the request does not present a valid lock token.
+///
+/// Evaluates `If` header conditions against the lock store. For `COPY`/`MOVE`, both
+/// the source and destination paths are checked. If an `If` header with non-token
+/// conditions is present and no `Lock-Token` is provided, returns `412 Precondition Failed`.
 pub async fn lock_enforce(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     req: axum::extract::Request,

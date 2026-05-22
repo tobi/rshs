@@ -1,17 +1,31 @@
+//! A simple HTTP/WebDAV server — file serving, directory listing, and full WebDAV
+//! protocol support with optional TLS and Basic Auth.
+
+/// Authentication types and shadow file management.
 pub mod auth;
-pub mod cli;
+/// CLI argument parsing and configuration builders.
+pub(crate) mod cli;
+/// Request handlers for HTTP and WebDAV methods.
 pub mod handlers;
+/// Tower middleware layers.
 pub mod middleware;
-pub mod server;
-pub mod utils;
+/// Router construction and server startup.
+pub(crate) mod server;
+/// Internal utilities (errors, path resolution, time formatting).
+pub(crate) mod utils;
+/// WebDAV protocol types and helpers.
 pub mod webdav;
 
+/// Authentication configuration and builder.
 pub use auth::{AuthConfig, build_auth_config};
+/// Command-line interface.
 pub use cli::Cli;
+/// TLS certificate/key configuration.
 pub use server::tls::TlsConfig;
-pub use server::{AppState, ServerConfig, start_server};
+/// Server state, configuration, startup, and router construction.
+pub use server::{AppState, ServerConfig, make_router, start_server};
 
 #[cfg(debug_assertions)]
-pub const DEFAULT_LOG_LEVEL: &str = "debug";
+pub(crate) const DEFAULT_LOG_LEVEL: &str = "debug";
 #[cfg(not(debug_assertions))]
-pub const DEFAULT_LOG_LEVEL: &str = "info";
+pub(crate) const DEFAULT_LOG_LEVEL: &str = "info";

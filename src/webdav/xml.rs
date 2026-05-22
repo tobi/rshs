@@ -7,6 +7,7 @@ use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
 use super::{PropEntry, PropRequest};
 
+/// XML namespace prefix used in WebDAV responses (`"D:"` for `DAV:`).
 pub const DAV_PREFIX: &str = "D:";
 
 const DAV_NS: &str = "DAV:";
@@ -21,13 +22,40 @@ const SUPPORTED_PROPS: &[&str] = &[
     "supportedlock",
 ];
 
-pub(crate) fn dav_qname(name: &str) -> String {
+/// Build a `DAV:`-prefixed qualified name from a local element name.
+///
+/// ```
+/// use rshs::webdav::xml::dav_qname;
+///
+/// assert_eq!(dav_qname("multistatus"), "D:multistatus");
+/// assert_eq!(dav_qname("href"), "D:href");
+/// ```
+pub fn dav_qname(name: &str) -> String {
     format!("{DAV_PREFIX}{name}")
 }
 
+/// Convenience alias for the XML writer used throughout `rshs`.
+///
+/// `Writer<Cursor<Vec<u8>>>` backed by an in-memory byte buffer.
 pub type XmlWriter = Writer<Cursor<Vec<u8>>>;
 
-pub(crate) trait XmlWriterExt {
+/// Extension trait that provides a shorthand for writing XML events.
+///
+/// The `.ev(event)` method is equivalent to `.write_event(event).unwrap()`,
+/// reducing boilerplate in WebDAV response building.
+///
+/// ```
+/// use std::io::Cursor;
+/// use quick_xml::{Writer, events::{BytesStart, BytesEnd, Event}};
+/// use rshs::webdav::xml::{XmlWriter, XmlWriterExt, dav_qname};
+///
+/// let mut w = Writer::new(Cursor::new(Vec::new()));
+/// w.ev(Event::Start(BytesStart::new(dav_qname("response"))));
+/// w.ev(Event::End(BytesEnd::new(dav_qname("response"))));
+/// let xml = String::from_utf8(w.into_inner().into_inner()).unwrap();
+/// assert!(xml.contains("D:response"));
+/// ```
+pub trait XmlWriterExt {
     fn ev(&mut self, event: Event<'_>);
 }
 
@@ -38,6 +66,14 @@ impl XmlWriterExt for XmlWriter {
 }
 
 /// Build a `207 Multi-Status` XML response.
+///
+/// ```
+/// use rshs::webdav::xml::multistatus;
+///
+/// let response = multistatus("<D:multistatus xmlns:D='DAV:'/>".into());
+/// assert_eq!(response.status().as_u16(), 207);
+/// assert!(response.headers().get("content-type").unwrap().to_str().unwrap().contains("application/xml"));
+/// ```
 pub fn multistatus(xml: String) -> Response {
     xml_response(StatusCode::from_u16(207).unwrap(), xml)
 }
@@ -51,6 +87,34 @@ fn xml_response(status: StatusCode, xml: String) -> Response {
         .unwrap()
 }
 
+/// Build a full `multistatus` XML body from a list of `PropEntry`s
+/// and the corresponding `PropRequest`.
+///
+/// This is the primary XML serialization function for PROPFIND responses.
+/// For each entry it emits the requested live properties (creationdate,
+/// getcontentlength, getetag, resourcetype, etc.), dead properties, and
+/// active lock information via [`write_activelock`].
+///
+/// ```
+/// use std::time::{SystemTime, UNIX_EPOCH};
+/// use rshs::webdav::{PropEntry, PropRequest, Depth};
+/// use rshs::webdav::xml::build_multistatus;
+///
+/// let entry = PropEntry {
+///     href: "/file.txt".into(),
+///     modified: UNIX_EPOCH,
+///     created: None,
+///     size: 42,
+///     is_dir: false,
+///     content_type: Some("text/plain".into()),
+///     dead_props: None,
+///     active_locks: None,
+///     canonical_path: None,
+/// };
+/// let xml = build_multistatus(&[entry], &PropRequest::AllProp);
+/// assert!(xml.contains("D:multistatus"));
+/// assert!(xml.contains("D:href>/file.txt</D:href>"));
+/// ```
 pub fn build_multistatus(entries: &[PropEntry], prop_request: &PropRequest) -> String {
     let mut writer = Writer::new(Cursor::new(Vec::new()));
 
@@ -278,7 +342,35 @@ fn write_propname(writer: &mut XmlWriter, props: &[&str]) {
     writer.ev(Event::End(BytesEnd::new(dav_qname("propstat"))));
 }
 
-pub(crate) fn write_activelock(writer: &mut XmlWriter, lock: &super::LockInfo) {
+/// Write an `<D:activelock>` element for a lock.
+///
+/// Produces the full active-lock XML subtree including lockscope, locktype,
+/// depth, owner, timeout, and locktoken. Used by both the LOCK response
+/// handler and the PROPFIND `lockdiscovery` property.
+///
+/// ```
+/// use std::time::{SystemTime, Duration};
+/// use std::io::Cursor;
+/// use quick_xml::Writer;
+/// use rshs::webdav::{LockInfo, LockScope, Depth};
+/// use rshs::webdav::xml::{XmlWriter, XmlWriterExt, write_activelock};
+///
+/// let lock = LockInfo {
+///     scope: LockScope::Exclusive,
+///     token: "opaquelocktoken:abc".into(),
+///     owner: Some("user".into()),
+///     created: SystemTime::now(),
+///     timeout: Some(Duration::from_secs(3600)),
+///     depth: Depth::Zero,
+/// };
+/// let mut w = Writer::new(Cursor::new(Vec::new()));
+/// write_activelock(&mut w, &lock);
+/// let xml = String::from_utf8(w.into_inner().into_inner()).unwrap();
+/// assert!(xml.contains("D:lockscope"));
+/// assert!(xml.contains("D:exclusive"));
+/// assert!(xml.contains("opaquelocktoken:abc"));
+/// ```
+pub fn write_activelock(writer: &mut XmlWriter, lock: &super::LockInfo) {
     writer.ev(Event::Start(BytesStart::new(dav_qname("activelock"))));
 
     writer.ev(Event::Start(BytesStart::new(dav_qname("lockscope"))));

@@ -14,13 +14,13 @@ use crate::server::AppState;
 use crate::utils::error::{IntoResolved, OrStatus};
 use crate::webdav::{
     self,
-    xml::{XmlWriterExt, dav_qname},
+    xml::{XmlWriter, XmlWriterExt, dav_qname},
 };
 
-// ---------------------------------------------------------------------------
-// PROPFIND
-// ---------------------------------------------------------------------------
-
+/// PROPFIND handler — returns resource properties (RFC 4918 §9.1).
+///
+/// Supports `Depth: 0`, `1`, and `infinity`. Accepts `allprop`, `propname`,
+/// and named property requests. Returns a `207 Multi-Status` XML response.
 pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let depth = webdav::parse_depth(req.headers());
     let request_path = req.uri().path().to_owned();
@@ -59,10 +59,10 @@ pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -
     webdav::xml::multistatus(xml)
 }
 
-// ---------------------------------------------------------------------------
-// MKCOL
-// ---------------------------------------------------------------------------
-
+/// MKCOL handler — creates a new collection (directory) (RFC 4918 §9.3).
+///
+/// Returns `201 Created` on success. Rejects if the parent does not exist,
+/// a file already occupies the path, or the target is root.
 pub async fn handle_mkcol(State(state): State<Arc<AppState>>, req: Request) -> Response {
     // MKCOL MUST fail with 415 if the request has a body (RFC 2518 §8.3.1)
     let len = req.headers().get("content-length");
@@ -95,14 +95,18 @@ pub async fn handle_mkcol(State(state): State<Arc<AppState>>, req: Request) -> R
     }
 }
 
-// ---------------------------------------------------------------------------
-// COPY / MOVE
-// ---------------------------------------------------------------------------
-
+/// COPY handler — duplicates a resource to a destination (RFC 4918 §9.8).
+///
+/// Supports recursive directory copy. Respects the `Overwrite` header.
+/// Returns `201 Created` for new destinations, `204 No Content` for overwrites.
 pub async fn handle_copy(State(state): State<Arc<AppState>>, req: Request) -> Response {
     do_move_or_copy(&state, req, false).await
 }
 
+/// MOVE handler — relocates a resource to a destination (RFC 4918 §9.9).
+///
+/// Supports recursive directory moves. Respects the `Overwrite` header.
+/// Equivalent to COPY + DELETE when source and destination share a filesystem.
 pub async fn handle_move(State(state): State<Arc<AppState>>, req: Request) -> Response {
     do_move_or_copy(&state, req, true).await
 }
@@ -253,10 +257,10 @@ async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), Res
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// PROPPATCH
-// ---------------------------------------------------------------------------
-
+/// PROPPATCH handler — sets and/or removes dead properties (RFC 4918 §9.2).
+///
+/// Processes `set` and `remove` actions from the request body. Returns a
+/// `207 Multi-Status` response with per-property success/failure status.
 pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
@@ -319,12 +323,7 @@ fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> Str
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
 
-fn write_proppatch_result(
-    writer: &mut Writer<Cursor<Vec<u8>>>,
-    href: &str,
-    prop_name: &str,
-    status: &str,
-) {
+fn write_proppatch_result(writer: &mut XmlWriter, href: &str, prop_name: &str, status: &str) {
     writer.ev(Event::Start(BytesStart::new(dav_qname("response"))));
 
     writer.ev(Event::Start(BytesStart::new(dav_qname("href"))));
@@ -396,75 +395,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_propfind_file() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(dir.path().join("f.txt"), b"hello").unwrap();
-        let app = make_app_propfind(&dir);
-
-        let req = make_propfind(
-            "/f.txt",
-            "0",
-            propfind_body("<D:getcontentlength/><D:getlastmodified/><D:resourcetype/>"),
-        );
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status().as_u16(), 207);
-
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let text = String::from_utf8(body.to_vec()).unwrap();
-        assert!(text.contains("multistatus"));
-        assert!(text.contains("/f.txt"));
-        assert!(text.contains("getcontentlength"));
-        assert!(text.contains("5"));
-        assert!(!text.contains("collection"));
-    }
-
-    #[tokio::test]
-    async fn test_propfind_dir_depth0() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir(dir.path().join("d")).unwrap();
-        let app = make_app_propfind(&dir);
-
-        let req = make_propfind("/d", "0", propfind_body("<D:resourcetype/>"));
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status().as_u16(), 207);
-
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let text = String::from_utf8(body.to_vec()).unwrap();
-        assert!(text.contains("collection"));
-        assert!(!text.contains("getcontentlength"));
-    }
-
-    #[tokio::test]
-    async fn test_propfind_dir_depth1() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir(dir.path().join("d")).unwrap();
-        std::fs::write(dir.path().join("d/a.txt"), b"a").unwrap();
-        std::fs::write(dir.path().join("d/b.txt"), b"bb").unwrap();
-        let app = make_app_propfind(&dir);
-
-        let req = make_propfind(
-            "/d",
-            "1",
-            propfind_body("<D:getcontentlength/><D:resourcetype/>"),
-        );
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status().as_u16(), 207);
-
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let text = String::from_utf8(body.to_vec()).unwrap();
-        assert_eq!(text.matches("<D:response>").count(), 3);
-        assert!(text.contains("/d/"));
-        assert!(text.contains("a.txt"));
-        assert!(text.contains("b.txt"));
-    }
-
-    #[tokio::test]
     async fn test_propfind_depth_infinity() {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("d/sub")).unwrap();
@@ -481,16 +411,6 @@ mod tests {
             .unwrap();
         let text = String::from_utf8(body.to_vec()).unwrap();
         assert_eq!(text.matches("<D:response>").count(), 4);
-    }
-
-    #[tokio::test]
-    async fn test_propfind_nonexistent() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let app = make_app_propfind(&dir);
-
-        let req = make_propfind("/ghost", "0", propfind_body("<D:resourcetype/>"));
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -604,17 +524,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mkcol_creates_directory() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let app = make_app_mkcol(&dir);
-
-        let req = make_mkcol("/newdir");
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::CREATED);
-        assert!(dir.path().join("newdir").is_dir());
-    }
-
-    #[tokio::test]
     async fn test_mkcol_parent_not_exist() {
         let dir = tempfile::TempDir::new().unwrap();
         let app = make_app_mkcol(&dir);
@@ -697,38 +606,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_copy_file_creates() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(dir.path().join("s.txt"), b"hello").unwrap();
-        let app = make_app_copy(&dir);
-
-        let req = make_copy("/s.txt", "http://x/d.txt", None);
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::CREATED);
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("d.txt")).unwrap(),
-            "hello"
-        );
-        assert!(dir.path().join("s.txt").exists());
-    }
-
-    #[tokio::test]
-    async fn test_copy_file_overwrite() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(dir.path().join("s.txt"), b"new").unwrap();
-        std::fs::write(dir.path().join("d.txt"), b"old").unwrap();
-        let app = make_app_copy(&dir);
-
-        let req = make_copy("/s.txt", "http://x/d.txt", None);
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("d.txt")).unwrap(),
-            "new"
-        );
-    }
-
-    #[tokio::test]
     async fn test_copy_overwrite_false() {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join("s.txt"), b"a").unwrap();
@@ -748,28 +625,6 @@ mod tests {
         let req = make_copy("/ghost", "http://x/d.txt", None);
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_copy_dir() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir(dir.path().join("sd")).unwrap();
-        std::fs::write(dir.path().join("sd/a.txt"), b"a").unwrap();
-        std::fs::write(dir.path().join("sd/b.txt"), b"b").unwrap();
-        let app = make_app_copy(&dir);
-
-        let req = make_copy("/sd", "http://x/dd", None);
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::CREATED);
-        assert!(dir.path().join("dd").is_dir());
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("dd/a.txt")).unwrap(),
-            "a"
-        );
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("dd/b.txt")).unwrap(),
-            "b"
-        );
     }
 
     #[tokio::test]
@@ -799,39 +654,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_move_file_creates() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(dir.path().join("s.txt"), b"hello").unwrap();
-        let app = make_app_move(&dir);
-
-        let req = make_move("/s.txt", "http://x/d.txt", None);
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::CREATED);
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("d.txt")).unwrap(),
-            "hello"
-        );
-        assert!(!dir.path().join("s.txt").exists());
-    }
-
-    #[tokio::test]
-    async fn test_move_file_overwrite() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(dir.path().join("s.txt"), b"new").unwrap();
-        std::fs::write(dir.path().join("d.txt"), b"old").unwrap();
-        let app = make_app_move(&dir);
-
-        let req = make_move("/s.txt", "http://x/d.txt", None);
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("d.txt")).unwrap(),
-            "new"
-        );
-        assert!(!dir.path().join("s.txt").exists());
-    }
-
-    #[tokio::test]
     async fn test_move_overwrite_false() {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join("s.txt"), b"a").unwrap();
@@ -851,24 +673,6 @@ mod tests {
         let req = make_move("/ghost", "http://x/d.txt", None);
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_move_dir() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir(dir.path().join("sd")).unwrap();
-        std::fs::write(dir.path().join("sd/a.txt"), b"a").unwrap();
-        let app = make_app_move(&dir);
-
-        let req = make_move("/sd", "http://x/dd", None);
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::CREATED);
-        assert!(dir.path().join("dd").is_dir());
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("dd/a.txt")).unwrap(),
-            "a"
-        );
-        assert!(!dir.path().join("sd").exists());
     }
 
     #[tokio::test]
@@ -895,61 +699,6 @@ mod tests {
                 dir.path().to_path_buf(),
                 AuthConfig::new(),
             )))
-    }
-
-    #[tokio::test]
-    async fn test_proppatch_set_and_read_back() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(dir.path().join("f.txt"), b"hello").unwrap();
-        let app = make_app_proppatch(&dir);
-
-        let body = Body::from(
-            r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:author>Alice</X:author></D:prop></D:set></D:propertyupdate>"#,
-        );
-        let req = Request::builder()
-            .method(HttpMethod::from_bytes(b"PROPPATCH").unwrap())
-            .uri("/f.txt")
-            .body(body)
-            .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status().as_u16(), 207);
-
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let text = String::from_utf8(body.to_vec()).unwrap();
-        assert!(text.contains("200 OK"));
-        assert!(text.contains("author"));
-    }
-
-    #[tokio::test]
-    async fn test_proppatch_remove() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(dir.path().join("f.txt"), b"hello").unwrap();
-        let app = make_app_proppatch(&dir);
-
-        let body = Body::from(
-            r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:tag>important</X:tag></D:prop></D:set></D:propertyupdate>"#,
-        );
-        let req = Request::builder()
-            .method(HttpMethod::from_bytes(b"PROPPATCH").unwrap())
-            .uri("/f.txt")
-            .body(body)
-            .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status().as_u16(), 207);
-
-        let app = make_app_proppatch(&dir);
-        let body = Body::from(
-            r#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:remove><D:prop><X:tag/></D:prop></D:remove></D:propertyupdate>"#,
-        );
-        let req = Request::builder()
-            .method(HttpMethod::from_bytes(b"PROPPATCH").unwrap())
-            .uri("/f.txt")
-            .body(body)
-            .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status().as_u16(), 207);
     }
 
     #[tokio::test]

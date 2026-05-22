@@ -1,3 +1,6 @@
+//! CLI argument parsing via `clap` derive, plus configuration builders that convert
+//! CLI values into the server's typed config structs.
+
 use clap::Parser;
 
 use crate::DEFAULT_LOG_LEVEL;
@@ -73,11 +76,14 @@ pub struct Cli {
 }
 
 impl Cli {
+    /// Returns the effective port: the explicit `--port` value, or the default
+    /// (`8080` for HTTP, `8443` for HTTPS when TLS is configured).
     pub fn effective_port(&self) -> u16 {
         self.port
             .unwrap_or(if self.tls_cert.is_some() { 8443 } else { 8080 })
     }
 
+    /// Builds a `TlsConfig` if both `--tls-cert` and `--tls-key` were provided.
     pub fn to_tls_config(&self) -> Option<TlsConfig> {
         match (&self.tls_cert, &self.tls_key) {
             (Some(cert), Some(key)) => Some(TlsConfig::new(cert.clone(), key.clone())),
@@ -85,12 +91,14 @@ impl Cli {
         }
     }
 
+    /// Parses the `--shadow-file` value into a `ShadowFileArg` (path + read/write mode).
     pub fn to_shadow_file_arg(&self) -> Option<ShadowFileArg> {
         self.shadow_file
             .as_ref()
             .map(|s| ShadowFileArg::from_arg(s))
     }
 
+    /// Builds an `AuthConfig` from `--user` (`username:password`) entries.
     pub fn to_auth_config(&self) -> AuthConfig {
         let mut config = AuthConfig::new();
 
@@ -105,6 +113,8 @@ impl Cli {
         config
     }
 
+    /// Resolves the log level: `-q` → `"off"`, `-v` → `"debug"`, `-vv` → `"trace"`,
+    /// otherwise the `RSHS_LOG` env var or `DEFAULT_LOG_LEVEL`.
     pub fn log_level(&self) -> String {
         if self.quiet {
             "off".into()

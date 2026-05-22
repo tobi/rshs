@@ -2,6 +2,24 @@ use axum::http::Method as HttpMethod;
 
 pub use axum::http::method::InvalidMethod;
 
+/// Type-safe WebDAV-aware HTTP method.
+///
+/// Wraps both standard HTTP methods (GET, PUT, DELETE, etc.) and WebDAV
+/// extension methods (PROPFIND, MKCOL, COPY, MOVE, LOCK, UNLOCK).
+/// Supports conversion from `axum::http::Method` via `TryFrom`.
+///
+/// ```
+/// use axum::http::Method as HttpMethod;
+/// use rshs::webdav::Method;
+///
+/// let m = Method::try_from(&HttpMethod::GET).unwrap();
+/// assert!(matches!(m, Method::GET));
+///
+/// let m = Method::try_from(&HttpMethod::from_bytes(b"PROPFIND").unwrap()).unwrap();
+/// assert!(matches!(m, Method::PROPFIND));
+///
+/// assert!(Method::try_from(&HttpMethod::from_bytes(b"POST").unwrap()).is_err());
+/// ```
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Method(Inner);
 

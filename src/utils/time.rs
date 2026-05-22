@@ -1,6 +1,15 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// RFC 850 date format, e.g. "Saturday, 11-May-26 16:30:00 GMT".
+/// RFC 850 / RFC 1036 date format used in HTTP `Last-Modified` headers
+/// by older clients.
+///
+/// Format: `DD-Mon-YYYY HH:MM` (2-digit day, abbreviated month, 4-digit year,
+/// 24-hour time). Returns an empty string for pre-Unix-epoch timestamps.
+///
+/// ```text
+/// UNIX_EPOCH                       → "01-Jan-1970 00:00"
+/// UNIX_EPOCH + 1716134400 secs     → "19-May-2024 16:00"
+/// ```
 pub fn format_rfc850(st: SystemTime) -> String {
     const MONTHS: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -25,7 +34,16 @@ pub fn format_rfc850(st: SystemTime) -> String {
     )
 }
 
-/// RFC 1123 / RFC 7231 date format, e.g. "Sat, 11 May 2026 16:30:00 GMT".
+/// RFC 1123 / RFC 7231 date format, the preferred HTTP date format.
+///
+/// Format: `WD, DD Mon YYYY HH:MM:SS GMT` (day-of-week name, 2-digit day,
+/// abbreviated month, 4-digit year, 24-hour time). Returns an empty string
+/// for pre-Unix-epoch timestamps.
+///
+/// ```text
+/// UNIX_EPOCH                       → "Thu, 01 Jan 1970 00:00:00 GMT"
+/// UNIX_EPOCH + 1716134400 secs     → "Sun, 19 May 2024 16:00:00 GMT"
+/// ```
 pub fn format_rfc1123(st: SystemTime) -> String {
     const DAY_NAMES: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const MONTHS: [&str; 12] = [
@@ -59,7 +77,15 @@ pub fn format_rfc1123(st: SystemTime) -> String {
     )
 }
 
-/// RFC 3339 date format, e.g. "2026-05-11T16:07:56Z".
+/// RFC 3339 / ISO 8601 date format used in WebDAV `creationdate` properties.
+///
+/// Format: `YYYY-MM-DDTHH:MM:SSZ` (ISO 8601 calendar date, UTC designator).
+/// Returns an empty string for pre-Unix-epoch timestamps.
+///
+/// ```text
+/// UNIX_EPOCH                       → "1970-01-01T00:00:00Z"
+/// UNIX_EPOCH + 1716134400 secs     → "2024-05-19T16:00:00Z"
+/// ```
 pub fn format_rfc3339(st: SystemTime) -> String {
     let duration = match st.duration_since(UNIX_EPOCH) {
         Ok(d) => d,
@@ -123,7 +149,6 @@ mod tests {
 
     #[test]
     fn test_civil_from_days_known_date() {
-        // 2000-01-01 = 10957 days after 1970-01-01
         let (y, m, d) = civil_from_days(10957);
         assert_eq!((y, m, d), (2000, 1, 1));
     }
@@ -136,7 +161,6 @@ mod tests {
 
     #[test]
     fn test_civil_from_days_feb_29_in_leap_year() {
-        // 1972-02-29 = 789 days after epoch (1970+1971 + jan1972 + 28 days of feb)
         let (y, m, d) = civil_from_days(789);
         assert_eq!((y, m, d), (1972, 2, 29));
     }
