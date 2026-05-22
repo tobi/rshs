@@ -16,7 +16,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use derive_new::new;
 use tokio::sync::{Notify, RwLock};
-use tower_http::trace::TraceLayer;
 
 use crate::auth::AuthConfig;
 use crate::handlers::{http, locks, webdav as webdav_handler};
@@ -100,12 +99,18 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
                 addr = %addr, cert = %tls_config.cert_path, key = %tls_config.key_path,
                 "starting HTTPS server"
             );
-            axum::serve(listener, router).await.map_err(Error::other)?;
+            axum::serve(listener, router)
+                .with_graceful_shutdown(shutdown_signal())
+                .await
+                .map_err(Error::other)?;
         }
         None => {
             let listener = tokio::net::TcpListener::bind(addr).await?;
             tracing::info!(addr = %addr, "starting HTTP server");
-            axum::serve(listener, router).await.map_err(Error::other)?;
+            axum::serve(listener, router)
+                .with_graceful_shutdown(shutdown_signal())
+                .await
+                .map_err(Error::other)?;
         }
     }
 
@@ -124,6 +129,7 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
 pub fn make_router(state: Arc<AppState>) -> Router {
     use crate::middleware::{auth, health, lock};
     use axum::middleware::from_fn_with_state;
+    use tower_http::trace::TraceLayer;
 
     let auth_config = state.auth_config.clone();
     let auth_mw = from_fn_with_state(auth_config, auth::auth_middleware);
@@ -154,6 +160,15 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response 
         Ok(Method::UNLOCK) => locks::handle_unlock(State(state), req).await,
         _ => StatusCode::NOT_IMPLEMENTED.into_response(),
     }
+}
+
+async fn shutdown_signal() {
+    if let Err(e) = tokio::signal::ctrl_c().await {
+        tracing::error!(error = %e, "failed to listen for Ctrl+C");
+        return;
+    }
+
+    tracing::info!("received Ctrl+C, shutting down gracefully...");
 }
 
 async fn lock_cleanup_task(locks: Arc<RwLock<LockStore>>, shutdown: Arc<Notify>) {
