@@ -14,7 +14,7 @@ use crate::server::AppState;
 use crate::utils::error::{IntoResolved, OrStatus};
 use crate::webdav::{
     self,
-    xml::{XmlWriterExt, dav_qname},
+    xml::{XmlWriter, XmlWriterExt, dav_qname},
 };
 
 // ---------------------------------------------------------------------------
@@ -319,12 +319,7 @@ fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> Str
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
 
-fn write_proppatch_result(
-    writer: &mut Writer<Cursor<Vec<u8>>>,
-    href: &str,
-    prop_name: &str,
-    status: &str,
-) {
+fn write_proppatch_result(writer: &mut XmlWriter, href: &str, prop_name: &str, status: &str) {
     writer.ev(Event::Start(BytesStart::new(dav_qname("response"))));
 
     writer.ev(Event::Start(BytesStart::new(dav_qname("href"))));

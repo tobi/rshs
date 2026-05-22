@@ -1,4 +1,4 @@
-pub mod tls;
+pub(crate) mod tls;
 
 use std::fs;
 use std::io::{self, Error, ErrorKind};
@@ -43,15 +43,15 @@ impl AppState {
         }
     }
 
-    pub async fn resolve_existing(&self, request_path: &str) -> Option<PathBuf> {
+    pub(crate) async fn resolve_existing(&self, request_path: &str) -> Option<PathBuf> {
         path::resolve_existing(&self.root_dir, &self.root_canonical, request_path).await
     }
 
-    pub fn resolve_write_target(&self, request_path: &str) -> Option<PathBuf> {
+    pub(crate) fn resolve_write_target(&self, request_path: &str) -> Option<PathBuf> {
         path::resolve_write_target(&self.root_dir, request_path)
     }
 
-    pub async fn resolve_and_guard(
+    pub(crate) async fn resolve_and_guard(
         &self,
         request_path: &str,
     ) -> Result<PathBuf, ResolveTargetError> {

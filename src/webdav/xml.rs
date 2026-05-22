@@ -21,13 +21,13 @@ const SUPPORTED_PROPS: &[&str] = &[
     "supportedlock",
 ];
 
-pub(crate) fn dav_qname(name: &str) -> String {
+pub fn dav_qname(name: &str) -> String {
     format!("{DAV_PREFIX}{name}")
 }
 
 pub type XmlWriter = Writer<Cursor<Vec<u8>>>;
 
-pub(crate) trait XmlWriterExt {
+pub trait XmlWriterExt {
     fn ev(&mut self, event: Event<'_>);
 }
 
@@ -278,7 +278,7 @@ fn write_propname(writer: &mut XmlWriter, props: &[&str]) {
     writer.ev(Event::End(BytesEnd::new(dav_qname("propstat"))));
 }
 
-pub(crate) fn write_activelock(writer: &mut XmlWriter, lock: &super::LockInfo) {
+pub fn write_activelock(writer: &mut XmlWriter, lock: &super::LockInfo) {
     writer.ev(Event::Start(BytesStart::new(dav_qname("activelock"))));
 
     writer.ev(Event::Start(BytesStart::new(dav_qname("lockscope"))));

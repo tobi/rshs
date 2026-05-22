@@ -43,6 +43,7 @@ pub trait OrStatus<T> {
     }
 
     /// Log at `debug` level and return `409 Conflict`.
+    #[allow(dead_code)]
     fn or_409(self, msg: &str) -> Result<T, Response>
     where
         Self: Sized,
@@ -59,6 +60,7 @@ pub trait OrStatus<T> {
     }
 
     /// Log at `error` level and return `503 Service Unavailable`.
+    #[allow(dead_code)]
     fn or_503(self, msg: &str) -> Result<T, Response>
     where
         Self: Sized,

@@ -14,6 +14,7 @@ use percent_encoding::percent_decode_str;
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
+pub use ls::{find_ancestor_lock, walk_locked_ancestors};
 pub use method::Method;
 
 pub type DeadPropertyStore = HashMap<PathBuf, HashMap<String, String>>;
@@ -145,8 +146,6 @@ pub fn generate_lock_token() -> String {
     nanos.hash(&mut h);
     format!("opaquelocktoken:{:016x}", h.finish())
 }
-
-pub use ls::{find_ancestor_lock, walk_locked_ancestors};
 
 pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
     let value = match headers.get("if").and_then(|v| v.to_str().ok()) {
