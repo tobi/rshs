@@ -40,7 +40,6 @@ pub enum PropRequest {
     Named(Vec<String>),
 }
 
-#[allow(clippy::too_many_arguments)]
 #[derive(Debug, Clone, new)]
 pub struct PropEntry {
     pub href: String,
@@ -48,9 +47,13 @@ pub struct PropEntry {
     pub created: Option<SystemTime>,
     pub size: u64,
     pub is_dir: bool,
+    #[new(value = "None")]
     pub content_type: Option<String>,
+    #[new(value = "None")]
     pub dead_props: Option<HashMap<String, String>>,
+    #[new(value = "None")]
     pub active_locks: Option<Vec<LockInfo>>,
+    #[new(value = "None")]
     pub canonical_path: Option<PathBuf>,
 }
 
@@ -62,10 +65,6 @@ impl PropEntry {
             meta.created().ok(),
             meta.len(),
             is_dir,
-            None,
-            None,
-            None,
-            None,
         )
     }
 }
