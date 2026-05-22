@@ -1,4 +1,4 @@
-FROM docker.io/library/rust:1 AS builder
+FROM docker.io/library/rust:1-trixie AS builder
 
 WORKDIR /app/
 
