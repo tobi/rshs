@@ -35,6 +35,7 @@ async fn main() -> std::io::Result<()> {
         port,
         tls_config,
         auth_config,
+        cli.lock_timeout,
     ))
     .await
 }

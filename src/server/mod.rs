@@ -8,6 +8,7 @@ use std::io::{self, Error, ErrorKind};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{Request, State};
@@ -33,17 +34,19 @@ pub struct AppState {
     pub root_canonical: PathBuf,
     pub dead_props: Arc<RwLock<DeadPropertyStore>>,
     pub locks: Arc<RwLock<LockStore>>,
+    pub lock_timeout: Duration,
 }
 
 impl AppState {
-    pub fn new(root_dir: PathBuf, auth_config: AuthConfig) -> Self {
-        let root_canonical = fs::canonicalize(&root_dir).unwrap_or_else(|_| root_dir.clone());
+    pub fn new(root: PathBuf, auth_config: AuthConfig, lock_timeout: Duration) -> Self {
+        let root_canonical = fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
         Self {
             auth_config: Arc::new(auth_config),
-            root_dir,
+            root_dir: root,
             root_canonical,
             dead_props: Arc::new(RwLock::new(DeadPropertyStore::new())),
             locks: Arc::new(RwLock::new(LockStore::new())),
+            lock_timeout,
         }
     }
 
@@ -64,7 +67,7 @@ impl AppState {
 }
 
 /// Configuration for starting the server — root directory, bind address,
-/// optional TLS, and authentication.
+/// optional TLS, authentication, and default lock timeout.
 #[derive(Clone, new)]
 pub struct ServerConfig {
     pub root_dir: PathBuf,
@@ -72,6 +75,7 @@ pub struct ServerConfig {
     pub port: u16,
     pub tls_config: Option<tls::TlsConfig>,
     pub auth_config: AuthConfig,
+    pub lock_timeout: u64,
 }
 
 /// Builds the axum router with all middleware layers, then starts the HTTP or HTTPS
@@ -81,10 +85,15 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
         .parse()
         .map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
 
-    let state = Arc::new(AppState::new(
-        config.root_dir.clone(),
-        config.auth_config.clone(),
-    ));
+    let auth_config = config.auth_config;
+    let root = config.root_dir;
+    let lock_timeout = if config.lock_timeout == 0 {
+        std::time::Duration::ZERO
+    } else {
+        std::time::Duration::from_secs(config.lock_timeout)
+    };
+
+    let state = Arc::new(AppState::new(root, auth_config, lock_timeout));
 
     let router = make_router(state.clone());
 
@@ -174,7 +183,7 @@ async fn shutdown_signal() {
 async fn lock_cleanup_task(locks: Arc<RwLock<LockStore>>, shutdown: Arc<Notify>) {
     loop {
         tokio::select! {
-            _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+            _ = tokio::time::sleep(Duration::from_secs(30)) => {
                 let mut store = locks.write().await;
                 let before = store.values().map(|v| v.len()).sum::<usize>();
                 store.retain(|_path, infos| {

@@ -16,6 +16,10 @@ pub fn temp_dir_with_files() -> tempfile::TempDir {
 }
 
 pub fn make_test_router(root_dir: &Path, auth: AuthConfig) -> Router {
-    let state = Arc::new(AppState::new(root_dir.to_path_buf(), auth));
+    let state = Arc::new(AppState::new(
+        root_dir.to_path_buf(),
+        auth,
+        std::time::Duration::from_secs(300),
+    ));
     make_router(state)
 }
