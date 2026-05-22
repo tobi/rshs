@@ -145,8 +145,10 @@ src/
   (`middleware::lock::lock_enforce`), which converts the request method to `webdav::Method`
   via `Method::try_from()` and intercepts `Method::PUT/DELETE/MKCOL/PROPPATCH/MOVE/COPY`
   with `423 Locked` unless the request carries a matching condition.
-  Expired locks pruned every 30s by background task in `start_server()`; lock enforcement
-  filters expired locks lazily via the `active()` helper (`infos.iter().filter(|l| !l.is_expired())`),
+  Expired locks pruned every 30s by background task in `start_server()`.
+  Default lock timeout is 300s (`--lock-timeout` / `AppState.lock_timeout`);
+  `0` means unlimited. Lock enforcement filters expired locks lazily via the
+  `active()` helper (`infos.iter().filter(|l| !l.is_expired())`),
   short-circuiting on first unexpired lock.
   `write_activelock` outputs the lock's actual `depth` value (`"0"`, `"1"`, or `"infinity"`)
   for correct litmus depth:infinity lock semantics.
@@ -206,6 +208,83 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 - Run `cargo fmt` then `cargo clippy` before committing — both must produce zero warnings
 - All public types are re-exported from `src/lib.rs`; tests import from `rshs` crate root
 - Update `AGENTS.md`, `README.md` and `docs/` accordingly when new features are added or existing ones are changed
+
+## Documentation
+
+All `pub` and `pub(crate)` items must have `///` doc comments. Module-level
+docs use `//!`.
+
+### Requirements
+
+| Item type                           | Doc?  | Doc-test?   | Rationale                                   |
+| ----------------------------------- | ----- | ----------- | ------------------------------------------- |
+| Struct, enum, trait                 | `///` | If feasible | Show construction / typical usage           |
+| Function, method (pure)             | `///` | ` ``` `     | Doc-test replaces happy-path unit test      |
+| Function, method (async handler)    | `///` | No          | Too complex to set up; unit test stays      |
+| Function, method (async middleware) | `///` | No          | Same reason; unit test stays                |
+| `pub(crate)` module items           | `///` | No          | Not accessible from doc-test crate boundary |
+| Constant, type alias                | `///` | No          | Trivial; prose example if useful            |
+| Struct field                        | `///` | No          | Covered by struct-level docs                |
+
+### Doc-test style
+
+````rust
+/// One or two sentences explaining what this does.
+///
+/// ```
+/// use rshs::module::Item;
+///
+/// let result = Item::do_thing();
+/// assert_eq!(result, expected);
+/// ```
+pub fn do_thing() -> ...
+````
+
+### Test layer strategy
+
+| Layer             | Location              | Scope                                   | When to prioritize                             |
+| ----------------- | --------------------- | --------------------------------------- | ---------------------------------------------- |
+| Doc-tests         | Inline `/// ``` `     | API usage examples                      | Pure functions, simple constructors            |
+| Unit tests        | `src/` `#[cfg(test)]` | Edge cases, error paths, filesystem I/O | Internal logic not reachable via public API    |
+| Integration tests | `tests/`              | Full middleware-chain happy paths       | Every HTTP/WebDAV method through `make_router` |
+
+- Doc-tests replace happy-path unit test cases where feasible (reducing
+  duplication). Refer to the doc-test table above for constraints.
+- Unit tests are kept for scenarios that can't be doc-tested: async handlers,
+  middleware, filesystem ops, private functions, error paths.
+- Integration tests exercise the complete middleware stack via
+  [`make_router`](src/server/mod.rs). They verify middleware ordering
+  (HealthCheck → LockEnforce → Auth → dispatch) and cross-cutting behaviour.
+- When adding a new feature, first write the doc-test (if feasible), then the
+  integration test for the happy path, then unit tests for edge cases.
+
+## Visibility Guidelines
+
+| Visibility       | When to use                                                          | Example                                               |
+| ---------------- | -------------------------------------------------------------------- | ----------------------------------------------------- |
+| `pub`            | External consumers: `main.rs`, integration tests, library re-export  | Handlers, `AuthConfig`, `AppState`, `HealthCheck`     |
+| `pub(crate)`     | Used across `src/` modules but not by external callers               | `utils/*`, `DEFAULT_LOG_LEVEL`, `AppState::resolve_*` |
+| `pub(crate) mod` | Module items are re-exported at crate root (no need for direct path) | `cli`, `server`, `utils`                              |
+| `pub mod`        | Items accessed directly via public path (`rshs::module::Item`)       | `handlers`, `middleware`, `webdav`, `auth`            |
+| Private          | Used only within the defining module                                 | Internal helpers, parser internals                    |
+
+### Decision flow
+
+1. Does the item need to be accessible from `main.rs`, integration tests, or
+   library consumers? → **`pub`**
+2. Is the item used across modules within `src/` but not needed externally?
+   → **`pub(crate)`**
+3. Is the item used only within its own module? → **private**
+
+### Module-level visibility
+
+- Module is `pub` if any item inside needs to be accessed via a public path
+  (e.g. `rshs::handlers::http::handle_get_head`).
+- Module is `pub(crate)` if items are re-exported at crate root (e.g.
+  `server` → `pub use server::{AppState, ServerConfig, ...}`).
+- Sub-modules can be `pub(crate)` even when the parent module is `pub` (e.g.
+  `webdav::ls` is `pub(crate)` within `pub mod webdav`). Items within are
+  accessible crate-wide but not externally.
 
 ## Testing
 
@@ -331,3 +410,4 @@ RSHS_LOG="warn,rshs=debug" rshs         # global warn, rshs debug
 | `RSHS_LOG`         | Logging level (e.g. `info`)                       |
 | `RSHS_LOG_STYLE`   | Log output style (e.g. `auto`, `always`, `never`) |
 | `RSHS_SHADOW_FILE` | Shadow file path with optional `:rw`/`:ro` suffix |
+| `RSHS_LOCK_TIMEOUT` | Default WebDAV lock timeout in seconds (default: 300)     |
