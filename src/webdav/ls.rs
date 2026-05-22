@@ -4,10 +4,22 @@ use axum::http::StatusCode;
 
 use super::{Depth, IfCondition, IfList, LockInfo, LockStore};
 
+/// Filter a lock slice to only active (non-expired) locks.
+///
+/// This is used internally by the lock evaluation engine to lazily skip
+/// expired locks without modifying the store. Expired locks are pruned
+/// separately by the periodic cleanup task in `start_server`.
 pub fn active_slice(infos: &[LockInfo]) -> impl Iterator<Item = &LockInfo> + '_ {
     infos.iter().filter(|l| !l.is_expired())
 }
 
+/// Walk up the ancestor chain of `target` within `root_canonical`, calling
+/// `f` with the lock slice at each ancestor directory.
+///
+/// Stops at the first ancestor where `f` returns `true`, or when the walk
+/// reaches the root boundary.
+///
+/// Re-exported from [`crate::webdav`].
 pub fn walk_locked_ancestors<'a>(
     locks: &'a LockStore,
     target: &Path,
@@ -29,6 +41,13 @@ pub fn walk_locked_ancestors<'a>(
     false
 }
 
+/// Find the first ancestor lock matching a predicate, walking from
+/// `target` up to the root.
+///
+/// Only considers locks with `Depth::Infinity`. Used by the lock middleware
+/// and the LOCK handler for lock discovery and refresh.
+///
+/// Re-exported from [`crate::webdav`].
 pub fn find_ancestor_lock<'a>(
     locks: &'a LockStore,
     target: &Path,
@@ -48,6 +67,11 @@ pub fn find_ancestor_lock<'a>(
     result
 }
 
+/// Evaluate a single `If` header condition against an active lock slice.
+///
+/// - `StateToken("DAV:no-lock")`: true if no active locks exist.
+/// - `StateToken(t)`: true if any active lock has token `t`.
+/// - `Not(inner)`: negates the inner condition.
 pub fn eval_condition(cond: &IfCondition, infos: &[LockInfo]) -> bool {
     match cond {
         IfCondition::StateToken(t) if t == "DAV:no-lock" => !active_slice(infos).any(|_| true),
@@ -56,6 +80,13 @@ pub fn eval_condition(cond: &IfCondition, infos: &[LockInfo]) -> bool {
     }
 }
 
+/// Evaluate a full `If` header (list of `IfList`s) against an active lock
+/// slice for a given request path.
+///
+/// - Empty list: passes only if no active locks exist.
+/// - Resource-tagged lists: skipped if the tag doesn't match `request_path`.
+/// - All applicable lists must pass (AND); within a list, all conditions
+///   must pass (AND); across lists the result is AND semantics.
 pub fn eval_if(lists: &[IfList], infos: &[LockInfo], request_path: &str) -> bool {
     if lists.is_empty() {
         return active_slice(infos).next().is_none();
@@ -76,6 +107,14 @@ pub fn eval_if(lists: &[IfList], infos: &[LockInfo], request_path: &str) -> bool
     applicable.all(|l| l.conditions.iter().all(|c| eval_condition(c, infos)))
 }
 
+/// Check whether an existing exclusive lock blocks a request.
+///
+/// Returns:
+/// - `Ok(None)` if no exclusive lock exists (or it's expired / shared-only).
+/// - `Ok(Some(token))` if `if_tokens` contains the matching lock token.
+/// - `Err(LOCKED)` if an exclusive lock exists and `if_tokens` doesn't match.
+///
+/// Used by the lock enforcement middleware.
 pub fn check_existing_exclusive(
     entry: &[LockInfo],
     if_tokens: &[String],
@@ -224,7 +263,6 @@ mod tests {
             vec![IfCondition::StateToken("t2".into())],
         )];
         let infos = vec![make_lock(LockScope::Exclusive, "t1")];
-        // Tag doesn't match /a → list is skipped → passes
         assert!(eval_if(&lists, &infos, "/a"));
     }
 
@@ -242,7 +280,6 @@ mod tests {
     fn test_eval_if_no_lists_expired_ignored() {
         let lists: Vec<IfList> = vec![];
         let infos = vec![make_expired_lock("t1")];
-        // Expired lock ignored lazily → effectively unlocked → passes
         assert!(eval_if(&lists, &infos, "/a"));
     }
 
@@ -257,7 +294,6 @@ mod tests {
     fn test_token_match_expired_rejected() {
         let infos = vec![make_expired_lock("t1")];
         let cond = IfCondition::StateToken("t1".into());
-        // Expired lock ignored lazily → token no longer valid
         assert!(!eval_condition(&cond, &infos));
     }
 

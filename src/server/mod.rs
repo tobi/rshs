@@ -1,3 +1,6 @@
+//! Router construction, request dispatch, and server startup for both HTTP and HTTPS.
+//! Also provides the lock-cleanup background task.
+
 pub(crate) mod tls;
 
 use std::fs;
@@ -22,6 +25,10 @@ use crate::middleware;
 use crate::utils::path::{self, ResolveTargetError};
 use crate::webdav::{DeadPropertyStore, LockStore, Method};
 
+/// Shared application state passed to every handler and middleware.
+///
+/// Holds the root directory, auth config, WebDAV dead property store, and lock store.
+/// All fields are behind `Arc` for cheap cloning.
 #[derive(Clone)]
 pub struct AppState {
     pub auth_config: Arc<AuthConfig>,
@@ -59,6 +66,8 @@ impl AppState {
     }
 }
 
+/// Configuration for starting the server — root directory, bind address,
+/// optional TLS, and authentication.
 #[derive(Clone, new)]
 pub struct ServerConfig {
     pub root_dir: PathBuf,
@@ -68,6 +77,8 @@ pub struct ServerConfig {
     pub auth_config: AuthConfig,
 }
 
+/// Builds the axum router with all middleware layers, then starts the HTTP or HTTPS
+/// server. Also spawns a background task to prune expired WebDAV locks every 30 seconds.
 pub async fn start_server(config: ServerConfig) -> io::Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.host, config.port)
         .parse()

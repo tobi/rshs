@@ -21,6 +21,14 @@ fn guess_content_type(child_name: &std::ffi::OsStr) -> Option<String> {
     }
 }
 
+/// Collect `PropEntry` entries from a filesystem path for PROPFIND responses.
+///
+/// Reads the metadata for `fs_path`, creates a base `PropEntry`, and — if the
+/// target is a directory and `depth` allows — recursively collects child entries.
+///
+/// - `Depth::Zero`: only the target itself
+/// - `Depth::One`: target + immediate children
+/// - `Depth::Infinity`: target + full descendant tree
 pub async fn collect_entries(fs_path: &Path, request_path: &str, depth: Depth) -> Vec<PropEntry> {
     let meta = match tokio::fs::metadata(fs_path).await {
         Ok(m) => m,

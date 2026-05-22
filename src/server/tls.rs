@@ -1,3 +1,6 @@
+//! TLS certificate/key loading and a custom `axum::serve::Listener` that wraps a
+//! TCP listener with a `tokio-rustls` acceptor.
+
 use std::fs::File;
 use std::io::{self, BufReader};
 use std::net::SocketAddr;
@@ -8,6 +11,9 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use sha2::{Digest, Sha256};
 use tokio_rustls::TlsAcceptor;
 
+/// TLS certificate and private key file paths (PEM format).
+///
+/// Logs the SHA-256 fingerprint of each certificate on load.
 #[derive(Debug, Clone)]
 pub struct TlsConfig {
     pub cert_path: String,
@@ -15,6 +21,7 @@ pub struct TlsConfig {
 }
 
 impl TlsConfig {
+    /// Create a new `TlsConfig` with paths to the certificate and key PEM files.
     pub fn new(cert_path: String, key_path: String) -> Self {
         Self {
             cert_path,
@@ -22,6 +29,8 @@ impl TlsConfig {
         }
     }
 
+    /// Load and parse the certificate and key files, returning a `rustls::ServerConfig`
+    /// with ALPN protocols `h2` and `http/1.1`. Logs certificate fingerprints.
     pub fn load(&self) -> io::Result<rustls::ServerConfig> {
         let cert_file = match File::open(&self.cert_path) {
             Ok(f) => f,
@@ -111,12 +120,17 @@ impl TlsConfig {
     }
 }
 
+/// A TLS listener implementing `axum::serve::Listener`.
+///
+/// Wraps a `tokio::net::TcpListener` with a `tokio_rustls::TlsAcceptor`.
+/// Handshake failures are logged and retried; accept errors are logged with a 1-second backoff.
 pub struct TlsListener {
     inner: tokio::net::TcpListener,
     acceptor: TlsAcceptor,
 }
 
 impl TlsListener {
+    /// Bind to `addr` and wrap the TCP listener with a TLS acceptor.
     pub async fn bind(addr: SocketAddr, ls_config: rustls::ServerConfig) -> io::Result<Self> {
         let inner = tokio::net::TcpListener::bind(addr).await?;
         let acceptor = TlsAcceptor::from(Arc::new(ls_config));

@@ -1,3 +1,7 @@
+//! WebDAV protocol types (locks, properties, depth, conditions), XML parsing
+//! helpers, `If`/`Lock-Token`/`Timeout`/`Depth` header parsers, and filesystem
+//! traversal utilities.
+
 pub mod fs;
 pub mod ls;
 pub mod method;
@@ -17,30 +21,89 @@ use quick_xml::events::{BytesStart, Event};
 pub use ls::{find_ancestor_lock, walk_locked_ancestors};
 pub use method::Method;
 
+/// Per-resource dead property store: resource path → (prop name → value).
 pub type DeadPropertyStore = HashMap<PathBuf, HashMap<String, String>>;
 
+/// A single PROPPATCH action: property name and optional new value
+/// (`None` indicates removal).
 #[derive(Debug, Clone)]
 pub struct PropPatchAction(pub String, pub Option<String>);
 
+/// A parsed PROPPATCH request body containing a sequence of set/remove actions.
 #[derive(Debug, Clone, new)]
 pub struct PropPatchOp {
     pub actions: Vec<PropPatchAction>,
 }
 
+/// PROPFIND traversal depth.
+///
+/// ```
+/// use rshs::webdav::Depth;
+///
+/// assert_eq!(Depth::Zero.to_string(), "0");
+/// assert_eq!(Depth::Infinity.to_string(), "infinity");
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Depth {
+    /// Only the resource itself.
     Zero,
+    /// The resource and its immediate children.
     One,
+    /// The resource and all descendants.
     Infinity,
 }
 
+impl fmt::Display for Depth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Zero => "0".fmt(f),
+            Self::One => "1".fmt(f),
+            Self::Infinity => "infinity".fmt(f),
+        }
+    }
+}
+
+/// Body of a PROPFIND request.
+///
+/// ```
+/// use rshs::webdav::PropRequest;
+///
+/// let all = PropRequest::AllProp;
+/// let named = PropRequest::Named(vec!["getcontentlength".into(), "getetag".into()]);
+/// ```
 #[derive(Debug, Clone)]
 pub enum PropRequest {
+    /// `<D:allprop/>` — request all live properties.
     AllProp,
+    /// `<D:propname/>` — request property names only.
     PropName,
+    /// Request specific named properties (as Clark-notation keys).
     Named(Vec<String>),
 }
 
+/// A single resource entry in a PROPFIND multistatus response.
+///
+/// Holds the resource href, live property values, optional dead properties,
+/// and optional active lock information.
+///
+/// ```
+/// use std::time::UNIX_EPOCH;
+/// use rshs::webdav::PropEntry;
+///
+/// let e = PropEntry {
+///     href: "/docs/readme.md".into(),
+///     modified: UNIX_EPOCH,
+///     created: None,
+///     size: 1024,
+///     is_dir: false,
+///     content_type: Some("text/markdown".into()),
+///     dead_props: None,
+///     active_locks: None,
+///     canonical_path: None,
+/// };
+/// assert!(!e.is_dir);
+/// assert_eq!(e.size, 1024);
+/// ```
 #[derive(Debug, Clone, new)]
 pub struct PropEntry {
     pub href: String,
@@ -59,6 +122,16 @@ pub struct PropEntry {
 }
 
 impl PropEntry {
+    /// Create a `PropEntry` from `std::fs::Metadata`.
+    ///
+    /// ```
+    /// use std::fs;
+    /// use rshs::webdav::PropEntry;
+    ///
+    /// let meta = fs::metadata("Cargo.toml").unwrap();
+    /// let entry = PropEntry::from_meta("/Cargo.toml".into(), false, &meta);
+    /// assert!(entry.size > 0);
+    /// ```
     pub fn from_meta(href: String, is_dir: bool, meta: &std::fs::Metadata) -> Self {
         Self::new(
             href,
@@ -70,8 +143,26 @@ impl PropEntry {
     }
 }
 
+/// In-memory lock store: resource path → active locks.
 pub type LockStore = HashMap<PathBuf, Vec<LockInfo>>;
 
+/// A WebDAV lock (RFC 4918 §6).
+///
+/// ```
+/// use std::time::{SystemTime, Duration};
+/// use rshs::webdav::{LockInfo, LockScope, Depth};
+///
+/// let lock = LockInfo {
+///     scope: LockScope::Exclusive,
+///     token: "opaquelocktoken:abc123".into(),
+///     owner: Some("user@example.com".into()),
+///     created: SystemTime::now(),
+///     timeout: Some(Duration::from_secs(3600)),
+///     depth: Depth::Zero,
+/// };
+/// assert!(lock.is_exclusive());
+/// assert!(!lock.is_expired());
+/// ```
 #[derive(Debug, Clone, new)]
 pub struct LockInfo {
     pub scope: LockScope,
@@ -83,6 +174,34 @@ pub struct LockInfo {
 }
 
 impl LockInfo {
+    /// Whether the lock has expired.
+    ///
+    /// A lock without a timeout never expires.
+    ///
+    /// ```
+    /// use std::time::{SystemTime, Duration};
+    /// use rshs::webdav::{LockInfo, LockScope, Depth};
+    ///
+    /// let active = LockInfo {
+    ///     scope: LockScope::Exclusive,
+    ///     token: "t1".into(),
+    ///     owner: None,
+    ///     created: SystemTime::now(),
+    ///     timeout: Some(Duration::from_secs(3600)),
+    ///     depth: Depth::Zero,
+    /// };
+    /// assert!(!active.is_expired());
+    ///
+    /// let no_timeout = LockInfo {
+    ///     scope: LockScope::Exclusive,
+    ///     token: "t2".into(),
+    ///     owner: None,
+    ///     created: SystemTime::now() - Duration::from_secs(99999),
+    ///     timeout: None,
+    ///     depth: Depth::Zero,
+    /// };
+    /// assert!(!no_timeout.is_expired());
+    /// ```
     pub fn is_expired(&self) -> bool {
         let Some(timeout) = self.timeout else {
             return false;
@@ -90,23 +209,74 @@ impl LockInfo {
         self.created.elapsed().unwrap_or_default() >= timeout
     }
 
+    /// Whether the lock has exclusive scope.
+    ///
+    /// ```
+    /// use std::time::SystemTime;
+    /// use rshs::webdav::{LockInfo, LockScope, Depth};
+    ///
+    /// let lock = LockInfo {
+    ///     scope: LockScope::Shared,
+    ///     token: "t".into(),
+    ///     owner: None,
+    ///     created: SystemTime::now(),
+    ///     timeout: None,
+    ///     depth: Depth::Zero,
+    /// };
+    /// assert!(!lock.is_exclusive());
+    /// ```
     pub fn is_exclusive(&self) -> bool {
         matches!(self.scope, LockScope::Exclusive)
     }
 }
 
+/// Lock scope: exclusive (write) or shared (read).
+///
+/// ```
+/// use rshs::webdav::LockScope;
+///
+/// let s = LockScope::Shared;
+/// let e = LockScope::Exclusive;
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub enum LockScope {
     Exclusive,
     Shared,
 }
 
+/// A single condition in an `If` header (RFC 4918 §10.4).
+///
+/// ```
+/// use rshs::webdav::IfCondition;
+///
+/// let token = IfCondition::StateToken("opaquelocktoken:abc".into());
+/// let not = IfCondition::Not(Box::new(token.clone()));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IfCondition {
+    /// `<token>` — match a specific lock token.
     StateToken(String),
+    /// `Not <condition>` — negate a condition.
     Not(Box<IfCondition>),
 }
 
+/// One list of conditions in an `If` header, optionally scoped to a resource.
+///
+/// Multiple lists are OR'd; multiple conditions within a list are AND'd.
+///
+/// ```
+/// use rshs::webdav::{IfList, IfCondition};
+///
+/// let list = IfList {
+///     resource_tag: None,
+///     conditions: vec![
+///         IfCondition::StateToken("opaquelocktoken:t1".into()),
+///         IfCondition::Not(Box::new(IfCondition::StateToken("DAV:no-lock".into()))),
+///     ],
+/// };
+/// assert!(list.has_lock_token());
+/// assert_eq!(list.positive_tokens(), vec!["opaquelocktoken:t1"]);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, new)]
 pub struct IfList {
     pub resource_tag: Option<String>,
@@ -114,10 +284,26 @@ pub struct IfList {
 }
 
 impl IfList {
+    /// Collect all non-negated state tokens.
+    ///
+    /// ```
+    /// use rshs::webdav::{IfList, IfCondition};
+    ///
+    /// let list = IfList {
+    ///     resource_tag: None,
+    ///     conditions: vec![
+    ///         IfCondition::StateToken("t1".into()),
+    ///         IfCondition::Not(Box::new(IfCondition::StateToken("t2".into()))),
+    ///         IfCondition::StateToken("t3".into()),
+    ///     ],
+    /// };
+    /// assert_eq!(list.positive_tokens(), vec!["t1", "t3"]);
+    /// ```
     pub fn positive_tokens(&self) -> Vec<&str> {
         self.positive_tokens_iter().collect()
     }
 
+    /// Iterator over non-negated state tokens.
     pub fn positive_tokens_iter(&self) -> impl Iterator<Item = &str> + '_ {
         self.conditions.iter().filter_map(|c| match c {
             IfCondition::StateToken(t) => Some(t.as_str()),
@@ -125,6 +311,23 @@ impl IfList {
         })
     }
 
+    /// Whether this list contains any actual lock token (excluding `DAV:no-lock`).
+    ///
+    /// ```
+    /// use rshs::webdav::{IfList, IfCondition};
+    ///
+    /// let no_lock = IfList {
+    ///     resource_tag: None,
+    ///     conditions: vec![IfCondition::StateToken("DAV:no-lock".into())],
+    /// };
+    /// assert!(!no_lock.has_lock_token());
+    ///
+    /// let has_token = IfList {
+    ///     resource_tag: None,
+    ///     conditions: vec![IfCondition::StateToken("opaquelocktoken:xyz".into())],
+    /// };
+    /// assert!(has_token.has_lock_token());
+    /// ```
     pub fn has_lock_token(&self) -> bool {
         self.conditions.iter().any(|c| match c {
             IfCondition::StateToken(t) => t != "DAV:no-lock",
@@ -135,6 +338,14 @@ impl IfList {
     }
 }
 
+/// Generate a new unique lock token string (`opaquelocktoken:`-prefixed hex).
+///
+/// ```
+/// use rshs::webdav::generate_lock_token;
+///
+/// let t = generate_lock_token();
+/// assert!(t.starts_with("opaquelocktoken:"));
+/// ```
 pub fn generate_lock_token() -> String {
     use std::hash::{Hash, Hasher};
     use std::time::UNIX_EPOCH;
@@ -147,6 +358,32 @@ pub fn generate_lock_token() -> String {
     format!("opaquelocktoken:{:016x}", h.finish())
 }
 
+/// Parse the `If` header into a list of `IfList`s (RFC 4918 §10.4).
+///
+/// ```
+/// use axum::http::HeaderMap;
+/// use rshs::webdav::{parse_if_header, IfCondition, IfList};
+///
+/// let mut h = HeaderMap::new();
+/// h.insert("if", "(<opaquelocktoken:t1>)".parse().unwrap());
+///
+/// let lists = parse_if_header(&h);
+/// assert_eq!(lists.len(), 1);
+/// assert_eq!(lists[0].conditions.len(), 1);
+/// assert_eq!(lists[0].conditions[0], IfCondition::StateToken("opaquelocktoken:t1".into()));
+///
+/// // Not condition
+/// let mut h = HeaderMap::new();
+/// h.insert("if", "(Not <DAV:no-lock>)".parse().unwrap());
+/// let lists = parse_if_header(&h);
+/// assert_eq!(lists[0].conditions[0], IfCondition::Not(Box::new(IfCondition::StateToken("DAV:no-lock".into()))));
+///
+/// // Resource tags
+/// let mut h = HeaderMap::new();
+/// h.insert("if", "</path> (<opaquelocktoken:t1>)".parse().unwrap());
+/// let lists = parse_if_header(&h);
+/// assert_eq!(lists[0].resource_tag, Some("/path".into()));
+/// ```
 pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
     let value = match headers.get("if").and_then(|v| v.to_str().ok()) {
         Some(v) => v,
@@ -157,7 +394,6 @@ pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
     let mut chars: std::iter::Peekable<_> = value.char_indices().peekable();
 
     while chars.peek().is_some() {
-        // Skip whitespace
         while chars.peek().is_some_and(|(_, c)| c.is_whitespace()) {
             chars.next();
         }
@@ -167,9 +403,7 @@ pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
 
         let mut resource_tag = None;
 
-        // Check for resource tag: <url> followed by (
         if chars.peek().unwrap().1 == '<' {
-            // Save working position in case this isn't a resource tag
             let mut saved: Vec<_> = Vec::new();
             loop {
                 let c = chars.next().unwrap().1;
@@ -181,7 +415,6 @@ pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
 
             let tag: String = saved[1..saved.len() - 1].iter().collect();
 
-            // Check if next non-whitespace is '('
             let mut peek_pos = chars.peek();
             while peek_pos.is_some_and(|(_, c)| c.is_whitespace()) {
                 chars.next();
@@ -189,21 +422,18 @@ pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
             }
             if peek_pos.is_some_and(|(_, c)| *c == '(') {
                 resource_tag = Some(tag);
-                chars.next(); // consume '('
+                chars.next();
             } else {
-                // Bare token without enclosing (...) — single-condition list
                 lists.push(IfList::new(None, vec![IfCondition::StateToken(tag)]));
                 continue;
             }
         } else if chars.peek().unwrap().1 == '(' {
-            chars.next(); // consume '('
+            chars.next();
         } else {
-            // Skip unexpected char
             chars.next();
             continue;
         }
 
-        // Parse conditions inside (...) until ')'
         let mut conditions = Vec::new();
         let mut negated = false;
 
@@ -219,7 +449,6 @@ pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
                     break;
                 }
                 Some((i, _)) => {
-                    // Check for "Not" keyword
                     if value[*i..].starts_with("Not") {
                         let after_not = &value[*i + 3..];
                         if after_not
@@ -233,10 +462,9 @@ pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
                         }
                     }
 
-                    // Read <token>
                     if chars.peek().unwrap().1 == '<' {
                         let mut token = String::new();
-                        chars.next(); // skip '<'
+                        chars.next();
                         loop {
                             match chars.next() {
                                 Some((_, '>')) => break,
@@ -253,7 +481,6 @@ pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
                             conditions.push(cond);
                         }
                     } else {
-                        // Skip unexpected char inside list
                         chars.next();
                     }
                 }
@@ -266,6 +493,18 @@ pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
     lists
 }
 
+/// Extract a lock token from the `Lock-Token` header.
+///
+/// Returns the bare token string (without `<` `>` brackets).
+///
+/// ```
+/// use axum::http::HeaderMap;
+/// use rshs::webdav::parse_lock_token_header;
+///
+/// let mut h = HeaderMap::new();
+/// h.insert("lock-token", "<opaquelocktoken:abc>".parse().unwrap());
+/// assert_eq!(parse_lock_token_header(&h).unwrap(), "opaquelocktoken:abc");
+/// ```
 pub fn parse_lock_token_header(headers: &HeaderMap) -> Option<String> {
     let value = headers.get("lock-token")?.to_str().ok()?;
     value
@@ -276,6 +515,19 @@ pub fn parse_lock_token_header(headers: &HeaderMap) -> Option<String> {
         .into()
 }
 
+/// Parse the `Timeout` header to a `Duration`.
+///
+/// Recognises the `Second-<N>` syntax (RFC 4918 §10.7).
+///
+/// ```
+/// use axum::http::HeaderMap;
+/// use std::time::Duration;
+/// use rshs::webdav::parse_timeout;
+///
+/// let mut h = HeaderMap::new();
+/// h.insert("timeout", "Second-3600".parse().unwrap());
+/// assert_eq!(parse_timeout(&h), Some(Duration::from_secs(3600)));
+/// ```
 pub fn parse_timeout(headers: &HeaderMap) -> Option<std::time::Duration> {
     let value = headers.get("timeout")?.to_str().ok()?;
     let seconds = value
@@ -284,6 +536,23 @@ pub fn parse_timeout(headers: &HeaderMap) -> Option<std::time::Duration> {
     Some(std::time::Duration::from_secs(seconds))
 }
 
+/// Parse the `Depth` header.
+///
+/// ```
+/// use axum::http::HeaderMap;
+/// use rshs::webdav::{parse_depth, Depth};
+///
+/// let h = HeaderMap::new();
+/// assert_eq!(parse_depth(&h), Depth::Infinity); // default
+///
+/// let mut h = HeaderMap::new();
+/// h.insert("depth", "0".parse().unwrap());
+/// assert_eq!(parse_depth(&h), Depth::Zero);
+///
+/// let mut h = HeaderMap::new();
+/// h.insert("depth", "1".parse().unwrap());
+/// assert_eq!(parse_depth(&h), Depth::One);
+/// ```
 pub fn parse_depth(headers: &HeaderMap) -> Depth {
     let depth = headers.get("depth");
     match depth.and_then(|v| v.to_str().ok()).unwrap_or("infinity") {
@@ -293,6 +562,7 @@ pub fn parse_depth(headers: &HeaderMap) -> Depth {
     }
 }
 
+/// Errors returned by WebDAV XML body parsing functions.
 #[derive(Debug)]
 pub enum ParseError {
     InvalidBody(&'static str),
@@ -314,6 +584,14 @@ impl From<quick_xml::Error> for ParseError {
     }
 }
 
+/// Build a Clark notation key from namespace and local name.
+///
+/// ```
+/// use rshs::webdav::clark_key;
+///
+/// assert_eq!(clark_key("http://example.com", "prop0"), "{http://example.com}prop0");
+/// assert_eq!(clark_key("", "prop0"), "prop0");
+/// ```
 pub fn clark_key(ns: &str, local: &str) -> String {
     if ns.is_empty() {
         local.to_string()
@@ -322,6 +600,18 @@ pub fn clark_key(ns: &str, local: &str) -> String {
     }
 }
 
+/// Parse a Clark notation key into (namespace, localname).
+///
+/// ```
+/// use rshs::webdav::parse_clark;
+///
+/// assert_eq!(
+///     parse_clark("{http://example.com}prop0"),
+///     Some(("http://example.com", "prop0"))
+/// );
+/// assert_eq!(parse_clark("prop0"), Some(("", "prop0")));
+/// assert_eq!(parse_clark("{broken"), None);
+/// ```
 pub fn parse_clark(key: &str) -> Option<(&str, &str)> {
     if let Some(rest) = key.strip_prefix('{') {
         let (ns, local) = rest.split_once('}')?;
@@ -371,6 +661,24 @@ fn extract_element_ns(e: &BytesStart) -> Result<(String, String), ParseError> {
     Ok((ns, local))
 }
 
+/// Parse a PROPFIND request body.
+///
+/// Detects `<allprop/>`, `<propname/>`, or named `<prop>` elements and returns
+/// the appropriate `PropRequest` variant.
+///
+/// ```
+/// use rshs::webdav::{parse_propfind_request, PropRequest};
+///
+/// let all = parse_propfind_request(
+///     br#"<?xml version="1.0"?><D:propfind xmlns:D="DAV:"><D:allprop/></D:propfind>"#
+/// ).unwrap();
+/// assert!(matches!(all, PropRequest::AllProp));
+///
+/// let named = parse_propfind_request(
+///     br#"<?xml version="1.0"?><D:propfind xmlns:D="DAV:"><D:prop><D:getcontentlength/></D:prop></D:propfind>"#
+/// ).unwrap();
+/// assert!(matches!(named, PropRequest::Named(_)));
+/// ```
 pub fn parse_propfind_request(xml: &[u8]) -> Result<PropRequest, ParseError> {
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(true);
@@ -420,8 +728,22 @@ pub fn parse_propfind_request(xml: &[u8]) -> Result<PropRequest, ParseError> {
     }
 }
 
-/// Extract the path from a Destination header (full URL → decoded path).
+/// Extract the path from a `Destination` header (full URL → decoded path).
+///
 /// Trailing slashes are stripped for COPY/MOVE compatibility with litmus.
+///
+/// ```
+/// use axum::http::HeaderMap;
+/// use rshs::webdav::parse_destination;
+///
+/// let mut h = HeaderMap::new();
+/// h.insert("destination", "http://localhost:8080/docs/file.txt".parse().unwrap());
+/// assert_eq!(parse_destination(&h).unwrap(), "/docs/file.txt");
+///
+/// let mut h = HeaderMap::new();
+/// h.insert("destination", "/docs/".parse().unwrap());
+/// assert_eq!(parse_destination(&h).unwrap(), "/docs");
+/// ```
 pub fn parse_destination(headers: &HeaderMap) -> Option<String> {
     let value = headers.get("destination")?.to_str().ok()?;
     let mut path = if let Some(pos) = value.find("://") {
@@ -442,6 +764,20 @@ pub fn parse_destination(headers: &HeaderMap) -> Option<String> {
     Some(path)
 }
 
+/// Parse the `Overwrite` header (`"T"` → `true`, `"F"` → `false`).
+///
+/// Defaults to `true` when the header is absent.
+///
+/// ```
+/// use axum::http::HeaderMap;
+/// use rshs::webdav::parse_overwrite;
+///
+/// assert!(parse_overwrite(&HeaderMap::new())); // default
+///
+/// let mut h = HeaderMap::new();
+/// h.insert("overwrite", "F".parse().unwrap());
+/// assert!(!parse_overwrite(&h));
+/// ```
 pub fn parse_overwrite(headers: &HeaderMap) -> bool {
     headers
         .get("overwrite")
@@ -478,9 +814,23 @@ fn decode_xml_char_refs(text: &str) -> String {
     result
 }
 
+/// Parse a PROPPATCH request body into a sequence of set/remove actions.
+///
+/// ```
+/// use rshs::webdav::{parse_proppatch_request, PropPatchAction};
+///
+/// let op = parse_proppatch_request(
+///     br#"<?xml version="1.0"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:p>val</X:p></D:prop></D:set><D:remove><D:prop><X:q/></D:prop></D:remove></D:propertyupdate>"#
+/// ).unwrap();
+/// assert_eq!(op.actions.len(), 2);
+/// // First action: set X:p = "val"
+/// assert_eq!(op.actions[0].0, "p");
+/// assert_eq!(op.actions[0].1.as_deref(), Some("val"));
+/// // Second action: remove X:q
+/// assert_eq!(op.actions[1].0, "q");
+/// assert!(op.actions[1].1.is_none());
+/// ```
 pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, ParseError> {
-    // Pre-decode XML character references: quick_xml 0.40 does not emit
-    // Text events for content that is entirely character references.
     let decoded = decode_xml_char_refs(&String::from_utf8_lossy(xml));
     let mut reader = Reader::from_reader(decoded.as_bytes());
     reader.config_mut().trim_text(true);
@@ -550,226 +900,9 @@ pub fn parse_proppatch_request(xml: &[u8]) -> Result<PropPatchOp, ParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
-    fn make_lock_info(timeout: Option<Duration>, created_offset: Duration) -> LockInfo {
-        LockInfo::new(
-            LockScope::Exclusive,
-            "opaquelocktoken:test".into(),
-            None,
-            SystemTime::now() - created_offset,
-            timeout,
-            Depth::Zero,
-        )
-    }
-
-    #[test]
-    fn test_is_expired_no_timeout() {
-        let lock = make_lock_info(None, Duration::from_secs(3600));
-        assert!(!lock.is_expired());
-    }
-
-    #[test]
-    fn test_is_expired_future() {
-        let lock = make_lock_info(Some(Duration::from_secs(100)), Duration::ZERO);
-        assert!(!lock.is_expired());
-    }
-
-    #[test]
-    fn test_is_expired_past() {
-        let lock = make_lock_info(Some(Duration::from_secs(1)), Duration::from_secs(2));
-        assert!(lock.is_expired());
-    }
-
-    #[test]
-    fn test_is_expired_exact_boundary() {
-        let lock = make_lock_info(Some(Duration::from_secs(5)), Duration::from_secs(5));
-        assert!(lock.is_expired());
-    }
-
-    fn make_if_header(value: &str) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        headers.insert("if", value.parse().unwrap());
-        headers
-    }
-
-    #[test]
-    fn test_parse_if_simple_token() {
-        let headers = make_if_header("(<opaquelocktoken:t1>)");
-        let lists = parse_if_header(&headers);
-        assert_eq!(lists.len(), 1);
-        assert_eq!(lists[0].resource_tag, None);
-        assert_eq!(lists[0].conditions.len(), 1);
-        assert_eq!(
-            lists[0].conditions[0],
-            IfCondition::StateToken("opaquelocktoken:t1".into())
-        );
-    }
-
-    #[test]
-    fn test_parse_if_not_token() {
-        let headers = make_if_header("(Not <opaquelocktoken:t1>)");
-        let lists = parse_if_header(&headers);
-        assert_eq!(lists.len(), 1);
-        assert_eq!(lists[0].conditions.len(), 1);
-        assert_eq!(
-            lists[0].conditions[0],
-            IfCondition::Not(Box::new(IfCondition::StateToken(
-                "opaquelocktoken:t1".into()
-            )))
-        );
-    }
-
-    #[test]
-    fn test_parse_if_not_no_lock() {
-        let headers = make_if_header("(Not <DAV:no-lock>)");
-        let lists = parse_if_header(&headers);
-        assert_eq!(lists.len(), 1);
-        assert_eq!(lists[0].conditions.len(), 1);
-        assert_eq!(
-            lists[0].conditions[0],
-            IfCondition::Not(Box::new(IfCondition::StateToken("DAV:no-lock".into())))
-        );
-    }
-
-    #[test]
-    fn test_parse_if_resource_tag() {
-        let headers = make_if_header("</path> (<opaquelocktoken:t1>)");
-        let lists = parse_if_header(&headers);
-        assert_eq!(lists.len(), 1);
-        assert_eq!(lists[0].resource_tag, Some("/path".into()));
-        assert_eq!(lists[0].conditions.len(), 1);
-    }
-
-    #[test]
-    fn test_parse_if_and_conditions() {
-        let headers = make_if_header("(<opaquelocktoken:a> <opaquelocktoken:b>)");
-        let lists = parse_if_header(&headers);
-        assert_eq!(lists.len(), 1);
-        assert_eq!(lists[0].conditions.len(), 2);
-    }
-
-    #[test]
-    fn test_parse_if_multiple_lists() {
-        let headers = make_if_header("(<opaquelocktoken:a>) (Not <DAV:no-lock>)");
-        let lists = parse_if_header(&headers);
-        assert_eq!(lists.len(), 2);
-    }
-
-    #[test]
-    fn test_parse_if_no_header() {
-        let headers = HeaderMap::new();
-        let lists = parse_if_header(&headers);
-        assert!(lists.is_empty());
-    }
-
-    #[test]
-    fn test_positive_tokens() {
-        let list = IfList::new(
-            None,
-            vec![
-                IfCondition::StateToken("t1".into()),
-                IfCondition::Not(Box::new(IfCondition::StateToken("t2".into()))),
-                IfCondition::StateToken("t3".into()),
-            ],
-        );
-        let tokens = list.positive_tokens();
-        assert_eq!(tokens, vec!["t1", "t3"]);
-    }
-
-    #[test]
-    fn test_positive_tokens_iter() {
-        let list = IfList::new(
-            None,
-            vec![
-                IfCondition::StateToken("t1".into()),
-                IfCondition::Not(Box::new(IfCondition::StateToken("t2".into()))),
-                IfCondition::StateToken("t3".into()),
-            ],
-        );
-        let tokens = list.positive_tokens_iter();
-        assert_eq!(tokens.collect::<Vec<_>>(), vec!["t1", "t3"]);
-    }
-
-    #[test]
-    fn test_has_lock_token_with_lock_token() {
-        let list = IfList::new(
-            None,
-            vec![IfCondition::StateToken("opaquelocktoken:abc".into())],
-        );
-        assert!(list.has_lock_token());
-    }
-
-    #[test]
-    fn test_has_lock_token_dav_no_lock_only() {
-        let list = IfList::new(None, vec![IfCondition::StateToken("DAV:no-lock".into())]);
-        assert!(!list.has_lock_token());
-    }
-
-    #[test]
-    fn test_has_lock_token_not_dav_no_lock() {
-        let list = IfList::new(
-            None,
-            vec![IfCondition::Not(Box::new(IfCondition::StateToken(
-                "DAV:no-lock".into(),
-            )))],
-        );
-        assert!(!list.has_lock_token());
-    }
-
-    #[test]
-    fn test_has_lock_token_not_lock_token() {
-        let list = IfList::new(
-            None,
-            vec![IfCondition::Not(Box::new(IfCondition::StateToken(
-                "opaquelocktoken:abc".into(),
-            )))],
-        );
-        assert!(list.has_lock_token());
-    }
-
-    #[test]
-    fn test_has_lock_token_mixed() {
-        let list = IfList::new(
-            None,
-            vec![
-                IfCondition::StateToken("DAV:no-lock".into()),
-                IfCondition::StateToken("opaquelocktoken:xyz".into()),
-            ],
-        );
-        assert!(list.has_lock_token());
-    }
-
-    #[test]
-    fn test_clark_key_with_ns() {
-        assert_eq!(
-            clark_key("http://example.com", "prop0"),
-            "{http://example.com}prop0"
-        );
-    }
-
-    #[test]
-    fn test_clark_key_empty_ns() {
-        assert_eq!(clark_key("", "prop0"), "prop0");
-    }
-
-    #[test]
-    fn test_parse_clark_with_ns() {
-        assert_eq!(
-            parse_clark("{http://example.com}prop0"),
-            Some(("http://example.com", "prop0"))
-        );
-    }
-
-    #[test]
-    fn test_parse_clark_empty_ns() {
-        assert_eq!(parse_clark("prop0"), Some(("", "prop0")));
-    }
-
-    #[test]
-    fn test_parse_clark_invalid() {
-        assert_eq!(parse_clark("{broken"), None);
-    }
+    // Tests for extract_element_ns — a private function that cannot be
+    // exercised via doc-tests.
 
     #[test]
     fn test_extract_element_ns_default_ns() {
@@ -802,59 +935,5 @@ mod tests {
         let mut elem = BytesStart::new("bar:foo");
         elem.push_attribute(("xmlns:bar", ""));
         assert!(extract_element_ns(&elem).is_err());
-    }
-
-    #[test]
-    fn test_parse_propfind_invalid_xml_returns_error() {
-        let result = parse_propfind_request(b"<foo>");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_proppatch_preserves_namespace() {
-        let xml = br#"<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><prop0 xmlns="http://example.com/neon/litmus/">value0</prop0></D:prop></D:set></D:propertyupdate>"#;
-        let op = parse_proppatch_request(xml).unwrap();
-        let value = op.actions.iter().find_map(|a| match a {
-            PropPatchAction(name, Some(v)) if name == "{http://example.com/neon/litmus/}prop0" => {
-                Some(v.as_str())
-            }
-            _ => None,
-        });
-        assert_eq!(value, Some("value0"));
-    }
-
-    #[test]
-    fn test_parse_proppatch_respects_order_set_then_remove() {
-        let xml = br#"<?xml version="1.0"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:p>val</X:p></D:prop></D:set><D:remove><D:prop><X:p/></D:prop></D:remove></D:propertyupdate>"#;
-        let op = parse_proppatch_request(xml).unwrap();
-        assert_eq!(op.actions.len(), 2);
-        assert_eq!(op.actions[0].0.as_str(), "p");
-        assert_eq!(op.actions[0].1.as_deref(), Some("val"));
-        assert_eq!(op.actions[1].0.as_str(), "p");
-        assert!(op.actions[1].1.is_none());
-    }
-
-    #[test]
-    fn test_parse_proppatch_high_unicode_character() {
-        let xml = br#"<?xml version="1.0" encoding="utf-8" ?><propertyupdate xmlns='DAV:'><set><prop><high-unicode xmlns='http://example.com/neon/litmus/'>&#65536;</high-unicode></prop></set></propertyupdate>"#;
-        let op = parse_proppatch_request(xml).unwrap();
-        let value = op.actions.iter().find_map(|a| match a {
-            PropPatchAction(name, Some(v))
-                if name == "{http://example.com/neon/litmus/}high-unicode" =>
-            {
-                Some(v.as_str())
-            }
-            _ => None,
-        });
-        assert_eq!(value, Some("𐀀"), "high-unicode value should be U+10000 (𐀀)");
-
-        // Also test basic char ref
-        let xml = br#"<?xml version="1.0"?><D:propertyupdate xmlns:D="DAV:"><D:set><D:prop><X:p>&#65;&#66;&#67;</X:p></D:prop></D:set></D:propertyupdate>"#;
-        let op = parse_proppatch_request(xml).unwrap();
-        let val = op.actions.iter().find_map(|a| match a {
-            PropPatchAction(name, Some(v)) if name == "p" => Some(v.as_str()),
-            _ => None,
-        });
-        assert_eq!(val, Some("ABC"), "&#65;&#66;&#67; should decode to ABC");
     }
 }

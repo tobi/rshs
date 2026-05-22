@@ -26,6 +26,12 @@ impl fmt::Display for ResolveTargetError {
 }
 
 impl ResolveTargetError {
+    /// Map the error variant to an HTTP status code.
+    ///
+    /// `on_invalid` is used for [`InvalidPath`](Self::InvalidPath);
+    /// [`ParentCanonicalizeFailed`](Self::ParentCanonicalizeFailed) always
+    /// returns `409 Conflict`, and [`TraversalBlocked`](Self::TraversalBlocked)
+    /// always returns `403 Forbidden`.
     pub fn status(&self, on_invalid: StatusCode) -> StatusCode {
         match self {
             Self::InvalidPath => on_invalid,

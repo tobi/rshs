@@ -16,10 +16,10 @@ use crate::server::AppState;
 use crate::utils::error::{IntoResolved, OrStatus};
 use crate::utils::time::format_rfc850;
 
-// ---------------------------------------------------------------------------
-// GET / HEAD
-// ---------------------------------------------------------------------------
-
+/// GET / HEAD handler — serves files and generates HTML directory listings.
+///
+/// Supports conditional `If-Modified-Since` via the `Last-Modified` header.
+/// Accepts `Range` requests for partial content delivery.
 pub async fn handle_get_head(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
@@ -188,10 +188,11 @@ async fn generate_dir_listing(dir_path: &Path, request_path: &str) -> (String, u
     render_dir_html(request_path, entries)
 }
 
-// ---------------------------------------------------------------------------
-// PUT
-// ---------------------------------------------------------------------------
-
+/// PUT handler — accepts a request body and writes it to the filesystem.
+///
+/// Returns `201 Created` for new files, `200 OK` for overwrites.
+/// Rejects directory paths, missing parents, and traversal attempts.
+/// Intermediate collections are NOT created (per RFC 4918 §9.6).
 pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
@@ -246,10 +247,10 @@ pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Res
     }
 }
 
-// ---------------------------------------------------------------------------
-// DELETE
-// ---------------------------------------------------------------------------
-
+/// DELETE handler — removes a file or recursively deletes a directory.
+///
+/// Returns `204 No Content` on success, `404 Not Found` if the target
+/// does not exist. Root directory deletion is rejected.
 pub async fn handle_delete(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
@@ -292,10 +293,10 @@ pub async fn handle_delete(State(state): State<Arc<AppState>>, req: Request) -> 
     }
 }
 
-// ---------------------------------------------------------------------------
-// OPTIONS
-// ---------------------------------------------------------------------------
-
+/// OPTIONS handler — returns supported HTTP/DAV methods in the `Allow` header.
+///
+/// Includes the `DAV: 1,2` compliance level and `MS-Author-Via: DAV` header
+/// for compatibility with legacy clients.
 pub async fn handle_options() -> Response {
     Response::builder()
         .status(StatusCode::OK)

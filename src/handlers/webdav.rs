@@ -17,10 +17,10 @@ use crate::webdav::{
     xml::{XmlWriter, XmlWriterExt, dav_qname},
 };
 
-// ---------------------------------------------------------------------------
-// PROPFIND
-// ---------------------------------------------------------------------------
-
+/// PROPFIND handler — returns resource properties (RFC 4918 §9.1).
+///
+/// Supports `Depth: 0`, `1`, and `infinity`. Accepts `allprop`, `propname`,
+/// and named property requests. Returns a `207 Multi-Status` XML response.
 pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let depth = webdav::parse_depth(req.headers());
     let request_path = req.uri().path().to_owned();
@@ -59,10 +59,10 @@ pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -
     webdav::xml::multistatus(xml)
 }
 
-// ---------------------------------------------------------------------------
-// MKCOL
-// ---------------------------------------------------------------------------
-
+/// MKCOL handler — creates a new collection (directory) (RFC 4918 §9.3).
+///
+/// Returns `201 Created` on success. Rejects if the parent does not exist,
+/// a file already occupies the path, or the target is root.
 pub async fn handle_mkcol(State(state): State<Arc<AppState>>, req: Request) -> Response {
     // MKCOL MUST fail with 415 if the request has a body (RFC 2518 §8.3.1)
     let len = req.headers().get("content-length");
@@ -95,14 +95,18 @@ pub async fn handle_mkcol(State(state): State<Arc<AppState>>, req: Request) -> R
     }
 }
 
-// ---------------------------------------------------------------------------
-// COPY / MOVE
-// ---------------------------------------------------------------------------
-
+/// COPY handler — duplicates a resource to a destination (RFC 4918 §9.8).
+///
+/// Supports recursive directory copy. Respects the `Overwrite` header.
+/// Returns `201 Created` for new destinations, `204 No Content` for overwrites.
 pub async fn handle_copy(State(state): State<Arc<AppState>>, req: Request) -> Response {
     do_move_or_copy(&state, req, false).await
 }
 
+/// MOVE handler — relocates a resource to a destination (RFC 4918 §9.9).
+///
+/// Supports recursive directory moves. Respects the `Overwrite` header.
+/// Equivalent to COPY + DELETE when source and destination share a filesystem.
 pub async fn handle_move(State(state): State<Arc<AppState>>, req: Request) -> Response {
     do_move_or_copy(&state, req, true).await
 }
@@ -253,10 +257,10 @@ async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), Res
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// PROPPATCH
-// ---------------------------------------------------------------------------
-
+/// PROPPATCH handler — sets and/or removes dead properties (RFC 4918 §9.2).
+///
+/// Processes `set` and `remove` actions from the request body. Returns a
+/// `207 Multi-Status` response with per-property success/failure status.
 pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) -> Response {
     let request_path = req.uri().path().to_owned();
 
