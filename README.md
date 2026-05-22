@@ -3,15 +3,17 @@
 [![Build](https://github.com/mogeko/rshs/actions/workflows/build.yaml/badge.svg)](https://github.com/mogeko/rshs/actions/workflows/build.yaml)
 [![Test](https://github.com/mogeko/rshs/actions/workflows/test.yaml/badge.svg)](https://github.com/mogeko/rshs/actions/workflows/test.yaml)
 
-A lightweight file server with WebDAV support.
+A WebDAV server that Just Works — zero config, [litmus 100%](./docs/litmus-test-report.md).
 
-- **Browser**: open directories as HTML pages, browse and view files
-- **WebDAV client**: mount as a remote drive (Finder, Explorer, `davfs`, etc.)
-- **WebDAV locks**: shared + exclusive locks, depth:infinity, conditional `If` header (RFC 4918 §10.4)
-- **Auth**: optional HTTP Basic Auth for access control
-- **TLS/HTTPS**: built-in support for secure connections with custom certs
-- **HTTP/2**: automatic HTTP/2 support when using TLS (ALPN negotiation)
-- **Litmus compliance**: 102/102 (100%) on [litmus](https://github.com/notroj/litmus) 0.17 — all five suites pass ([report](docs/litmus-test-report.md))
+- **Litmus 102/102** — full [RFC 4918 Class 2](https://datatracker.ietf.org/doc/html/rfc4918) compliance: locks, copy/move,
+  conditional `If` headers, dead properties. All five suites pass.
+- **Browser + WebDAV hybrid** — HTML directory listings for humans,
+  WebDAV protocol for mounting (Finder, Explorer, davfs).
+- **Zero config, [one command](#quick-start)** — no config files, daemons, or runtime
+  dependencies beyond Docker. Just mount a volume and go.
+- **TLS + HTTP/2** — built-in HTTPS with automatic HTTP/2 negotiation.
+- **Optional Basic Auth** — per-user credentials with persistent shadow
+  files (SHA-512 crypt).
 
 ## Installation
 
@@ -66,17 +68,18 @@ Map Network Drive → `http://localhost:8080`
 
 ## Environment Variables
 
-| Variable           | Description                                         | Default   |
-| ------------------ | --------------------------------------------------- | --------- |
-| `RSHS_ROOT_DIR`    | Root directory to serve                             | `.`       |
-| `RSHS_HOST`        | Bind address                                        | `0.0.0.0` |
-| `RSHS_PORT`        | Bind port (8080 plain, 8443 with TLS)               | —         |
-| `RSHS_TLS_CERT`    | TLS certificate file path (PEM)                     | —         |
-| `RSHS_TLS_KEY`     | TLS private key file path (PEM)                     | —         |
-| `RSHS_USERS`       | `user:pass;...` auth pairs                          | —         |
-| `RSHS_SHADOW_FILE` | Shadow file path                                    | —         |
-| `RSHS_LOG`         | Log filter (e.g. `debug`, `rshs[status=500]=trace`) | —         |
-| `RSHS_LOG_STYLE`   | Log output style                                    | `auto`    |
+| Variable            | Description                                           | Default   |
+| ------------------- | ----------------------------------------------------- | --------- |
+| `RSHS_ROOT_DIR`     | Root directory to serve                               | `.`       |
+| `RSHS_HOST`         | Bind address                                          | `0.0.0.0` |
+| `RSHS_PORT`         | Bind port (8080 plain, 8443 with TLS)                 | —         |
+| `RSHS_TLS_CERT`     | TLS certificate file path (PEM)                       | —         |
+| `RSHS_TLS_KEY`      | TLS private key file path (PEM)                       | —         |
+| `RSHS_USERS`        | `user:pass;...` auth pairs                            | —         |
+| `RSHS_SHADOW_FILE`  | Shadow file path                                      | —         |
+| `RSHS_LOCK_TIMEOUT` | Default WebDAV lock timeout in seconds (default: 300) | `300`     |
+| `RSHS_LOG`          | Log filter (e.g. `debug`, `rshs[status=500]=trace`)   | —         |
+| `RSHS_LOG_STYLE`    | Log output style                                      | `auto`    |
 
 ## License
 

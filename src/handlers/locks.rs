@@ -27,7 +27,13 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
     let target = state.resolve_and_guard(&request_path).await;
     let target = ok_or_return!(target.or_invalid(StatusCode::FORBIDDEN));
 
-    let timeout = webdav::parse_timeout(req.headers());
+    let timeout = webdav::parse_timeout(req.headers()).or_else(|| {
+        if state.lock_timeout == std::time::Duration::ZERO {
+            None
+        } else {
+            Some(state.lock_timeout)
+        }
+    });
     let depth = webdav::parse_depth(req.headers());
     let if_entries = webdav::parse_if_header(req.headers());
     let if_tokens: Vec<String> = if_entries
@@ -267,6 +273,7 @@ mod tests {
             .with_state(std::sync::Arc::new(AppState::new(
                 dir.path().to_path_buf(),
                 AuthConfig::new(),
+                std::time::Duration::from_secs(300),
             )))
     }
 
@@ -276,6 +283,7 @@ mod tests {
             .with_state(std::sync::Arc::new(AppState::new(
                 dir.path().to_path_buf(),
                 AuthConfig::new(),
+                std::time::Duration::from_secs(300),
             )))
     }
 
@@ -365,7 +373,11 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join("f.txt"), b"data").unwrap();
 
-        let state = Arc::new(AppState::new(dir.path().to_path_buf(), AuthConfig::new()));
+        let state = Arc::new(AppState::new(
+            dir.path().to_path_buf(),
+            AuthConfig::new(),
+            std::time::Duration::from_secs(300),
+        ));
         let lock_app = Router::new()
             .fallback(any(super::handle_lock))
             .with_state(state.clone());
@@ -448,7 +460,11 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join("f.txt"), b"data").unwrap();
 
-        let state = Arc::new(AppState::new(dir.path().to_path_buf(), AuthConfig::new()));
+        let state = Arc::new(AppState::new(
+            dir.path().to_path_buf(),
+            AuthConfig::new(),
+            std::time::Duration::from_secs(300),
+        ));
         let app = Router::new()
             .fallback(any(super::handle_lock))
             .with_state(state.clone());
@@ -486,7 +502,11 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join("f.txt"), b"data").unwrap();
 
-        let state = Arc::new(AppState::new(dir.path().to_path_buf(), AuthConfig::new()));
+        let state = Arc::new(AppState::new(
+            dir.path().to_path_buf(),
+            AuthConfig::new(),
+            std::time::Duration::from_secs(300),
+        ));
         let app = Router::new()
             .fallback(any(super::handle_lock))
             .with_state(state.clone());
@@ -524,7 +544,11 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join("f.txt"), b"data").unwrap();
 
-        let state = Arc::new(AppState::new(dir.path().to_path_buf(), AuthConfig::new()));
+        let state = Arc::new(AppState::new(
+            dir.path().to_path_buf(),
+            AuthConfig::new(),
+            std::time::Duration::from_secs(300),
+        ));
         let app = Router::new()
             .fallback(any(super::handle_lock))
             .with_state(state.clone());
@@ -566,7 +590,11 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join("f.txt"), b"data").unwrap();
 
-        let state = Arc::new(AppState::new(dir.path().to_path_buf(), AuthConfig::new()));
+        let state = Arc::new(AppState::new(
+            dir.path().to_path_buf(),
+            AuthConfig::new(),
+            std::time::Duration::from_secs(300),
+        ));
         let app = Router::new()
             .fallback(any(super::handle_lock))
             .with_state(state.clone());

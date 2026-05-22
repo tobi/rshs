@@ -375,6 +375,7 @@ mod tests {
             .with_state(std::sync::Arc::new(AppState::new(
                 dir.path().to_path_buf(),
                 AuthConfig::new(),
+                std::time::Duration::from_secs(300),
             )))
     }
 
@@ -512,6 +513,7 @@ mod tests {
             .with_state(std::sync::Arc::new(AppState::new(
                 dir.path().to_path_buf(),
                 AuthConfig::new(),
+                std::time::Duration::from_secs(300),
             )))
     }
 
@@ -583,6 +585,7 @@ mod tests {
             .with_state(Arc::new(AppState::new(
                 dir.path().to_path_buf(),
                 AuthConfig::new(),
+                std::time::Duration::from_secs(300),
             )))
     }
 
@@ -650,6 +653,7 @@ mod tests {
             .with_state(Arc::new(AppState::new(
                 dir.path().to_path_buf(),
                 AuthConfig::new(),
+                std::time::Duration::from_secs(300),
             )))
     }
 
@@ -698,6 +702,7 @@ mod tests {
             .with_state(Arc::new(AppState::new(
                 dir.path().to_path_buf(),
                 AuthConfig::new(),
+                std::time::Duration::from_secs(300),
             )))
     }
 
@@ -750,6 +755,7 @@ mod tests {
             .with_state(std::sync::Arc::new(AppState::new(
                 dir.path().to_path_buf(),
                 AuthConfig::new(),
+                std::time::Duration::from_secs(300),
             )))
     }
 

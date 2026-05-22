@@ -115,6 +115,8 @@ rshs supports WebDAV Class 2 with in-memory locking:
 - **Lock discovery**: PROPFIND with `lockdiscovery` property
 - **Conditional requests**: `If` header enforcement for lock tokens
 - **Copy/Move**: COPY and MOVE with proper destination handling
+- **Lock timeout**: Default 300s timeout when client omits the `Timeout` header.
+  Use `0` for unlimited. Configurable via `--lock-timeout`.
 
 Locks are ephemeral (lost on server restart) and stored in memory. Full litmus conformance
 results are available in the [Litmus Test Report](./litmus-test-report.md).
@@ -211,6 +213,7 @@ Options:
   -u, --user <USER:PASS>             Basic Auth credentials in format username:password (can be repeated) [env: RSHS_USERS]
   -S, --shadow-file <PATH[:rw|:ro]>  Path to shadow file for persistent auth (PATH[:rw|:ro], default :rw) [env: RSHS_SHADOW_FILE=]
   -W, --shadow-write                 Write CLI credentials into the shadow file (requires --shadow-file :rw)
+      --lock-timeout <LOCK_TIMEOUT>  Default WebDAV lock timeout in seconds, 0 for unlimited [env: RSHS_LOCK_TIMEOUT=] [default: 300]
   -h, --help                         Print help
   -V, --version                      Print version
 

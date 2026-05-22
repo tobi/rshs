@@ -8,6 +8,7 @@ use std::io::{self, Error, ErrorKind};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{Request, State};
@@ -16,7 +17,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use derive_new::new;
 use tokio::sync::{Notify, RwLock};
-use tower_http::trace::TraceLayer;
 
 use crate::auth::AuthConfig;
 use crate::handlers::{http, locks, webdav as webdav_handler};
@@ -34,17 +34,19 @@ pub struct AppState {
     pub root_canonical: PathBuf,
     pub dead_props: Arc<RwLock<DeadPropertyStore>>,
     pub locks: Arc<RwLock<LockStore>>,
+    pub lock_timeout: Duration,
 }
 
 impl AppState {
-    pub fn new(root_dir: PathBuf, auth_config: AuthConfig) -> Self {
-        let root_canonical = fs::canonicalize(&root_dir).unwrap_or_else(|_| root_dir.clone());
+    pub fn new(root: PathBuf, auth_config: AuthConfig, lock_timeout: Duration) -> Self {
+        let root_canonical = fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
         Self {
             auth_config: Arc::new(auth_config),
-            root_dir,
+            root_dir: root,
             root_canonical,
             dead_props: Arc::new(RwLock::new(DeadPropertyStore::new())),
             locks: Arc::new(RwLock::new(LockStore::new())),
+            lock_timeout,
         }
     }
 
@@ -65,7 +67,7 @@ impl AppState {
 }
 
 /// Configuration for starting the server — root directory, bind address,
-/// optional TLS, and authentication.
+/// optional TLS, authentication, and default lock timeout.
 #[derive(Clone, new)]
 pub struct ServerConfig {
     pub root_dir: PathBuf,
@@ -73,6 +75,7 @@ pub struct ServerConfig {
     pub port: u16,
     pub tls_config: Option<tls::TlsConfig>,
     pub auth_config: AuthConfig,
+    pub lock_timeout: u64,
 }
 
 /// Builds the axum router with all middleware layers, then starts the HTTP or HTTPS
@@ -82,10 +85,15 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
         .parse()
         .map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
 
-    let state = Arc::new(AppState::new(
-        config.root_dir.clone(),
-        config.auth_config.clone(),
-    ));
+    let auth_config = config.auth_config;
+    let root = config.root_dir;
+    let lock_timeout = if config.lock_timeout == 0 {
+        std::time::Duration::ZERO
+    } else {
+        std::time::Duration::from_secs(config.lock_timeout)
+    };
+
+    let state = Arc::new(AppState::new(root, auth_config, lock_timeout));
 
     let router = make_router(state.clone());
 
@@ -100,12 +108,18 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
                 addr = %addr, cert = %tls_config.cert_path, key = %tls_config.key_path,
                 "starting HTTPS server"
             );
-            axum::serve(listener, router).await.map_err(Error::other)?;
+            axum::serve(listener, router)
+                .with_graceful_shutdown(shutdown_signal())
+                .await
+                .map_err(Error::other)?;
         }
         None => {
             let listener = tokio::net::TcpListener::bind(addr).await?;
             tracing::info!(addr = %addr, "starting HTTP server");
-            axum::serve(listener, router).await.map_err(Error::other)?;
+            axum::serve(listener, router)
+                .with_graceful_shutdown(shutdown_signal())
+                .await
+                .map_err(Error::other)?;
         }
     }
 
@@ -124,6 +138,7 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
 pub fn make_router(state: Arc<AppState>) -> Router {
     use crate::middleware::{auth, health, lock};
     use axum::middleware::from_fn_with_state;
+    use tower_http::trace::TraceLayer;
 
     let auth_config = state.auth_config.clone();
     let auth_mw = from_fn_with_state(auth_config, auth::auth_middleware);
@@ -156,10 +171,19 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response 
     }
 }
 
+async fn shutdown_signal() {
+    if let Err(e) = tokio::signal::ctrl_c().await {
+        tracing::error!(error = %e, "failed to listen for Ctrl+C");
+        return;
+    }
+
+    tracing::info!("received Ctrl+C, shutting down gracefully...");
+}
+
 async fn lock_cleanup_task(locks: Arc<RwLock<LockStore>>, shutdown: Arc<Notify>) {
     loop {
         tokio::select! {
-            _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+            _ = tokio::time::sleep(Duration::from_secs(30)) => {
                 let mut store = locks.write().await;
                 let before = store.values().map(|v| v.len()).sum::<usize>();
                 store.retain(|_path, infos| {

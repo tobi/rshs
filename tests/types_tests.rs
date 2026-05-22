@@ -12,6 +12,7 @@ fn test_server_config_new() {
         3000,
         None,
         AuthConfig::new(),
+        300,
     );
     assert_eq!(config.host, "127.0.0.1");
     assert_eq!(config.port, 3000);

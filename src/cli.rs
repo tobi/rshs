@@ -73,6 +73,15 @@ pub struct Cli {
     /// Write CLI credentials into the shadow file (requires --shadow-file :rw)
     #[arg(short = 'W', long = "shadow-write", requires = "shadow_file")]
     pub shadow_write: bool,
+
+    /// Default WebDAV lock timeout in seconds, 0 for unlimited
+    #[arg(
+        long = "lock-timeout",
+        default_value = "300",
+        env = "RSHS_LOCK_TIMEOUT",
+        value_parser = clap::value_parser!(u64)
+    )]
+    pub lock_timeout: u64,
 }
 
 impl Cli {
