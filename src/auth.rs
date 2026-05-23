@@ -1,3 +1,5 @@
+//! Authentication types, shadow file management, and the `build_auth_config` entry point.
+
 use std::collections::HashMap;
 use std::fs;
 use std::io;

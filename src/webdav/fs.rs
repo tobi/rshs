@@ -1,3 +1,5 @@
+//! Filesystem traversal for PROPFIND — directory entry collection with href encoding.
+
 use std::path::{Path, PathBuf};
 
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};

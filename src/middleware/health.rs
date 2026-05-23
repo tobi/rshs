@@ -1,3 +1,5 @@
+//! Health check middleware — intercepts `x-health-check: true` before auth.
+
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};

@@ -1,3 +1,5 @@
+//! PROPFIND, MKCOL, COPY, MOVE, and PROPPATCH WebDAV protocol handlers.
+
 use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;

@@ -1,3 +1,5 @@
+//! HTTP-date formatting — RFC 1123, RFC 850, and RFC 3339 timestamps.
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// RFC 850 / RFC 1036 date format used in HTTP `Last-Modified` headers

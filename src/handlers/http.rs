@@ -1,3 +1,5 @@
+//! GET/HEAD (file serving + HTML directory listing), PUT, DELETE, and OPTIONS handlers.
+
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -191,6 +193,7 @@ pub async fn handle_options() -> Response {
 
 #[cfg(test)]
 mod tests {
+
     use std::sync::Arc;
 
     use axum::{Router, body::Body, extract::Request};

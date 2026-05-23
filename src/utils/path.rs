@@ -1,3 +1,5 @@
+//! URI path resolution with percent-decoding and traversal guards (`..` / `.` / `#`).
+
 use std::fmt;
 use std::path::{Path, PathBuf};
 

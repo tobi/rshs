@@ -1,3 +1,5 @@
+//! LOCK and UNLOCK WebDAV protocol handlers.
+
 use std::io::Cursor;
 use std::sync::Arc;
 
