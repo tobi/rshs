@@ -88,9 +88,9 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
     let auth_config = config.auth_config;
     let root = config.root_dir;
     let lock_timeout = if config.lock_timeout == 0 {
-        std::time::Duration::ZERO
+        Duration::ZERO // A zero lock timeout means locks never expire
     } else {
-        std::time::Duration::from_secs(config.lock_timeout)
+        Duration::from_secs(config.lock_timeout)
     };
 
     let state = Arc::new(AppState::new(root, auth_config, lock_timeout));
@@ -172,10 +172,9 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response 
 }
 
 async fn shutdown_signal() {
-    if let Err(e) = tokio::signal::ctrl_c().await {
-        tracing::error!(error = %e, "failed to listen for Ctrl+C");
-        return;
-    }
+    tokio::signal::ctrl_c() // Wait for the SIGINT signal be received
+        .await
+        .expect("failed to listen for Ctrl+C");
 
     tracing::info!("received Ctrl+C, shutting down gracefully...");
 }
