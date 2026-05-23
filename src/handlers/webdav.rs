@@ -117,10 +117,9 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
     let overwrite = webdav::parse_overwrite(headers);
     let depth = webdav::parse_depth(headers);
 
-    let dest_str = match webdav::parse_destination(headers) {
-        Some(s) => s,
-        None => return StatusCode::BAD_REQUEST.into_response(),
-    };
+    let dest_str = webdav::parse_destination(headers);
+    let dest_str = ok_or_return!(dest_str.or_400("missing or invalid Destination header"));
+
     let src_path = req.uri().path().to_owned();
 
     let fs_src = state.resolve_existing(&src_path).await;

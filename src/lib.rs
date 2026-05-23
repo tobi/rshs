@@ -7,6 +7,8 @@ pub mod auth;
 pub(crate) mod cli;
 /// Request handlers for HTTP and WebDAV methods.
 pub mod handlers;
+/// HTML directory listing generation.
+pub(crate) mod html;
 /// Tower middleware layers.
 pub mod middleware;
 /// Router construction and server startup.

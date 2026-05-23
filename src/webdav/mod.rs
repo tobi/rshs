@@ -390,107 +390,109 @@ pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
         None => return Vec::new(),
     };
 
+    let bytes = value.as_bytes();
+    let mut pos = 0;
     let mut lists = Vec::new();
-    let mut chars: std::iter::Peekable<_> = value.char_indices().peekable();
 
-    while chars.peek().is_some() {
-        while chars.peek().is_some_and(|(_, c)| c.is_whitespace()) {
-            chars.next();
-        }
-        if chars.peek().is_none() {
+    while pos < bytes.len() {
+        pos = skip_ws(bytes, pos);
+        if pos >= bytes.len() {
             break;
         }
 
-        let mut resource_tag = None;
-
-        if chars.peek().unwrap().1 == '<' {
-            let mut saved: Vec<_> = Vec::new();
-            loop {
-                let c = chars.next().unwrap().1;
-                saved.push(c);
-                if c == '>' {
+        match bytes[pos] {
+            b'<' => {
+                let Some((tag, new_pos)) = read_angle_bracket(bytes, pos) else {
                     break;
-                }
-            }
+                };
+                pos = skip_ws(bytes, new_pos);
 
-            let tag: String = saved[1..saved.len() - 1].iter().collect();
-
-            let mut peek_pos = chars.peek();
-            while peek_pos.is_some_and(|(_, c)| c.is_whitespace()) {
-                chars.next();
-                peek_pos = chars.peek();
-            }
-            if peek_pos.is_some_and(|(_, c)| *c == '(') {
-                resource_tag = Some(tag);
-                chars.next();
-            } else {
-                lists.push(IfList::new(None, vec![IfCondition::StateToken(tag)]));
-                continue;
-            }
-        } else if chars.peek().unwrap().1 == '(' {
-            chars.next();
-        } else {
-            chars.next();
-            continue;
-        }
-
-        let mut conditions = Vec::new();
-        let mut negated = false;
-
-        loop {
-            while chars.peek().is_some_and(|(_, c)| c.is_whitespace()) {
-                chars.next();
-            }
-
-            match chars.peek() {
-                None => break,
-                Some((_, ')')) => {
-                    chars.next();
-                    break;
-                }
-                Some((i, _)) => {
-                    if value[*i..].starts_with("Not") {
-                        let after_not = &value[*i + 3..];
-                        if after_not
-                            .starts_with(|c: char| c.is_whitespace() || c == '<' || c == '(')
-                        {
-                            negated = true;
-                            for _ in 0..3 {
-                                chars.next();
-                            }
-                            continue;
-                        }
+                if pos < bytes.len() && bytes[pos] == b'(' {
+                    let resource_tag = tag;
+                    while pos < bytes.len() && bytes[pos] == b'(' {
+                        let (conditions, new_pos) = read_list(bytes, pos);
+                        pos = skip_ws(bytes, new_pos);
+                        lists.push(IfList::new(Some(resource_tag.clone()), conditions));
                     }
-
-                    if chars.peek().unwrap().1 == '<' {
-                        let mut token = String::new();
-                        chars.next();
-                        loop {
-                            match chars.next() {
-                                Some((_, '>')) => break,
-                                Some((_, c)) => token.push(c),
-                                None => break,
-                            }
-                        }
-
-                        let cond = IfCondition::StateToken(token);
-                        if negated {
-                            conditions.push(IfCondition::Not(Box::new(cond)));
-                            negated = false;
-                        } else {
-                            conditions.push(cond);
-                        }
-                    } else {
-                        chars.next();
-                    }
+                } else {
+                    lists.push(IfList::new(None, vec![IfCondition::StateToken(tag)]));
                 }
+            }
+            b'(' => {
+                let (conditions, new_pos) = read_list(bytes, pos);
+                pos = skip_ws(bytes, new_pos);
+                lists.push(IfList::new(None, conditions));
+            }
+            _ => {
+                pos += 1;
             }
         }
-
-        lists.push(IfList::new(resource_tag, conditions));
     }
 
     lists
+}
+
+fn skip_ws(bytes: &[u8], mut p: usize) -> usize {
+    while p < bytes.len() && bytes[p].is_ascii_whitespace() {
+        p += 1;
+    }
+    p
+}
+
+fn read_angle_bracket(bytes: &[u8], p: usize) -> Option<(String, usize)> {
+    debug_assert!(bytes.get(p) == Some(&b'<'));
+    let start = p + 1;
+    let end = bytes[start..].iter().position(|&b| b == b'>')?;
+    Some((
+        std::str::from_utf8(&bytes[start..start + end])
+            .ok()?
+            .to_string(),
+        start + end + 1,
+    ))
+}
+
+fn read_list(bytes: &[u8], mut p: usize) -> (Vec<IfCondition>, usize) {
+    debug_assert!(bytes.get(p) == Some(&b'('));
+    p += 1;
+    let mut conditions = Vec::new();
+    loop {
+        p = skip_ws(bytes, p);
+        if p >= bytes.len() || bytes[p] == b')' {
+            if p < bytes.len() {
+                p += 1;
+            }
+            break;
+        }
+
+        let mut negated = false;
+        if bytes[p..].starts_with(b"Not") {
+            let after = p + 3;
+            if after >= bytes.len()
+                || bytes[after].is_ascii_whitespace()
+                || bytes[after] == b'<'
+                || bytes[after] == b'('
+            {
+                negated = true;
+                p = skip_ws(bytes, after);
+            }
+        }
+
+        if p < bytes.len() && bytes[p] == b'<' {
+            let Some((token, new_p)) = read_angle_bracket(bytes, p) else {
+                break;
+            };
+            p = new_p;
+            let cond = IfCondition::StateToken(token);
+            conditions.push(if negated {
+                IfCondition::Not(Box::new(cond))
+            } else {
+                cond
+            });
+        } else {
+            p += 1;
+        }
+    }
+    (conditions, p)
 }
 
 /// Extract a lock token from the `Lock-Token` header.

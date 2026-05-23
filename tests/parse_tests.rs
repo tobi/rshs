@@ -44,6 +44,126 @@ fn test_parse_if_empty_header() {
 }
 
 #[test]
+fn test_parse_if_multiple_lists_same_resource_tag() {
+    let mut h = HeaderMap::new();
+    h.insert(
+        "if",
+        "</a> (<opaquelocktoken:t1>) (<opaquelocktoken:t2>)"
+            .parse()
+            .unwrap(),
+    );
+    let lists = parse_if_header(&h);
+    assert_eq!(lists.len(), 2);
+    assert_eq!(lists[0].resource_tag, Some("/a".into()));
+    assert_eq!(lists[1].resource_tag, Some("/a".into()));
+    assert_eq!(
+        lists[0].conditions[0],
+        IfCondition::StateToken("opaquelocktoken:t1".into())
+    );
+    assert_eq!(
+        lists[1].conditions[0],
+        IfCondition::StateToken("opaquelocktoken:t2".into())
+    );
+}
+
+#[test]
+fn test_parse_if_multiple_conditions() {
+    let mut h = HeaderMap::new();
+    h.insert(
+        "if",
+        "(<opaquelocktoken:t1> <opaquelocktoken:t2>)"
+            .parse()
+            .unwrap(),
+    );
+    let lists = parse_if_header(&h);
+    assert_eq!(lists.len(), 1);
+    assert_eq!(lists[0].conditions.len(), 2);
+    assert_eq!(
+        lists[0].conditions[0],
+        IfCondition::StateToken("opaquelocktoken:t1".into())
+    );
+    assert_eq!(
+        lists[0].conditions[1],
+        IfCondition::StateToken("opaquelocktoken:t2".into())
+    );
+}
+
+#[test]
+fn test_parse_if_standalone_token() {
+    let mut h = HeaderMap::new();
+    h.insert("if", "<opaquelocktoken:t1>".parse().unwrap());
+    let lists = parse_if_header(&h);
+    assert_eq!(lists.len(), 1);
+    assert_eq!(lists[0].resource_tag, None);
+    assert_eq!(
+        lists[0].conditions[0],
+        IfCondition::StateToken("opaquelocktoken:t1".into())
+    );
+}
+
+#[test]
+fn test_parse_if_multiple_no_tag_lists() {
+    let mut h = HeaderMap::new();
+    h.insert(
+        "if",
+        "(<opaquelocktoken:t1>) (<opaquelocktoken:t2>)"
+            .parse()
+            .unwrap(),
+    );
+    let lists = parse_if_header(&h);
+    assert_eq!(lists.len(), 2);
+    assert!(lists.iter().all(|l| l.resource_tag.is_none()));
+    assert_eq!(
+        lists[0].conditions[0],
+        IfCondition::StateToken("opaquelocktoken:t1".into())
+    );
+    assert_eq!(
+        lists[1].conditions[0],
+        IfCondition::StateToken("opaquelocktoken:t2".into())
+    );
+}
+
+#[test]
+fn test_parse_if_unclosed_angle_bracket_no_panic() {
+    let mut h = HeaderMap::new();
+    h.insert("if", "(<opaquelocktoken:t1".parse().unwrap());
+    let lists = std::panic::catch_unwind(|| parse_if_header(&h));
+    assert!(lists.is_ok(), "unclosed angle bracket should not panic");
+}
+
+#[test]
+fn test_parse_if_unclosed_paren_no_panic() {
+    let mut h = HeaderMap::new();
+    h.insert("if", "(<opaquelocktoken:t1>".parse().unwrap());
+    let lists = std::panic::catch_unwind(|| parse_if_header(&h));
+    assert!(lists.is_ok(), "unclosed parenthesis should not panic");
+}
+
+#[test]
+fn test_parse_if_not_and_token() {
+    let mut h = HeaderMap::new();
+    h.insert(
+        "if",
+        "(Not <opaquelocktoken:t1> <opaquelocktoken:t2>)"
+            .parse()
+            .unwrap(),
+    );
+    let lists = parse_if_header(&h);
+    assert_eq!(lists.len(), 1);
+    assert_eq!(lists[0].conditions.len(), 2);
+    assert_eq!(
+        lists[0].conditions[0],
+        IfCondition::Not(Box::new(IfCondition::StateToken(
+            "opaquelocktoken:t1".into()
+        )))
+    );
+    assert_eq!(
+        lists[0].conditions[1],
+        IfCondition::StateToken("opaquelocktoken:t2".into())
+    );
+}
+
+#[test]
 fn test_parse_lock_token_header() {
     let mut h = HeaderMap::new();
     h.insert("lock-token", "<opaquelocktoken:abc>".parse().unwrap());

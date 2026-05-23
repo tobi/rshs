@@ -51,10 +51,8 @@ impl TlsConfig {
 
         if certs.is_empty() {
             tracing::error!(path = %self.cert_path, "no certificates found in TLS certificate file");
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "no certificates found",
-            ));
+            let e = "no certificates found";
+            return Err(io::Error::new(io::ErrorKind::InvalidData, e));
         }
 
         for (i, cert) in certs.iter().enumerate() {

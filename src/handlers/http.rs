@@ -1,20 +1,17 @@
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::{Method, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use derive_new::new;
 use futures_util::TryStreamExt;
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::{ReaderStream, StreamReader};
 
+use crate::html::generate_dir_listing;
 use crate::ok_or_return;
 use crate::server::AppState;
 use crate::utils::error::{IntoResolved, OrStatus};
-use crate::utils::time::format_rfc850;
 
 /// GET / HEAD handler — serves files and generates HTML directory listings.
 ///
@@ -26,13 +23,10 @@ pub async fn handle_get_head(State(state): State<Arc<AppState>>, req: Request) -
     let fs_path = state.resolve_existing(&request_path).await;
     let fs_path = ok_or_return!(fs_path.or_404("path resolution failed"));
 
-    do_get_or_head(fs_path, request_path, req.method()).await
-}
-
-async fn do_get_or_head(fs_path: PathBuf, request_path: String, method: &Method) -> Response {
     let meta = tokio::fs::metadata(&fs_path).await;
     let meta = ok_or_return!(meta.or_404("metadata failed for GET/HEAD"));
 
+    let method = req.method();
     if meta.is_dir() {
         let (html, entry_count) = generate_dir_listing(&fs_path, &request_path).await;
         tracing::debug!(entry_count = entry_count, "directory listing");
@@ -40,7 +34,7 @@ async fn do_get_or_head(fs_path: PathBuf, request_path: String, method: &Method)
             .status(StatusCode::OK)
             .header("content-type", "text/html; charset=utf-8")
             .header("content-length", html.len());
-        if method == Method::HEAD {
+        if method == axum::http::Method::HEAD {
             return resp.body(Body::empty()).unwrap();
         }
         resp.body(Body::from(html)).unwrap()
@@ -52,7 +46,7 @@ async fn do_get_or_head(fs_path: PathBuf, request_path: String, method: &Method)
             .status(StatusCode::OK)
             .header("content-type", mime.as_ref())
             .header("content-length", file_size);
-        if method == Method::HEAD {
+        if method == axum::http::Method::HEAD {
             return resp.body(Body::empty()).unwrap();
         }
         match tokio::fs::File::open(&fs_path).await {
@@ -66,126 +60,6 @@ async fn do_get_or_head(fs_path: PathBuf, request_path: String, method: &Method)
             }
         }
     }
-}
-
-#[derive(new)]
-struct DirEntry {
-    name: String,
-    is_dir: bool,
-    size: u64,
-    modified: SystemTime,
-}
-
-impl DirEntry {
-    fn display_name(&self) -> String {
-        if self.is_dir {
-            format!("{}/", self.name)
-        } else {
-            self.name.clone()
-        }
-    }
-
-    fn display_name_len(&self) -> usize {
-        self.name.len() + if self.is_dir { 1 } else { 0 }
-    }
-
-    fn size_label(&self) -> String {
-        if self.is_dir {
-            "-".to_string()
-        } else {
-            self.size.to_string()
-        }
-    }
-
-    fn size_label_len(&self) -> usize {
-        if self.is_dir {
-            1
-        } else {
-            self.size.checked_ilog10().unwrap_or(0) as usize + 1
-        }
-    }
-}
-
-async fn collect_dir_entries(dir_path: &Path) -> Option<Vec<DirEntry>> {
-    let mut read_dir = tokio::fs::read_dir(dir_path).await.ok()?;
-
-    let mut entries = Vec::new();
-    loop {
-        let entry = match read_dir.next_entry().await {
-            Ok(Some(e)) => e,
-            Ok(None) => break,
-            Err(_) => continue,
-        };
-        let name = entry.file_name().to_string_lossy().to_string();
-        let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
-        let metadata = entry.metadata().await.ok();
-        let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
-        let modified = metadata
-            .as_ref()
-            .and_then(|m| m.modified().ok())
-            .unwrap_or(UNIX_EPOCH);
-        entries.push(DirEntry::new(name, is_dir, size, modified));
-    }
-    Some(entries)
-}
-
-fn render_dir_html(request_path: &str, mut entries: Vec<DirEntry>) -> (String, usize) {
-    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
-
-    let (max_name_len, max_size_len) = entries.iter().fold((0, 0), |(mn, ms), e| {
-        (mn.max(e.display_name_len()), ms.max(e.size_label_len()))
-    });
-    let name_col = max_name_len + 20;
-
-    use std::fmt::Write;
-    let mut html = String::new();
-    write!(
-        html,
-        "<!DOCTYPE html><html><head><title>Index of {request_path}</title><meta charset=\"utf-8\"></head><body><h1>Index of {request_path}</h1><hr><pre>"
-    )
-    .unwrap();
-    if request_path != "/" {
-        html.push_str("<a href=\"../\">../</a>\n");
-    }
-
-    for entry in &entries {
-        let disp = entry.display_name();
-        let size_str = entry.size_label();
-        let date_str = format_rfc850(entry.modified);
-        let pad1 = name_col.saturating_sub(disp.len());
-
-        if entry.is_dir {
-            write!(html, "<a href=\"{}/\">{}/</a>", entry.name, entry.name).unwrap();
-        } else {
-            write!(html, "<a href=\"{}\">{}</a>", entry.name, entry.name).unwrap();
-        }
-
-        writeln!(
-            html,
-            "{:pad1$}{date_str}    {:>max_size_len$}",
-            "", size_str
-        )
-        .unwrap();
-    }
-
-    let entry_count = entries.len();
-    html.push_str("</pre><hr></body></html>");
-    (html, entry_count)
-}
-
-async fn generate_dir_listing(dir_path: &Path, request_path: &str) -> (String, usize) {
-    let entries = match collect_dir_entries(dir_path).await {
-        Some(entries) => entries,
-        None => {
-            return (
-                "<!DOCTYPE html><html><head><title>Error</title></head><body><h1>Cannot read directory</h1></body></html>"
-                    .to_string(),
-                0,
-            );
-        }
-    };
-
-    render_dir_html(request_path, entries)
 }
 
 /// PUT handler — accepts a request body and writes it to the filesystem.
@@ -324,61 +198,82 @@ mod tests {
 
     use crate::{AppState, AuthConfig};
 
-    #[tokio::test]
-    async fn test_generate_dir_listing_structure() {
-        let dir = tempfile::TempDir::new().unwrap();
+    // -- GET/HEAD tests ------------------------------------------------------
+
+    fn make_app_get(dir: &tempfile::TempDir) -> Router {
+        Router::new()
+            .fallback(super::handle_get_head)
+            .with_state(Arc::new(AppState::new(
+                dir.path().to_path_buf(),
+                AuthConfig::new(),
+                std::time::Duration::from_secs(300),
+            )))
+    }
+
+    fn setup_get_test_dir() -> tempfile::TempDir {
         use std::io::Write;
+        let dir = tempfile::TempDir::new().unwrap();
         let mut f = std::fs::File::create(dir.path().join("hello.txt")).unwrap();
-        f.write_all(b"hello").unwrap();
+        f.write_all(b"Hello, World!").unwrap();
         std::fs::create_dir(dir.path().join("subdir")).unwrap();
-
-        let (html, count) = super::generate_dir_listing(dir.path(), "/").await;
-
-        assert!(html.contains("<!DOCTYPE html>"));
-        assert!(html.contains("<title>Index of /</title>"));
-        assert!(!html.contains("../"));
-        assert_eq!(count, 2);
+        let mut f = std::fs::File::create(dir.path().join("subdir/nested.txt")).unwrap();
+        f.write_all(b"Nested file").unwrap();
+        dir
     }
 
     #[tokio::test]
-    async fn test_generate_dir_listing_subdir_has_parent_link() {
-        let dir = tempfile::TempDir::new().unwrap();
-        use std::io::Write;
-        let mut f = std::fs::File::create(dir.path().join("data.bin")).unwrap();
-        f.write_all(b"bin").unwrap();
+    async fn test_get_path_traversal_blocked() {
+        let dir = setup_get_test_dir();
+        let app = make_app_get(&dir);
 
-        let (html, count) = super::generate_dir_listing(dir.path(), "/sub/").await;
-
-        assert!(html.contains("Index of /sub/"));
-        assert!(html.contains("../"));
-        assert_eq!(count, 1);
+        let req = Request::builder()
+            .method(axum::http::Method::GET)
+            .uri("/../outside.txt")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
-    async fn test_generate_dir_listing_empty_dir() {
-        let dir = tempfile::TempDir::new().unwrap();
+    async fn test_get_mime_type_guess() {
+        let dir = setup_get_test_dir();
+        let app = make_app_get(&dir);
 
-        let (html, count) = super::generate_dir_listing(dir.path(), "/empty/").await;
-
-        assert!(html.contains("Index of /empty/"));
-        assert!(html.contains("../"));
-        assert_eq!(count, 0);
+        let req = Request::builder()
+            .method(axum::http::Method::GET)
+            .uri("/hello.txt")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert!(
+            resp.headers()
+                .get("content-type")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains("text/plain")
+        );
     }
 
     #[tokio::test]
-    async fn test_generate_dir_listing_dirs_before_files() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir(dir.path().join("zzz_dir")).unwrap();
-        use std::io::Write;
-        let mut f = std::fs::File::create(dir.path().join("aaa_file.txt")).unwrap();
-        f.write_all(b"x").unwrap();
+    async fn test_get_dir_listing_sizes() {
+        let dir = setup_get_test_dir();
+        let app = make_app_get(&dir);
 
-        let (html, count) = super::generate_dir_listing(dir.path(), "/").await;
+        let req = Request::builder()
+            .method(axum::http::Method::GET)
+            .uri("/")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
 
-        assert_eq!(count, 2);
-        let zzz_pos = html.find("zzz_dir").unwrap();
-        let aaa_pos = html.find("aaa_file").unwrap();
-        assert!(zzz_pos < aaa_pos, "directories should appear before files");
+        assert!(body_str.contains("hello.txt") && body_str.contains("13"));
+        assert!(body_str.contains("subdir/") && body_str.contains("-"));
     }
 
     // -- PUT tests -----------------------------------------------------------
@@ -559,83 +454,5 @@ mod tests {
             .await
             .unwrap();
         assert!(body.is_empty());
-    }
-
-    // -- GET/HEAD tests ------------------------------------------------------
-
-    fn make_app_get(dir: &tempfile::TempDir) -> Router {
-        Router::new()
-            .fallback(super::handle_get_head)
-            .with_state(Arc::new(AppState::new(
-                dir.path().to_path_buf(),
-                AuthConfig::new(),
-                std::time::Duration::from_secs(300),
-            )))
-    }
-
-    fn setup_get_test_dir() -> tempfile::TempDir {
-        use std::io::Write;
-        let dir = tempfile::TempDir::new().unwrap();
-        let mut f = std::fs::File::create(dir.path().join("hello.txt")).unwrap();
-        f.write_all(b"Hello, World!").unwrap();
-        std::fs::create_dir(dir.path().join("subdir")).unwrap();
-        let mut f = std::fs::File::create(dir.path().join("subdir/nested.txt")).unwrap();
-        f.write_all(b"Nested file").unwrap();
-        dir
-    }
-
-    #[tokio::test]
-    async fn test_get_path_traversal_blocked() {
-        let dir = setup_get_test_dir();
-        let app = make_app_get(&dir);
-
-        let req = Request::builder()
-            .method(axum::http::Method::GET)
-            .uri("/../outside.txt")
-            .body(Body::empty())
-            .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_get_mime_type_guess() {
-        let dir = setup_get_test_dir();
-        let app = make_app_get(&dir);
-
-        let req = Request::builder()
-            .method(axum::http::Method::GET)
-            .uri("/hello.txt")
-            .body(Body::empty())
-            .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
-        assert!(
-            resp.headers()
-                .get("content-type")
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .contains("text/plain")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_get_dir_listing_sizes() {
-        let dir = setup_get_test_dir();
-        let app = make_app_get(&dir);
-
-        let req = Request::builder()
-            .method(axum::http::Method::GET)
-            .uri("/")
-            .body(Body::empty())
-            .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let body_str = String::from_utf8(body.to_vec()).unwrap();
-
-        assert!(body_str.contains("hello.txt") && body_str.contains("13"));
-        assert!(body_str.contains("subdir/") && body_str.contains("-"));
     }
 }
