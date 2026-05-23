@@ -2,7 +2,7 @@
 mod unix_tests {
     use std::io::Read;
     use std::process::Command;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     fn spawn_rshs() -> (std::process::Child, tempfile::TempDir) {
         let tmpdir = tempfile::TempDir::new().unwrap();
@@ -12,7 +12,7 @@ mod unix_tests {
         let out_file = std::fs::File::create(tmpdir.path().join("stdout.txt")).unwrap();
         let err_file = std::fs::File::create(tmpdir.path().join("stderr.txt")).unwrap();
 
-        let child = Command::new(env!("CARGO_BIN_EXE_rshs"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_rshs"))
             .arg(&serve_dir)
             .arg("--port")
             .arg("0")
@@ -21,7 +21,25 @@ mod unix_tests {
             .spawn()
             .expect("failed to spawn server");
 
-        std::thread::sleep(Duration::from_millis(800));
+        let stderr_path = tmpdir.path().join("stderr.txt");
+        let deadline = Instant::now() + Duration::from_secs(10);
+
+        loop {
+            let mut stderr = String::new();
+            if let Ok(mut f) = std::fs::File::open(&stderr_path) {
+                let _ = f.read_to_string(&mut stderr);
+            }
+            if stderr.contains("starting HTTP server") {
+                break;
+            }
+            if child.try_wait().unwrap().is_some() {
+                panic!("server exited prematurely, stderr: {stderr}");
+            }
+            if Instant::now() > deadline {
+                panic!("server did not start within 10s, stderr: {stderr}");
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
 
         (child, tmpdir)
     }
