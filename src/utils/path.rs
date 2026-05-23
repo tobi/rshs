@@ -1,3 +1,5 @@
+//! URI path resolution with percent-decoding and traversal guards (`..` / `.` / `#`).
+
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -50,6 +52,7 @@ pub async fn resolve_existing(
     request_path: &str,
 ) -> Option<PathBuf> {
     let decoded = percent_decode_str(request_path).decode_utf8_lossy();
+
     let fs_path = root_dir.join(decoded.trim_start_matches('/'));
 
     let fs_path = tokio::fs::canonicalize(&fs_path).await.ok()?;

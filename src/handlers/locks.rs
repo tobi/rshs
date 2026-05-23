@@ -1,3 +1,5 @@
+//! LOCK and UNLOCK WebDAV protocol handlers.
+
 use std::io::Cursor;
 use std::sync::Arc;
 
@@ -70,7 +72,7 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
 
     let entry = locks.entry(target.clone()).or_default();
 
-    let (token, is_refresh) = match lock_scope {
+    let (token, is_refresh, created_locknull) = match lock_scope {
         webdav::LockScope::Exclusive => {
             match try_acquire_exclusive(entry, &if_tokens, &target).await {
                 Ok(v) => v,
@@ -105,7 +107,11 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
     drop(locks);
 
     Response::builder()
-        .status(StatusCode::OK)
+        .status(if created_locknull {
+            StatusCode::CREATED
+        } else {
+            StatusCode::OK
+        })
         .header("content-type", "application/xml; charset=utf-8")
         .header("lock-token", format!("<{token}>"))
         .body(Body::from(xml))
@@ -172,10 +178,10 @@ fn build_lock_response(lock: &webdav::LockInfo) -> String {
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
 
-async fn ensure_lock_null_resource(target: &std::path::Path) -> Result<(), StatusCode> {
+async fn ensure_lock_null_resource(target: &std::path::Path) -> Result<bool, StatusCode> {
     match tokio::fs::File::create_new(target).await {
-        Ok(_) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
         Err(e) => {
             tracing::error!(
                 error = %e, path = %target.display(), "failed to create lock-null resource"
@@ -189,42 +195,42 @@ async fn try_acquire_exclusive(
     entry: &mut Vec<webdav::LockInfo>,
     if_tokens: &[String],
     target: &std::path::Path,
-) -> Result<(String, bool), StatusCode> {
+) -> Result<(String, bool, bool), StatusCode> {
     if let Some(token) = ls::check_existing_exclusive(entry, if_tokens)? {
         entry.retain(|l| !l.is_exclusive());
-        return Ok((token, true));
+        return Ok((token, true, false));
     }
 
     if !entry.is_empty() {
         if entry.iter().all(|l| if_tokens.contains(&l.token)) {
             entry.clear();
-            return Ok((webdav::generate_lock_token(), false));
+            return Ok((webdav::generate_lock_token(), false, false));
         }
         return Err(StatusCode::LOCKED);
     }
 
-    ensure_lock_null_resource(target).await?;
-    Ok((webdav::generate_lock_token(), false))
+    let created_locknull = ensure_lock_null_resource(target).await?;
+    Ok((webdav::generate_lock_token(), false, created_locknull))
 }
 
 async fn try_acquire_shared(
     entry: &mut Vec<webdav::LockInfo>,
     if_tokens: &[String],
     target: &std::path::Path,
-) -> Result<(String, bool), StatusCode> {
+) -> Result<(String, bool, bool), StatusCode> {
     if ls::check_existing_exclusive(entry, if_tokens)?.is_some() {
         entry.retain(|l| !l.is_exclusive());
-        return Ok((webdav::generate_lock_token(), false));
+        return Ok((webdav::generate_lock_token(), false, false));
     }
 
     if let Some(existing) = entry.iter().find(|l| if_tokens.contains(&l.token)) {
         let token = existing.token.clone();
         entry.retain(|l| l.token != token);
-        return Ok((token, true));
+        return Ok((token, true, false));
     }
 
-    ensure_lock_null_resource(target).await?;
-    Ok((webdav::generate_lock_token(), false))
+    let created_locknull = ensure_lock_null_resource(target).await?;
+    Ok((webdav::generate_lock_token(), false, created_locknull))
 }
 
 /// UNLOCK handler — removes a WebDAV lock (RFC 4918 §9.11).
@@ -333,7 +339,7 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         // RFC 4918 §7.3: LOCK on non-existent URL creates lock-null resource
-        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert_eq!(resp.status(), axum::http::StatusCode::CREATED);
         assert!(dir.path().join("ghost.txt").exists());
     }
 

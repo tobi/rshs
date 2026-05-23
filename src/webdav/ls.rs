@@ -1,3 +1,5 @@
+//! Lock system evaluation — ancestor walk, `If` condition evaluation, active-lock filtering.
+
 use std::path::Path;
 
 use axum::http::StatusCode;

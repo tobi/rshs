@@ -47,7 +47,7 @@ async fn test_lock_nonexistent_creates_locknull() {
 
     let req = make_request("LOCK", "/nonexistent.txt", lock_body(true));
     let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(resp.status().as_u16(), 201);
     assert!(resp.headers().get("lock-token").is_some());
 }
 

@@ -1,3 +1,5 @@
+//! PROPFIND, MKCOL, COPY, MOVE, and PROPPATCH WebDAV protocol handlers.
+
 use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
@@ -135,7 +137,8 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
 
     let dest = state.resolve_and_guard(&dest_str).await;
     let dest = ok_or_return!(dest.or_invalid(StatusCode::BAD_REQUEST));
-    let mut dest_existed = tokio::fs::metadata(&dest).await.is_ok();
+    let dest_existed_before = tokio::fs::metadata(&dest).await.is_ok();
+    let mut dest_existed = dest_existed_before;
 
     if dest_existed && !overwrite {
         tracing::debug!(verb, "target exists and Overwrite is F");
@@ -194,7 +197,7 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
 
     tracing::debug!(verb, src = %fs_src.display(), dest = %dest.display(), "completed");
 
-    if dest_existed {
+    if dest_existed_before {
         StatusCode::NO_CONTENT.into_response()
     } else {
         StatusCode::CREATED.into_response()

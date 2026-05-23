@@ -204,11 +204,12 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 
 ### Known Limitations
 
-| Item                      | Status   | Description                                                                                                              |
-| ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Dead property persistence | Accepted | In-memory only (`DeadPropertyStore`), lost on restart. Accepted as architectural trade-off; sidecar persistence deferred |
-| `getetag` format          | Accepted | Uses mtime+size hex hash (`format!("{:x}-{:x}", mtime_secs, size)`). No inode available on macOS via `std::fs`           |
-| HTML directory listing    | Accepted | Single-line HTML output (no indentation). Adequate for browser rendering                                                 |
+| Item                      | Status   | Description                                                                                                                                                                                |
+| ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Dead property persistence | Accepted | In-memory only (`DeadPropertyStore`), lost on restart. Accepted as architectural trade-off; sidecar persistence deferred                                                                   |
+| `getetag` format          | Accepted | Uses mtime+size hex hash (Nginx-style). Cannot detect same-second changes with identical file size. Deliberate trade-off — inodes are not portable across platforms or restart-persistent. |
+| HTML directory listing    | Accepted | Unindented HTML (no cosmetic whitespace) to reduce transfer size. Fully structured with DOCTYPE, semantic elements, and navigable links.                                                   |
+| Fragment in request URI   | Accepted | The HTTP library (hyper/axum) strips `#fragment` before routing per RFC 7230 §5.1. Cannot reject at application layer — client responsibility. Litmus issues a warning, not a failure.     |
 
 ## Conventions
 

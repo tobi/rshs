@@ -1,3 +1,5 @@
+//! Error-to-response conversion — `OrStatus` trait and `ok_or_return!` macro.
+
 use std::fmt::Display;
 
 use axum::http::StatusCode;

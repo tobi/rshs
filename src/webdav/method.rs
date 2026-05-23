@@ -1,3 +1,5 @@
+//! Type-safe HTTP/WebDAV method constants with conversion from `axum::http::Method`.
+
 use axum::http::Method as HttpMethod;
 
 pub use axum::http::method::InvalidMethod;

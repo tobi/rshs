@@ -1,3 +1,5 @@
+//! WebDAV XML generation — multistatus responses, PROPFIND property rendering, active-lock XML.
+
 use std::io::Cursor;
 use std::time::UNIX_EPOCH;
 
