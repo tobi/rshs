@@ -16,6 +16,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use derive_new::new;
+use tokio::signal;
 use tokio::sync::{Notify, RwLock};
 
 use crate::auth::AuthConfig;
@@ -171,14 +172,6 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response 
     }
 }
 
-async fn shutdown_signal() {
-    tokio::signal::ctrl_c() // Wait for the SIGINT signal be received
-        .await
-        .expect("failed to listen for Ctrl+C");
-
-    tracing::info!("received Ctrl+C, shutting down gracefully...");
-}
-
 async fn lock_cleanup_task(locks: Arc<RwLock<LockStore>>, shutdown: Arc<Notify>) {
     loop {
         tokio::select! {
@@ -203,4 +196,31 @@ async fn lock_cleanup_task(locks: Arc<RwLock<LockStore>>, shutdown: Arc<Notify>)
             }
         }
     }
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c().await.expect("failed to listen for Ctrl+C");
+        tracing::info!("received Ctrl+C, shutting down gracefully...");
+    };
+
+    let sigterm = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to listen for SIGTERM")
+            .recv()
+            .await;
+        tracing::info!("received SIGTERM, shutting down gracefully...");
+    };
+
+    tokio::select! {
+        () = sigterm => {},
+        () = ctrl_c => {},
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() {
+    signal::ctrl_c().await.expect("failed to listen for Ctrl+C");
+    tracing::info!("received shutdown signal, shutting down gracefully...");
 }
