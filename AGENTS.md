@@ -209,6 +209,28 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 - All public types are re-exported from `src/lib.rs`; tests import from `rshs` crate root
 - Update `AGENTS.md`, `README.md` and `docs/` accordingly when new features are added or existing ones are changed
 
+## Defensive Programming
+
+Use `debug_assert!` to encode internal call-site invariants in private helper functions.
+These assertions catch contract violations in dev/debug builds and compile away entirely
+in release mode (zero overhead).
+
+- **When to use**: When a private function expects the caller to have already performed a
+  guard check (e.g. `read_angle_bracket` asserts `bytes[p] == b'<'` because `parse_if_header`
+  already branched on `<`). An assertion is better than a comment — it enforces itself.
+
+- **When to avoid**: Public-API input validation. `debug_assert!` is stripped in release;
+  use regular `assert!`, `expect()`, or `Result` errors at API boundaries. Also avoid for
+  security-critical checks that must never be removed.
+
+- **Pattern**:
+  ```rust
+  fn read_angle_bracket(bytes: &[u8], p: usize) -> Option<(String, usize)> {
+      debug_assert!(bytes.get(p) == Some(&b'<'), "caller must position cursor at '<'");
+      // …
+  }
+  ```
+
 ## Documentation
 
 All `pub` and `pub(crate)` items must have `///` doc comments. Module-level
@@ -399,15 +421,15 @@ RSHS_LOG="warn,rshs=debug" rshs         # global warn, rshs debug
 
 # Environment Variables
 
-| Env Var            | Description                                       |
-| ------------------ | ------------------------------------------------- |
-| `RSHS_ROOT_DIR`    | Root directory (default: `.`)                     |
-| `RSHS_HOST`        | Bind address                                      |
-| `RSHS_PORT`        | Bind port                                         |
-| `RSHS_TLS_CERT`    | TLS certificate file path (PEM format)            |
-| `RSHS_TLS_KEY`     | TLS private key file path (PEM format)            |
-| `RSHS_USERS`       | Basic Auth credentials                            |
-| `RSHS_LOG`         | Logging level (e.g. `info`)                       |
-| `RSHS_LOG_STYLE`   | Log output style (e.g. `auto`, `always`, `never`) |
-| `RSHS_SHADOW_FILE` | Shadow file path with optional `:rw`/`:ro` suffix |
-| `RSHS_LOCK_TIMEOUT` | Default WebDAV lock timeout in seconds (default: 300)     |
+| Env Var             | Description                                           |
+| ------------------- | ----------------------------------------------------- |
+| `RSHS_ROOT_DIR`     | Root directory (default: `.`)                         |
+| `RSHS_HOST`         | Bind address                                          |
+| `RSHS_PORT`         | Bind port                                             |
+| `RSHS_TLS_CERT`     | TLS certificate file path (PEM format)                |
+| `RSHS_TLS_KEY`      | TLS private key file path (PEM format)                |
+| `RSHS_USERS`        | Basic Auth credentials                                |
+| `RSHS_LOG`          | Logging level (e.g. `info`)                           |
+| `RSHS_LOG_STYLE`    | Log output style (e.g. `auto`, `always`, `never`)     |
+| `RSHS_SHADOW_FILE`  | Shadow file path with optional `:rw`/`:ro` suffix     |
+| `RSHS_LOCK_TIMEOUT` | Default WebDAV lock timeout in seconds (default: 300) |
