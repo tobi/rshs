@@ -15,7 +15,7 @@ cargo clippy
 - Single crate `rshs` with both binary (`src/main.rs`) and library (`src/lib.rs`) targets
 - Library root `src/lib.rs` declares modules and re-exports public API
 - Tests live in `tests/` directory (integration tests)
-- Edition 2024 — requires Rust 1.85+
+- Edition 2024 — requires Rust 1.87+
 
 ### Module Map
 
@@ -28,9 +28,11 @@ src/
 
   auth.rs                       # AuthConfig, Credential, shadow file mgmt, auth middleware
 
+  html.rs                       # HTML directory listing (DirEntry, rendering)
+
   handlers/
     mod.rs
-    http.rs                     # GET/HEAD + PUT/DELETE/OPTIONS (directory listing + file ops)
+    http.rs                     # GET/HEAD/PUT/DELETE/OPTIONS handler
     webdav.rs                   # PROPFIND/MKCOL/COPY/MOVE/PROPPATCH handler
     locks.rs                    # LOCK/UNLOCK handler
 
@@ -63,37 +65,43 @@ src/
 
 ### Dependencies
 
-| Crate                    | Features                        | Purpose                             |
-| ------------------------ | ------------------------------- | ----------------------------------- |
-| `axum` 0.8               | `http2`                         | HTTP server framework               |
-| `tokio` 1.52             | `rt-multi-thread,net,macros,fs` | Async runtime                       |
-| `tower` 0.5              | —                               | Middleware traits (Layer, Service)  |
-| `tower-http` 0.6         | `trace`                         | Request tracing middleware          |
-| `tokio-rustls` 0.26      | —                               | TLS acceptor for axum               |
-| `tokio-util` 0.7         | `io`                            | StreamReader for PUT body streaming |
-| `rustls` 0.23            | —                               | TLS protocol implementation         |
-| `rustls-pemfile` 2.2     | —                               | PEM certificate/key parsing         |
-| `sha2` 0.11              | —                               | Certificate fingerprint             |
-| `clap` 4.6               | `derive`, `env`                 | CLI args + env var support          |
-| `futures-util` 0.3       | —                               | Stream combinators (TryStreamExt)   |
-| `mime_guess` 2           | —                               | MIME type detection                 |
-| `percent-encoding` 2     | —                               | URI percent-encode/decode           |
-| `quick-xml` 0.40         | —                               | XML parsing + generation (WebDAV)   |
-| `base64` 0.22            | —                               | Basic Auth header decoding          |
-| `sha-crypt` 0.6          | `getrandom`                     | SHA-512 crypt hash verification     |
-| `tracing` 0.1            | —                               | Structured logging facade           |
-| `tracing-subscriber` 0.3 | `env-filter`, `fmt`             | Log output + filter engine          |
+| Crate                    | Features                               | Purpose                             |
+| ------------------------ | -------------------------------------- | ----------------------------------- |
+| `axum` 0.8               | `http2`                                | HTTP server framework               |
+| `tokio` 1.52             | `rt-multi-thread,net,macros,fs,signal` | Async runtime + graceful shutdown   |
+| `tower` 0.5              | —                                      | Middleware traits (Layer, Service)  |
+| `tower-http` 0.6         | `trace`                                | Request tracing middleware          |
+| `tokio-rustls` 0.26      | —                                      | TLS acceptor for axum               |
+| `tokio-util` 0.7         | `io`                                   | StreamReader for PUT body streaming |
+| `rustls` 0.23            | —                                      | TLS protocol implementation         |
+| `rustls-pemfile` 2.2     | —                                      | PEM certificate/key parsing         |
+| `sha2` 0.11              | —                                      | Certificate fingerprint             |
+| `clap` 4.6               | `derive`, `env`                        | CLI args + env var support          |
+| `derive-new` 0.7         | —                                      | `#[derive(new)]` constructor macro  |
+| `futures-util` 0.3       | —                                      | Stream combinators (TryStreamExt)   |
+| `mime_guess` 2           | —                                      | MIME type detection                 |
+| `percent-encoding` 2     | —                                      | URI percent-encode/decode           |
+| `quick-xml` 0.40         | —                                      | XML parsing + generation (WebDAV)   |
+| `base64` 0.22            | —                                      | Basic Auth header decoding          |
+| `sha-crypt` 0.6          | `getrandom`                            | SHA-512 crypt hash verification     |
+| `tracing` 0.1            | —                                      | Structured logging facade           |
+| `tracing-subscriber` 0.3 | `env-filter`, `fmt`                    | Log output + filter engine          |
+| —                        | —                                      | —                                   |
+| `tempfile` 3.27          | _dev_                                  | Temporary directories in tests      |
+| `libc` 0.2               | _dev, unix-only_                       | SIGINT/SIGTERM in shutdown tests    |
 
 ### Key Patterns
 
 - **App state**: Shared state via `AppState` struct wrapped in `Arc`, accessed by handlers
   via `axum::extract::State<Arc<AppState>>`. Fields: `root_dir` (serve root path),
   `root_canonical` (cached canonical form for path traversal checks), `auth_config`,
-  `dead_props` (WebDAV dead property store), `locks` (lock store). Router built with
-  `.with_state(Arc::new(state))`.
+  `dead_props` (WebDAV dead property store), `locks` (lock store),
+  `lock_timeout` (default lock duration when client omits `Timeout` header).
+  Router built with `make_router(Arc::new(state))` — also exposed as a public API
+  for integration testing without binding a TCP port.
   `AppState` also provides convenience methods delegates to `utils::path`:
   `state.resolve_existing(path)`, `state.resolve_write_target(path)`,
-  `state.resolve_and_guard(path, create_parents)`.
+  `state.resolve_and_guard(path)`.
 - **File I/O**: Hot-path file operations (GET/HEAD serving, directory listing) use
   `tokio::fs` to offload blocking syscalls from async worker threads onto the blocking
   thread pool. Startup-only I/O (TLS cert/key loading, shadow file reads) uses
@@ -139,7 +147,7 @@ src/
   Shared and exclusive locks with conflict resolution (shared+shared ok, exclusive blocks all).
   Full RFC 4918 §10.4 conditional `If` header evaluation: `Not`, `DAV:no-lock`, resource-tags, AND semantics.
   Core lock logic lives in `webdav::ls` (`walk_locked_ancestors`, `find_ancestor_lock`,
-  `active_slice`, `eval_condition`, `evaluate_if`, `check_existing_exclusive`).
+  `active_slice`, `eval_condition`, `eval_if`, `check_existing_exclusive`).
   Depth:infinity ancestor chain enforcement in `lock_enforce` + indirect refresh via
   ancestor lock discovery in `handle_lock`. Lock enforcement via tower Layer middleware
   (`middleware::lock::lock_enforce`), which converts the request method to `webdav::Method`
@@ -148,7 +156,7 @@ src/
   Expired locks pruned every 30s by background task in `start_server()`.
   Default lock timeout is 300s (`--lock-timeout` / `AppState.lock_timeout`);
   `0` means unlimited. Lock enforcement filters expired locks lazily via the
-  `active()` helper (`infos.iter().filter(|l| !l.is_expired())`),
+  `active_slice` helper (`infos.iter().filter(|l| !l.is_expired())`),
   short-circuiting on first unexpired lock.
   `write_activelock` outputs the lock's actual `depth` value (`"0"`, `"1"`, or `"infinity"`)
   for correct litmus depth:infinity lock semantics.
@@ -206,7 +214,8 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 
 - Standard Rust conventions; no custom formatter or lint config overrides
 - Run `cargo fmt` then `cargo clippy` before committing — both must produce zero warnings
-- All public types are re-exported from `src/lib.rs`; tests import from `rshs` crate root
+- Types accessible via crate root are re-exported from `src/lib.rs`; other public types
+  are accessed via module paths (e.g. `rshs::handlers::http::handle_get_head`)
 - Update `AGENTS.md`, `README.md` and `docs/` accordingly when new features are added or existing ones are changed
 
 ## Defensive Programming
@@ -419,7 +428,7 @@ RSHS_LOG="warn,rshs=debug" rshs         # global warn, rshs debug
 
 `RSHS_LOG_STYLE` controls ANSI color output (`auto`, `always`, `never`).
 
-# Environment Variables
+## Environment Variables
 
 | Env Var             | Description                                           |
 | ------------------- | ----------------------------------------------------- |
