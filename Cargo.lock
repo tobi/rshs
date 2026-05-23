@@ -862,6 +862,7 @@ dependencies = [
  "clap",
  "derive-new",
  "futures-util",
+ "libc",
  "mime_guess",
  "percent-encoding",
  "quick-xml",
