@@ -14,7 +14,6 @@ categories = ["web-programming::http-server"]
 [features]
 default = []
 
-
 [dependencies]
 axum = { version = "0.8", features = ["http2"] }
 base64 = "0.22"
@@ -42,9 +41,33 @@ tower-http = { version = "0.6", features = ["trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
-
 [dev-dependencies]
+criterion = { version = "0.5", features = ["async_tokio", "html_reports"] }
 tempfile = "3.27"
 
 [target.'cfg(unix)'.dev-dependencies]
 libc = "0.2"
+
+[[bench]]
+name = "micro"
+harness = false
+
+[[bench]]
+name = "fileserver"
+harness = false
+
+[[bench]]
+name = "webdav"
+harness = false
+
+[[bench]]
+name = "middleware"
+harness = false
+
+[[bench]]
+name = "path_resolve"
+harness = false
+
+[[bench]]
+name = "scenarios"
+harness = false
