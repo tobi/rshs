@@ -8,6 +8,7 @@ cargo run
 cargo test
 cargo fmt
 cargo clippy
+cargo bench
 ```
 
 ## Architecture
@@ -89,6 +90,7 @@ src/
 | —                        | —                                      | —                                   |
 | `tempfile` 3.27          | _dev_                                  | Temporary directories in tests      |
 | `libc` 0.2               | _dev, unix-only_                       | SIGINT/SIGTERM in shutdown tests    |
+| `criterion` 0.5          | _dev_                                  | Performance benchmarking            |
 
 ### Key Patterns
 
@@ -211,6 +213,19 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 | HTML directory listing    | Accepted | Unindented HTML (no cosmetic whitespace) to reduce transfer size. Fully structured with DOCTYPE, semantic elements, and navigable links.                                                   |
 | Fragment in request URI   | Accepted | The HTTP library (hyper/axum) strips `#fragment` before routing per RFC 7230 §5.1. Cannot reject at application layer — client responsibility. Litmus issues a warning, not a failure.     |
 
+## Performance Roadmap
+
+Items identified from [benchmark analysis](./docs/benchmark-report.md). Ordered by
+likely impact-to-effort ratio.
+
+| #   | Category       | Issue                                           | Current cost        | Proposed fix                                             |
+| --- | -------------- | ----------------------------------------------- | ------------------- | -------------------------------------------------------- |
+| 1   | PUT overwrite  | `create_new` fails then falls back to `create`  | +29µs per overwrite | Pre-check existence or use `OpenOptions::truncate`       |
+| 2   | PROPFIND fs    | Sequential per-entry metadata + lock/prop reads | ~100µs per entry    | Batch `read_dir`; merge `RwLock` reads into single scope |
+| 3   | Path resolve   | Per-component `canonicalize` for deep paths     | +130µs per level    | Cache verified parent canonical results                  |
+| 4   | Lock enforce   | Repeated ancestor chain `HashMap` lookups       | +120µs per level    | Reverse index: ancestor → lock set                       |
+| 5   | XML generation | `Vec` reallocation during multistatus build     | ~3µs per entry      | Pre-allocate `Vec::with_capacity(entries.len() * 300)`   |
+
 ## Conventions
 
 - Standard Rust conventions; no custom formatter or lint config overrides
@@ -332,19 +347,58 @@ to verify protocol compliance.
 
 ```sh
 # Start server
-cargo run --release -- ./docs -vv
+cargo run --release -- ./data -vv
 
 # Run litmus (from another terminal)
 TESTS="basic http copymove locks props" TESTROOT=. ./litmus http://localhost:8080
 ```
+
+### Benchmarking
+
+Performance benchmarks use [Criterion.rs](https://github.com/bheisler/criterion.rs) 0.5
+with `async_tokio` and `html_reports` features. Benchmarks are defined under `benches/`
+and compiled as separate executables (`harness = false`).
+
+```
+benches/
+  common/mod.rs                   # Shared setup: routers, file trees, request builders
+  micro.rs                        # Pure CPU functions (parsing, XML gen, auth, lock eval)
+  fileserver.rs                   # GET/PUT/DELETE, dir listing, throughput
+  webdav.rs                       # PROPFIND, MKCOL, COPY, MOVE, LOCK/UNLOCK, PROPPATCH
+  middleware.rs                   # HealthCheck, Auth, LockEnforce overhead
+  path_resolve.rs                 # Path resolution depth, cold/hot cache
+  scenarios.rs                    # End-to-end: browser, sync, lock-edit-unlock, mixed
+```
+
+```sh
+cargo bench                      # Run all 6 suites (52 benchmarks total)
+cargo bench --bench fileserver   # File server only
+cargo bench -- "GET/tiny"        # Filter by benchmark name
+```
+
+Results are written to `target/criterion/report/index.html`.
+
+**Pattern**: All benchmarks use `tower::ServiceExt::oneshot()` against the production
+`make_router()` — no TCP binding. Async benchmarks use `tokio::runtime::Runtime::block_on()`
+inside a sync `b.iter()` closure. Benchmarks that mutate filesystem state (DELETE, MKCOL,
+PUT create) recreate a fresh `TempDir` per iteration.
+
+**Conventions**:
+
+- Benchmarks are compiled with `bench` profile (optimized, no debug assertions).
+- Each bench file declares `mod common` and imports from `benches/common/mod.rs`.
+- Shared helpers (`make_get`, `create_files`, etc.) live in `common`; suppress
+  `dead_code` warnings per-file via `#![allow(dead_code)]`.
+- Run `cargo bench` before pushing changes that affect hot-path code.
+- Update `docs/benchmark-report.md` when results change meaningfully.
 
 ## Authentication
 
 Basic HTTP Authentication (RFC 7617) is supported via `--user` / `-u` and `RSHS_USERS` env var.
 
 ```sh
-rshs --user admin:secret --user viewer:public ./docs
-RSHS_USERS="admin:secret;viewer:public" rshs ./docs
+rshs --user admin:secret --user viewer:public ./data
+RSHS_USERS="admin:secret;viewer:public" rshs ./data
 ```
 
 - Credentials format: `username:password`, multiple pairs separated by `;`
@@ -354,9 +408,9 @@ RSHS_USERS="admin:secret;viewer:public" rshs ./docs
 Shadow files provide persistent credential storage in SHA-512 crypt format:
 
 ```sh
-rshs -S ./shadow --user admin:secret ./docs
-rshs -S /etc/rshs/shadow:rw -W --user admin:newpass ./docs
-RSHS_SHADOW_FILE=./shadow:ro rshs ./docs
+rshs -S ./shadow --user admin:secret ./data
+rshs -S /etc/rshs/shadow:rw -W --user admin:newpass ./data
+RSHS_SHADOW_FILE=./shadow:ro rshs ./data
 ```
 
 - Shadow file path can be suffixed with `:rw` (default) or `:ro` to control write access
@@ -368,8 +422,8 @@ RSHS_SHADOW_FILE=./shadow:ro rshs ./docs
 TLS/HTTPS is enabled by providing both a certificate and private key file in PEM format:
 
 ```sh
-rshs --tls-cert cert.pem --tls-key key.pem ./docs
-RSHS_TLS_CERT=cert.pem RSHS_TLS_KEY=key.pem rshs ./docs
+rshs --tls-cert cert.pem --tls-key key.pem ./data
+RSHS_TLS_CERT=cert.pem RSHS_TLS_KEY=key.pem rshs ./data
 ```
 
 - Default port switches from 8080 to 8443 when TLS is enabled (unless `--port` is explicitly set)
@@ -383,9 +437,9 @@ RSHS_TLS_CERT=cert.pem RSHS_TLS_KEY=key.pem rshs ./docs
 The server always runs in HTTP + WebDAV hybrid mode:
 
 ```sh
-rshs ./docs                # Serve files in ./docs
+rshs ./data                # Serve files in ./data
 rshs                       # Default: serve current directory
-RSHS_ROOT_DIR=./docs rshs  # Set root via env var
+RSHS_ROOT_DIR=./data rshs  # Set root via env var
 ```
 
 - **Browser**: GET/HEAD → HTML directory listing, file serving

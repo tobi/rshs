@@ -8,7 +8,7 @@
 | litmus   | 0.17                                |
 | neon     | 0.34.2                              |
 | Platform | macOS (arm64)                       |
-| Server   | `cargo run --release -- ./docs -vv` |
+| Server   | `cargo run --release -- ./data -vv` |
 
 ## Summary
 
@@ -199,7 +199,7 @@ Download and build [litmus](https://github.com/notroj/litmus) — the WebDAV pro
 
 ```sh
 # Terminal 1: Start rshs
-cargo run --release -- ./docs -vv
+cargo run --release -- ./data -vv
 
 # Terminal 2: Run litmus (from the litmus source directory)
 TESTS="basic http copymove locks props" TESTROOT=. ./litmus http://localhost:8080

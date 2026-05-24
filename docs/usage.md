@@ -47,16 +47,16 @@ Shadow files provide persistent credential storage with SHA-512 crypt hashing:
 
 ```sh
 # Load credentials from a shadow file
-rshs -S ./shadow ./docs
+rshs -S ./shadow ./data
 
 # Read-only shadow file (no writes allowed)
-rshs -S /etc/rshs/shadow:ro ./docs
+rshs -S /etc/rshs/shadow:ro ./data
 
 # Merge CLI credentials and write to shadow file
-rshs -S ./shadow:rw -W --user admin:newpass ./docs
+rshs -S ./shadow:rw -W --user admin:newpass ./data
 
 # Using environment variable
-RSHS_SHADOW_FILE=./shadow:ro rshs ./docs
+RSHS_SHADOW_FILE=./shadow:ro rshs ./data
 ```
 
 - Path suffix `:rw` (default) allows writes, `:ro` restricts to read-only
@@ -84,13 +84,13 @@ openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem \
   -days 365 -nodes -subj "/CN=localhost"
 
 # Start with TLS
-rshs --tls-cert cert.pem --tls-key key.pem ./docs
+rshs --tls-cert cert.pem --tls-key key.pem ./data
 
 # Using environment variables
-RSHS_TLS_CERT=cert.pem RSHS_TLS_KEY=key.pem rshs ./docs
+RSHS_TLS_CERT=cert.pem RSHS_TLS_KEY=key.pem rshs ./data
 
 # Override default port
-rshs --tls-cert cert.pem --tls-key key.pem --port 443 ./docs
+rshs --tls-cert cert.pem --tls-key key.pem --port 443 ./data
 ```
 
 - Default port: 8443 (TLS) vs 8080 (plain) — `--port` always overrides
@@ -173,13 +173,13 @@ docker run --rm -p 8080:8080 -e RSHS_LOG="debug" mogeko/rshs
 
 ```sh
 # Only show rshs logs at debug level, everything else at warn
-RSHS_LOG="warn,rshs=debug" rshs ./docs
+RSHS_LOG="warn,rshs=debug" rshs ./data
 
 # Only show 500 errors from rshs at debug level
-RSHS_LOG="rshs[status=500]=debug" rshs ./docs
+RSHS_LOG="rshs[status=500]=debug" rshs ./data
 
 # Trace only requests for .html files
-RSHS_LOG="rshs[path*=*.html]=trace" rshs ./docs
+RSHS_LOG="rshs[path*=*.html]=trace" rshs ./data
 ```
 
 The following fields are available for filtering:

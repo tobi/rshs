@@ -14,15 +14,6 @@ const HREF_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'.')
     .remove(b'~');
 
-fn guess_content_type(child_name: &std::ffi::OsStr) -> Option<String> {
-    let mime = mime_guess::from_path(child_name).first_or_octet_stream();
-    if mime == mime_guess::mime::APPLICATION_OCTET_STREAM {
-        None
-    } else {
-        Some(mime.essence_str().to_owned())
-    }
-}
-
 /// Collect `PropEntry` entries from a filesystem path for PROPFIND responses.
 ///
 /// Reads the metadata for `fs_path`, creates a base `PropEntry`, and — if the
@@ -41,7 +32,7 @@ pub async fn collect_entries(fs_path: &Path, request_path: &str, depth: Depth) -
     let mut base_entry = PropEntry::from_meta(normalize_href(request_path, is_dir), is_dir, &meta);
     base_entry.canonical_path = Some(fs_path.to_path_buf());
     if !is_dir {
-        base_entry.content_type = guess_content_type(fs_path.as_os_str());
+        base_entry.content_type = guess_content_type(&fs_path);
     }
 
     let mut entries = vec![base_entry];
@@ -55,6 +46,12 @@ pub async fn collect_entries(fs_path: &Path, request_path: &str, depth: Depth) -
     }
 
     entries
+}
+
+fn guess_content_type(child_name: &impl AsRef<Path>) -> Option<String> {
+    mime_guess::from_path(child_name)
+        .first()
+        .map(|m| m.essence_str().to_owned())
 }
 
 async fn collect_direct_children(dir_path: &Path, parent_href: &str, entries: &mut Vec<PropEntry>) {
