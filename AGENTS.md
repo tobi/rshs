@@ -89,6 +89,7 @@ src/
 | —                        | —                                      | —                                   |
 | `tempfile` 3.27          | _dev_                                  | Temporary directories in tests      |
 | `libc` 0.2               | _dev, unix-only_                       | SIGINT/SIGTERM in shutdown tests    |
+| `criterion` 0.5          | _dev_                                  | Performance benchmarking             |
 
 ### Key Patterns
 
@@ -337,6 +338,45 @@ cargo run --release -- ./data -vv
 # Run litmus (from another terminal)
 TESTS="basic http copymove locks props" TESTROOT=. ./litmus http://localhost:8080
 ```
+
+### Benchmarking
+
+Performance benchmarks use [Criterion.rs](https://github.com/bheisler/criterion.rs) 0.5
+with `async_tokio` and `html_reports` features. Benchmarks are defined under `benches/`
+and compiled as separate executables (`harness = false`).
+
+```
+benches/
+  common/mod.rs                   # Shared setup: routers, file trees, request builders
+  micro.rs                        # Pure CPU functions (parsing, XML gen, auth, lock eval)
+  fileserver.rs                   # GET/PUT/DELETE, dir listing, throughput
+  webdav.rs                       # PROPFIND, MKCOL, COPY, MOVE, LOCK/UNLOCK, PROPPATCH
+  middleware.rs                   # HealthCheck, Auth, LockEnforce overhead
+  path_resolve.rs                 # Path resolution depth, cold/hot cache
+  scenarios.rs                    # End-to-end: browser, sync, lock-edit-unlock, mixed
+```
+
+```sh
+cargo bench                      # Run all 6 suites (52 benchmarks total)
+cargo bench --bench fileserver   # File server only
+cargo bench -- "GET/tiny"        # Filter by benchmark name
+```
+
+Results are written to `target/criterion/report/index.html`.
+
+**Pattern**: All benchmarks use `tower::ServiceExt::oneshot()` against the production
+`make_router()` — no TCP binding. Async benchmarks use `tokio::runtime::Runtime::block_on()`
+inside a sync `b.iter()` closure. Benchmarks that mutate filesystem state (DELETE, MKCOL,
+PUT create) recreate a fresh `TempDir` per iteration.
+
+**Conventions**:
+
+- Benchmarks are compiled with `bench` profile (optimized, no debug assertions).
+- Each bench file declares `mod common` and imports from `benches/common/mod.rs`.
+- Shared helpers (`make_get`, `create_files`, etc.) live in `common`; suppress
+  `dead_code` warnings per-file via `#![allow(dead_code)]`.
+- Run `cargo bench` before pushing changes that affect hot-path code.
+- Update `docs/benchmark-report.md` when results change meaningfully.
 
 ## Authentication
 

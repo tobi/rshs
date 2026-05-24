@@ -5,12 +5,14 @@
 
 A WebDAV server that Just Works — zero config, [litmus 100%](./docs/litmus-test-report.md).
 
-- **Litmus 102/102** — full [RFC 4918 Class 2](https://datatracker.ietf.org/doc/html/rfc4918) compliance: locks, copy/move,
-  conditional `If` headers, dead properties. All five suites pass.
 - **Browser + WebDAV hybrid** — HTML directory listings for humans,
   WebDAV protocol for mounting (Finder, Explorer, davfs).
+- **Fast and lightweight** — GET latency ~44µs, 10MB upload at 693 MiB/s,
+  1000-file directory listings in 6ms. [Full benchmark report](./docs/benchmark-report.md)
 - **Zero config, [one command](#quick-start)** — no config files, daemons, or runtime
   dependencies beyond Docker. Just mount a volume and go.
+- **Litmus 102/102** — full [RFC 4918 Class 2](https://datatracker.ietf.org/doc/html/rfc4918) compliance: locks, copy/move,
+  conditional `If` headers, dead properties. All five suites pass.
 - **TLS + HTTP/2** — built-in HTTPS with automatic HTTP/2 negotiation.
 - **Optional Basic Auth** — per-user credentials with persistent shadow
   files (SHA-512 crypt).
@@ -52,18 +54,20 @@ Map Network Drive → `http://localhost:8080`
 
 ## Documentation
 
-| Document                            | Description                         |
-| ----------------------------------- | ----------------------------------- |
-| [Usage Guide][usage-guide]          | Full usage, auth, shadow files, CLI |
-| [Docker Compose][docker-compose]    | Docker Compose deployment           |
-| [Podman Quadlet][podman-quadlet]    | Podman Quadlet deployment           |
-| [Kubernetes][kubernetes]            | K8s deployment, PVC, Ingress        |
-| [Litmus Test Report][litmus-report] | WebDAV conformance test results     |
+| Document                             | Description                         |
+| ------------------------------------ | ----------------------------------- |
+| [Usage Guide][usage-guide]           | Full usage, auth, shadow files, CLI |
+| [Docker Compose][docker-compose]     | Docker Compose deployment           |
+| [Podman Quadlet][podman-quadlet]     | Podman Quadlet deployment           |
+| [Kubernetes][kubernetes]             | K8s deployment, PVC, Ingress        |
+| [Benchmark Report][benchmark-report] | Performance benchmarks (52 suites)  |
+| [Litmus Test Report][litmus-report]  | WebDAV conformance test results     |
 
 [usage-guide]: ./docs/usage.md
 [docker-compose]: ./docs/deploy-docker-compose.md
 [podman-quadlet]: ./docs/deploy-podman-quadlet.md
 [kubernetes]: ./docs/deploy-k8s.md
+[benchmark-report]: ./docs/benchmark-report.md
 [litmus-report]: ./docs/litmus-test-report.md
 
 ## Environment Variables
