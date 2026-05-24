@@ -332,7 +332,7 @@ to verify protocol compliance.
 
 ```sh
 # Start server
-cargo run --release -- ./docs -vv
+cargo run --release -- ./data -vv
 
 # Run litmus (from another terminal)
 TESTS="basic http copymove locks props" TESTROOT=. ./litmus http://localhost:8080
@@ -343,8 +343,8 @@ TESTS="basic http copymove locks props" TESTROOT=. ./litmus http://localhost:808
 Basic HTTP Authentication (RFC 7617) is supported via `--user` / `-u` and `RSHS_USERS` env var.
 
 ```sh
-rshs --user admin:secret --user viewer:public ./docs
-RSHS_USERS="admin:secret;viewer:public" rshs ./docs
+rshs --user admin:secret --user viewer:public ./data
+RSHS_USERS="admin:secret;viewer:public" rshs ./data
 ```
 
 - Credentials format: `username:password`, multiple pairs separated by `;`
@@ -354,9 +354,9 @@ RSHS_USERS="admin:secret;viewer:public" rshs ./docs
 Shadow files provide persistent credential storage in SHA-512 crypt format:
 
 ```sh
-rshs -S ./shadow --user admin:secret ./docs
-rshs -S /etc/rshs/shadow:rw -W --user admin:newpass ./docs
-RSHS_SHADOW_FILE=./shadow:ro rshs ./docs
+rshs -S ./shadow --user admin:secret ./data
+rshs -S /etc/rshs/shadow:rw -W --user admin:newpass ./data
+RSHS_SHADOW_FILE=./shadow:ro rshs ./data
 ```
 
 - Shadow file path can be suffixed with `:rw` (default) or `:ro` to control write access
@@ -368,8 +368,8 @@ RSHS_SHADOW_FILE=./shadow:ro rshs ./docs
 TLS/HTTPS is enabled by providing both a certificate and private key file in PEM format:
 
 ```sh
-rshs --tls-cert cert.pem --tls-key key.pem ./docs
-RSHS_TLS_CERT=cert.pem RSHS_TLS_KEY=key.pem rshs ./docs
+rshs --tls-cert cert.pem --tls-key key.pem ./data
+RSHS_TLS_CERT=cert.pem RSHS_TLS_KEY=key.pem rshs ./data
 ```
 
 - Default port switches from 8080 to 8443 when TLS is enabled (unless `--port` is explicitly set)
@@ -383,9 +383,9 @@ RSHS_TLS_CERT=cert.pem RSHS_TLS_KEY=key.pem rshs ./docs
 The server always runs in HTTP + WebDAV hybrid mode:
 
 ```sh
-rshs ./docs                # Serve files in ./docs
+rshs ./data                # Serve files in ./data
 rshs                       # Default: serve current directory
-RSHS_ROOT_DIR=./docs rshs  # Set root via env var
+RSHS_ROOT_DIR=./data rshs  # Set root via env var
 ```
 
 - **Browser**: GET/HEAD → HTML directory listing, file serving
