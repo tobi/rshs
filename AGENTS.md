@@ -8,6 +8,7 @@ cargo run
 cargo test
 cargo fmt
 cargo clippy
+cargo bench
 ```
 
 ## Architecture
@@ -89,7 +90,7 @@ src/
 | —                        | —                                      | —                                   |
 | `tempfile` 3.27          | _dev_                                  | Temporary directories in tests      |
 | `libc` 0.2               | _dev, unix-only_                       | SIGINT/SIGTERM in shutdown tests    |
-| `criterion` 0.5          | _dev_                                  | Performance benchmarking             |
+| `criterion` 0.5          | _dev_                                  | Performance benchmarking            |
 
 ### Key Patterns
 
@@ -211,6 +212,19 @@ let bytes_written = tokio::io::copy(&mut reader, &mut file).await?;
 | `getetag` format          | Accepted | Uses mtime+size hex hash (Nginx-style). Cannot detect same-second changes with identical file size. Deliberate trade-off — inodes are not portable across platforms or restart-persistent. |
 | HTML directory listing    | Accepted | Unindented HTML (no cosmetic whitespace) to reduce transfer size. Fully structured with DOCTYPE, semantic elements, and navigable links.                                                   |
 | Fragment in request URI   | Accepted | The HTTP library (hyper/axum) strips `#fragment` before routing per RFC 7230 §5.1. Cannot reject at application layer — client responsibility. Litmus issues a warning, not a failure.     |
+
+## Performance Roadmap
+
+Items identified from [benchmark analysis](./docs/benchmark-report.md). Ordered by
+likely impact-to-effort ratio.
+
+| #   | Category       | Issue                                           | Current cost        | Proposed fix                                             |
+| --- | -------------- | ----------------------------------------------- | ------------------- | -------------------------------------------------------- |
+| 1   | PUT overwrite  | `create_new` fails then falls back to `create`  | +29µs per overwrite | Pre-check existence or use `OpenOptions::truncate`       |
+| 2   | PROPFIND fs    | Sequential per-entry metadata + lock/prop reads | ~100µs per entry    | Batch `read_dir`; merge `RwLock` reads into single scope |
+| 3   | Path resolve   | Per-component `canonicalize` for deep paths     | +130µs per level    | Cache verified parent canonical results                  |
+| 4   | Lock enforce   | Repeated ancestor chain `HashMap` lookups       | +120µs per level    | Reverse index: ancestor → lock set                       |
+| 5   | XML generation | `Vec` reallocation during multistatus build     | ~3µs per entry      | Pre-allocate `Vec::with_capacity(entries.len() * 300)`   |
 
 ## Conventions
 
