@@ -3,11 +3,12 @@
 
 pub(crate) mod tls;
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Error, ErrorKind};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::Router;
@@ -35,6 +36,7 @@ pub struct AppState {
     pub root_canonical: PathBuf,
     pub dead_props: Arc<RwLock<DeadPropertyStore>>,
     pub locks: Arc<RwLock<LockStore>>,
+    pub canonical_cache: Arc<Mutex<HashMap<PathBuf, PathBuf>>>,
     pub lock_timeout: Duration,
 }
 
@@ -47,6 +49,7 @@ impl AppState {
             root_canonical,
             dead_props: Arc::new(RwLock::new(DeadPropertyStore::new())),
             locks: Arc::new(RwLock::new(LockStore::new())),
+            canonical_cache: Arc::new(Mutex::new(HashMap::new())),
             lock_timeout,
         }
     }
@@ -63,7 +66,13 @@ impl AppState {
         &self,
         request_path: &str,
     ) -> Result<PathBuf, ResolveTargetError> {
-        path::resolve_and_guard(&self.root_dir, &self.root_canonical, request_path).await
+        path::resolve_and_guard(
+            &self.root_dir,
+            &self.root_canonical,
+            request_path,
+            &self.canonical_cache,
+        )
+        .await
     }
 }
 
