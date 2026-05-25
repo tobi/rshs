@@ -118,7 +118,7 @@ fn xml_response(status: StatusCode, xml: String) -> Response {
 /// assert!(xml.contains("D:href>/file.txt</D:href>"));
 /// ```
 pub fn build_multistatus(entries: &[PropEntry], prop_request: &PropRequest) -> String {
-    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    let mut writer = Writer::new(Cursor::new(Vec::with_capacity(entries.len() * 700)));
 
     writer.ev(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
 
