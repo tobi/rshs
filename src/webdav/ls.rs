@@ -18,6 +18,10 @@ pub fn active_slice(infos: &[LockInfo]) -> impl Iterator<Item = &LockInfo> + '_ 
 /// Walk up the ancestor chain of `target` within `root_canonical`, calling
 /// `f` with the lock slice at each ancestor directory.
 ///
+/// When there are few depth:infinity locks (≤ 10), iterates locks directly
+/// and checks ancestry via prefix comparison. Falls back to per-ancestor
+/// HashMap walk when many depth:infinity locks exist.
+///
 /// Stops at the first ancestor where `f` returns `true`, or when the walk
 /// reaches the root boundary.
 ///
@@ -28,19 +32,63 @@ pub fn walk_locked_ancestors<'a>(
     root_canonical: &Path,
     mut f: impl FnMut(&'a [LockInfo]) -> bool,
 ) -> bool {
-    let mut current = target.parent();
-    while let Some(parent) = current {
-        if !parent.starts_with(root_canonical) {
-            break;
-        }
-        if let Some(infos) = locks.get(parent) {
-            if f(infos) {
+    if locks.is_empty() {
+        return false;
+    }
+
+    let inf_count = locks
+        .values()
+        .filter(|infos| infos.iter().any(|l| l.depth == Depth::Infinity))
+        .count();
+
+    if inf_count == 0 {
+        return false;
+    }
+
+    if inf_count <= 10 {
+        for (lock_path, infos) in locks {
+            if !infos.iter().any(|l| l.depth == Depth::Infinity) {
+                continue;
+            }
+            if is_ancestor_of(lock_path, target) && f(infos) {
                 return true;
             }
         }
-        current = parent.parent();
+        false
+    } else {
+        let mut current = target.parent();
+        while let Some(parent) = current {
+            if !parent.starts_with(root_canonical) {
+                break;
+            }
+            if let Some(infos) = locks.get(parent) {
+                if f(infos) {
+                    return true;
+                }
+            }
+            current = parent.parent();
+        }
+        false
     }
-    false
+}
+
+/// Returns `true` if `ancestor` is a proper ancestor directory of `target`.
+///
+/// A path `/a/b` is an ancestor of `/a/b/c/file.txt` — the byte immediately
+/// after the ancestor prefix is `/`. Root `/` is always an ancestor.
+fn is_ancestor_of(ancestor: &Path, target: &Path) -> bool {
+    let an = ancestor.as_os_str().as_encoded_bytes();
+    let ta = target.as_os_str().as_encoded_bytes();
+    if an.is_empty() || an.len() >= ta.len() {
+        return false;
+    }
+    if !target.starts_with(ancestor) {
+        return false;
+    }
+    if an == b"/" {
+        return true;
+    }
+    ta[an.len()] == b'/'
 }
 
 /// Find the first ancestor lock matching a predicate, walking from
@@ -358,5 +406,125 @@ mod tests {
         )];
         let infos = vec![make_lock(LockScope::Exclusive, "t1")];
         assert!(!eval_if(&lists, &infos, "/a"));
+    }
+
+    // -- walk_locked_ancestors tests ------------------------------------------
+
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    fn lock_store(entries: Vec<(&str, LockInfo)>) -> LockStore {
+        let mut store = LockStore::new();
+        for (path, info) in entries {
+            store.entry(PathBuf::from(path)).or_default().push(info);
+        }
+        store
+    }
+
+    fn make_infinity_lock(scope: LockScope, token: &str) -> LockInfo {
+        LockInfo::new(
+            scope,
+            token.into(),
+            None,
+            SystemTime::now(),
+            None,
+            Depth::Infinity,
+        )
+    }
+
+    #[test]
+    fn test_walk_locked_ancestors_empty_store() {
+        let store: LockStore = HashMap::new();
+        let target = Path::new("/a/b/c/file.txt");
+        let root = Path::new("/a");
+        assert!(!walk_locked_ancestors(&store, target, root, |_| true));
+    }
+
+    #[test]
+    fn test_walk_locked_ancestors_no_infinity() {
+        let store = lock_store(vec![("/a/b", make_lock(LockScope::Exclusive, "t1"))]);
+        let target = Path::new("/a/b/c/file.txt");
+        let root = Path::new("/a");
+        assert!(!walk_locked_ancestors(&store, target, root, |_| true));
+    }
+
+    #[test]
+    fn test_walk_locked_ancestors_ancestor_match() {
+        let store = lock_store(vec![(
+            "/a/b",
+            make_infinity_lock(LockScope::Exclusive, "t1"),
+        )]);
+        let target = Path::new("/a/b/c/file.txt");
+        let root = Path::new("/a");
+        assert!(walk_locked_ancestors(&store, target, root, |_| true));
+    }
+
+    #[test]
+    fn test_walk_locked_ancestors_no_match() {
+        let store = lock_store(vec![(
+            "/x/y",
+            make_infinity_lock(LockScope::Exclusive, "t1"),
+        )]);
+        let target = Path::new("/a/b/c/file.txt");
+        let root = Path::new("/a");
+        assert!(!walk_locked_ancestors(&store, target, root, |_| true));
+    }
+
+    #[test]
+    fn test_walk_locked_ancestors_path_boundary() {
+        let store = lock_store(vec![(
+            "/a/b",
+            make_infinity_lock(LockScope::Exclusive, "t1"),
+        )]);
+        // /a/bc/file.txt starts_with /a/b but /a/b is NOT an ancestor
+        let target = Path::new("/a/bc/file.txt");
+        let root = Path::new("/a");
+        assert!(!walk_locked_ancestors(&store, target, root, |_| true));
+    }
+
+    #[test]
+    fn test_walk_locked_ancestors_root_lock() {
+        let store = lock_store(vec![("/", make_infinity_lock(LockScope::Exclusive, "t1"))]);
+        let target = Path::new("/anything/deep/file.txt");
+        let root = Path::new("/");
+        assert!(walk_locked_ancestors(&store, target, root, |_| true));
+    }
+
+    #[test]
+    fn test_walk_locked_ancestors_many_locks() {
+        let mut store = LockStore::new();
+        for i in 0..15 {
+            store
+                .entry(PathBuf::from(format!("/level_{i}")))
+                .or_default()
+                .push(make_infinity_lock(LockScope::Exclusive, &format!("t{i}")));
+        }
+        // One of the locks matches an ancestor: /level_0
+        let target = Path::new("/level_0/sub/file.txt");
+        let root = Path::new("/");
+        assert!(walk_locked_ancestors(&store, target, root, |_| true));
+    }
+
+    #[test]
+    fn test_is_ancestor_of_boundary_cases() {
+        // Normal
+        assert!(is_ancestor_of(
+            Path::new("/a/b"),
+            Path::new("/a/b/c/file.txt")
+        ));
+        // Boundary: prefix trap
+        assert!(!is_ancestor_of(
+            Path::new("/a/b"),
+            Path::new("/a/bc/file.txt")
+        ));
+        // Root
+        assert!(is_ancestor_of(Path::new("/"), Path::new("/a")));
+        assert!(is_ancestor_of(Path::new("/"), Path::new("/file.txt")));
+        // Same path is not an ancestor
+        assert!(!is_ancestor_of(Path::new("/a/b"), Path::new("/a/b")));
+        // Ancestor longer than target
+        assert!(!is_ancestor_of(Path::new("/a/b/c"), Path::new("/a/b")));
+        // Empty ancestor
+        assert!(!is_ancestor_of(Path::new(""), Path::new("/a")));
     }
 }
