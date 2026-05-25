@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use axum::Router;
-use axum::body::Body;
+use axum::body::{self, Body};
 use axum::extract::Request;
 use axum::http::Method;
 use rshs::{AppState, AuthConfig, make_router};
@@ -197,4 +197,8 @@ pub fn lock_body_exclusive() -> Vec<u8> {
 
 pub fn lock_body_shared() -> Vec<u8> {
     br#"<?xml version="1.0"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:shared/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#.to_vec()
+}
+
+pub async fn drain_body(resp: axum::response::Response) {
+    let _ = body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
 }

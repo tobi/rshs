@@ -2,6 +2,7 @@ FROM docker.io/library/rust:1-trixie AS builder
 
 WORKDIR /app/
 
+COPY ./benches/ /app/benches/
 COPY ./src/ /app/src/
 COPY ./Cargo.toml /app/Cargo.toml
 COPY ./Cargo.lock /app/Cargo.lock

@@ -1,7 +1,9 @@
 //! URI path resolution with percent-decoding and traversal guards (`..` / `.` / `#`).
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use axum::http::StatusCode;
 use percent_encoding::percent_decode_str;
@@ -85,13 +87,15 @@ pub fn resolve_write_target(root_dir: &Path, request_path: &str) -> Option<PathB
 }
 
 /// Resolves a write target: validates path, canonicalizes parent,
-/// verifies traversal safety.
+/// verifies traversal safety. Uses a cache to avoid redundant `canonicalize`
+/// syscalls for the same parent directory.
 ///
 /// Returns the canonical target `PathBuf`.
 pub async fn resolve_and_guard(
     root_dir: &Path,
     root_canonical: &Path,
     request_path: &str,
+    canonical_cache: &Mutex<HashMap<PathBuf, PathBuf>>,
 ) -> Result<PathBuf, ResolveTargetError> {
     let fs_path = match resolve_write_target(root_dir, request_path) {
         Some(p) => p,
@@ -100,9 +104,19 @@ pub async fn resolve_and_guard(
 
     let parent = fs_path.parent().unwrap_or(root_dir);
 
-    let parent_canonical = match tokio::fs::canonicalize(parent).await {
-        Ok(pc) => pc,
-        Err(e) => return Err(ResolveTargetError::ParentCanonicalizeFailed(e)),
+    let parent_canonical = {
+        if let Some(cached) = canonical_cache.lock().unwrap().get(parent) {
+            cached.clone()
+        } else {
+            let pc = tokio::fs::canonicalize(parent)
+                .await
+                .map_err(ResolveTargetError::ParentCanonicalizeFailed)?;
+            canonical_cache
+                .lock()
+                .unwrap()
+                .insert(parent.to_path_buf(), pc.clone());
+            pc
+        }
     };
 
     if !parent_canonical.starts_with(root_canonical) {
