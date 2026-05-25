@@ -228,16 +228,12 @@ impl AuthConfig {
                 })?;
             }
 
-            let file = fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(path)
-                .map_err(|e| {
-                    io::Error::new(
-                        e.kind(),
-                        format!("cannot create shadow file {}: {e}", path.display()),
-                    )
-                })?;
+            let file = fs::File::create_new(path).map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!("cannot create shadow file {}: {e}", path.display()),
+                )
+            })?;
 
             file.set_permissions(fs::Permissions::from_mode(0o600))
                 .map_err(|e| {
@@ -373,11 +369,7 @@ fn is_path_writable(path: &Path) -> bool {
 }
 
 fn create_shadow_file(path: &Path) -> std::io::Result<()> {
-    let file = fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(path)?;
-    file.set_permissions(fs::Permissions::from_mode(0o600))
+    fs::File::create_new(path)?.set_permissions(fs::Permissions::from_mode(0o600))
 }
 
 #[cfg(test)]
