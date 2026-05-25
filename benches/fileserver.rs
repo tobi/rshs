@@ -64,6 +64,49 @@ fn bench_get_file(c: &mut Criterion) {
         });
     });
 
+    // Body-drain variants: measure full read + stream latency
+    group.throughput(Throughput::Bytes(65536));
+    group.bench_function("medium_64kb_body", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let resp = router
+                    .clone()
+                    .oneshot(make_get("/medium.bin"))
+                    .await
+                    .unwrap();
+                drain_body(resp).await;
+            });
+        });
+    });
+
+    group.throughput(Throughput::Bytes(1024 * 1024));
+    group.bench_function("large_1mb_body", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let resp = router
+                    .clone()
+                    .oneshot(make_get("/large.bin"))
+                    .await
+                    .unwrap();
+                drain_body(resp).await;
+            });
+        });
+    });
+
+    group.throughput(Throughput::Bytes(1024 * 1024 * 10));
+    group.bench_function("xlarge_10mb_body", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let resp = router
+                    .clone()
+                    .oneshot(make_get("/xlarge.bin"))
+                    .await
+                    .unwrap();
+                drain_body(resp).await;
+            });
+        });
+    });
+
     group.finish();
 }
 
