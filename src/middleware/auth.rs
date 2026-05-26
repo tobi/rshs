@@ -1,23 +1,27 @@
 //! HTTP Basic Authentication middleware.
-//! Automatically becomes a no-op when no users are configured in `AuthConfig`.
+//! Automatically becomes a no-op when no users are configured in `AuthState`.
 
 use std::sync::Arc;
 
 use axum::{body::Body, http::StatusCode, middleware::Next, response::Response};
 use base64::{Engine as _, engine::general_purpose};
 
-use crate::auth::AuthConfig;
+use crate::auth::AuthState;
+use crate::auth::hash_auth_header;
 
-/// Validates HTTP Basic Authentication credentials against the configured `AuthConfig`.
+/// Validates HTTP Basic Authentication credentials against the configured `AuthState`.
 /// Skips authentication entirely when no users are configured (backward compatible).
+///
+/// For SHA-512 crypt credentials, uses an auth cache to avoid re-verifying the
+/// expensive password hash on every request. See [`AuthState::validate_cached`].
 ///
 /// Returns `401 Unauthorized` with `WWW-Authenticate: Basic realm="rshs"` on failure.
 pub async fn auth_middleware(
-    axum::extract::State(auth_config): axum::extract::State<Arc<AuthConfig>>,
+    axum::extract::State(state): axum::extract::State<Arc<AuthState>>,
     req: axum::extract::Request,
     next: Next,
 ) -> Result<Response, Response> {
-    if auth_config.is_empty() {
+    if state.is_empty() {
         return Ok(next.run(req).await);
     }
 
@@ -28,7 +32,21 @@ pub async fn auth_middleware(
         }
     };
 
-    if auth_config.validate(&username, &password) {
+    let header_hash = req
+        .headers()
+        .get("authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Basic "))
+        .map(hash_auth_header);
+
+    let Some(header_hash) = header_hash else {
+        return Err(unauthorized());
+    };
+
+    if state
+        .validate_cached(&username, &password, header_hash)
+        .await
+    {
         tracing::debug!(user = %username, "authentication succeeded");
         Ok(next.run(req).await)
     } else {

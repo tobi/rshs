@@ -19,7 +19,7 @@ pub(crate) mod utils;
 pub mod webdav;
 
 /// Authentication configuration and builder.
-pub use auth::{AuthConfig, build_auth_config};
+pub use auth::{AuthState, build_auth_state};
 /// Command-line interface.
 pub use cli::Cli;
 /// TLS certificate/key configuration.

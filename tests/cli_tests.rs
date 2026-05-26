@@ -86,7 +86,7 @@ fn test_cli_user_multiple() {
 }
 
 #[test]
-fn test_cli_to_auth_config() {
+fn test_cli_to_auth_state() {
     let cli = Cli::try_parse_from([
         "rshs",
         "--user",
@@ -96,7 +96,7 @@ fn test_cli_to_auth_config() {
         "/tmp/test",
     ])
     .unwrap();
-    let auth = cli.to_auth_config();
+    let auth = cli.to_auth_state();
     assert!(!auth.is_empty());
     assert!(auth.validate("alice", "pass1"));
     assert!(auth.validate("bob", "pass2"));
@@ -105,25 +105,25 @@ fn test_cli_to_auth_config() {
 }
 
 #[test]
-fn test_cli_to_auth_config_empty() {
+fn test_cli_to_auth_state_empty() {
     let cli = Cli::try_parse_from(["rshs", "/tmp/test"]).unwrap();
-    let auth = cli.to_auth_config();
+    let auth = cli.to_auth_state();
     assert!(auth.is_empty());
 }
 
 #[test]
-fn test_cli_to_auth_config_skips_malformed() {
+fn test_cli_to_auth_state_skips_malformed() {
     let cli = Cli::try_parse_from(["rshs", "--user", "bob", "--user", "alice:pass", "/tmp/test"])
         .unwrap();
-    let auth = cli.to_auth_config();
+    let auth = cli.to_auth_state();
     assert!(auth.validate("alice", "pass"));
     assert!(!auth.is_empty());
 }
 
 #[test]
-fn test_cli_to_auth_config_skips_empty_username() {
+fn test_cli_to_auth_state_skips_empty_username() {
     let cli = Cli::try_parse_from(["rshs", "--user", ":password", "/tmp/test"]).unwrap();
-    let auth = cli.to_auth_config();
+    let auth = cli.to_auth_state();
     assert!(auth.is_empty());
 }
 

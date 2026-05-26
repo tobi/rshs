@@ -11,7 +11,7 @@ use tower::ServiceExt;
 use axum::extract::Request;
 
 use common::*;
-use rshs::{AppState, AuthConfig, make_router};
+use rshs::{AppState, AuthState, make_router};
 
 const ALLPROP_BODY: &[u8] =
     br#"<?xml version="1.0"?><D:propfind xmlns:D="DAV:"><D:allprop/></D:propfind>"#;
@@ -230,7 +230,7 @@ fn make_router_with_lock(dir: &std::path::Path) -> (axum::Router, String) {
     );
     let state = Arc::new(AppState::new(
         dir.to_path_buf(),
-        AuthConfig::new(),
+        AuthState::new(),
         Duration::from_secs(300),
     ));
     let rt = tokio::runtime::Runtime::new().unwrap();

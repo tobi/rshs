@@ -1,5 +1,5 @@
 //! Router construction, request dispatch, and server startup for both HTTP and HTTPS.
-//! Also provides the lock-cleanup background task.
+//! Also provides the background cleanup task for expiring locks and auth cache entries.
 
 pub(crate) mod tls;
 
@@ -18,9 +18,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use derive_new::new;
 use tokio::signal;
-use tokio::sync::{Notify, RwLock};
 
-use crate::auth::AuthConfig;
+use crate::auth::{AuthCache, AuthState};
 use crate::handlers::{http, locks, webdav as webdav_handler};
 use crate::utils::path::{self, ResolveTargetError};
 use crate::webdav::{DeadPropertyStore, LockStore, Method};
@@ -31,24 +30,24 @@ use crate::webdav::{DeadPropertyStore, LockStore, Method};
 /// All fields are behind `Arc` for cheap cloning.
 #[derive(Clone)]
 pub struct AppState {
-    pub auth_config: Arc<AuthConfig>,
+    pub auth_state: Arc<AuthState>,
     pub root_dir: PathBuf,
     pub root_canonical: PathBuf,
-    pub dead_props: Arc<RwLock<DeadPropertyStore>>,
-    pub locks: Arc<RwLock<LockStore>>,
+    pub dead_props: Arc<tokio::sync::RwLock<DeadPropertyStore>>,
+    pub locks: Arc<tokio::sync::RwLock<LockStore>>,
     pub canonical_cache: Arc<Mutex<HashMap<PathBuf, PathBuf>>>,
     pub lock_timeout: Duration,
 }
 
 impl AppState {
-    pub fn new(root: PathBuf, auth_config: AuthConfig, lock_timeout: Duration) -> Self {
+    pub fn new(root: PathBuf, auth_state: AuthState, lock_timeout: Duration) -> Self {
         let root_canonical = fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
         Self {
-            auth_config: Arc::new(auth_config),
+            auth_state: Arc::new(auth_state),
             root_dir: root,
             root_canonical,
-            dead_props: Arc::new(RwLock::new(DeadPropertyStore::new())),
-            locks: Arc::new(RwLock::new(LockStore::new())),
+            dead_props: Arc::new(tokio::sync::RwLock::new(DeadPropertyStore::new())),
+            locks: Arc::new(tokio::sync::RwLock::new(LockStore::new())),
             canonical_cache: Arc::new(Mutex::new(HashMap::new())),
             lock_timeout,
         }
@@ -84,18 +83,19 @@ pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub tls_config: Option<tls::TlsConfig>,
-    pub auth_config: AuthConfig,
+    pub auth_state: AuthState,
     pub lock_timeout: u64,
 }
 
 /// Builds the axum router with all middleware layers, then starts the HTTP or HTTPS
-/// server. Also spawns a background task to prune expired WebDAV locks every 30 seconds.
+/// server. Also spawns a background task to prune expired locks and auth cache entries
+/// every 30 seconds.
 pub async fn start_server(config: ServerConfig) -> io::Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.host, config.port)
         .parse()
         .map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
 
-    let auth_config = config.auth_config;
+    let auth_state = config.auth_state;
     let root = config.root_dir;
     let lock_timeout = if config.lock_timeout == 0 {
         Duration::ZERO // A zero lock timeout means locks never expire
@@ -103,12 +103,16 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
         Duration::from_secs(config.lock_timeout)
     };
 
-    let state = Arc::new(AppState::new(root, auth_config, lock_timeout));
+    let state = Arc::new(AppState::new(root, auth_state, lock_timeout));
 
     let router = make_router(state.clone());
 
-    let cleanup_notify = Arc::new(Notify::new());
-    let task = lock_cleanup_task(state.locks.clone(), cleanup_notify.clone());
+    let cleanup_notify = Arc::new(tokio::sync::Notify::new());
+    let task = cleanup_task(
+        state.locks.clone(),
+        state.auth_state.auth_cache.clone(),
+        cleanup_notify.clone(),
+    );
     let cleanup_handle = tokio::spawn(task);
 
     match &config.tls_config {
@@ -150,8 +154,7 @@ pub fn make_router(state: Arc<AppState>) -> Router {
     use axum::middleware::from_fn_with_state;
     use tower_http::trace::TraceLayer;
 
-    let auth_config = state.auth_config.clone();
-    let auth_mw = from_fn_with_state(auth_config, auth::auth_middleware);
+    let auth_mw = from_fn_with_state(state.auth_state.clone(), auth::auth_middleware);
     let lock_mw = from_fn_with_state(state.clone(), lock::lock_enforce);
     let health_check_mw = health::HealthCheck;
 
@@ -181,7 +184,11 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response 
     }
 }
 
-async fn lock_cleanup_task(locks: Arc<RwLock<LockStore>>, shutdown: Arc<Notify>) {
+async fn cleanup_task(
+    locks: Arc<tokio::sync::RwLock<LockStore>>,
+    auth_cache: Arc<std::sync::RwLock<AuthCache>>,
+    shutdown: Arc<tokio::sync::Notify>,
+) {
     loop {
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(30)) => {
@@ -194,13 +201,24 @@ async fn lock_cleanup_task(locks: Arc<RwLock<LockStore>>, shutdown: Arc<Notify>)
                 let after = store.values().map(|v| v.len()).sum::<usize>();
                 if before > after {
                     tracing::debug!(
-                        removed = before - after, remaining = after, "cleanup expired locks"
+                        removed = before - after, remaining = after,
+                        "cleanup expired locks"
                     );
                 }
-                drop(store);
+
+                let mut cache = auth_cache.write().unwrap();
+                let before = cache.len();
+                cache.retain(|_, expiry| *expiry > std::time::Instant::now());
+                let after = cache.len();
+                if before > after {
+                    tracing::debug!(
+                        removed = before - after, remaining = after,
+                        "cleanup expired auth cache"
+                    );
+                }
             }
             _ = shutdown.notified() => {
-                tracing::debug!("lock cleanup task shutting down");
+                tracing::debug!("cleanup task shutting down");
                 break;
             }
         }

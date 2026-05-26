@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use axum::Router;
-use rshs::{AppState, AuthConfig, make_router};
+use rshs::{AppState, AuthState, make_router};
 
 pub fn temp_dir_with_files() -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().expect("failed to create temp dir");
@@ -15,7 +15,7 @@ pub fn temp_dir_with_files() -> tempfile::TempDir {
     dir
 }
 
-pub fn make_test_router(root_dir: &Path, auth: AuthConfig) -> Router {
+pub fn make_test_router(root_dir: &Path, auth: AuthState) -> Router {
     let state = Arc::new(AppState::new(
         root_dir.to_path_buf(),
         auth,

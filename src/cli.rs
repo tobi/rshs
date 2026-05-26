@@ -4,7 +4,7 @@
 use clap::Parser;
 
 use crate::DEFAULT_LOG_LEVEL;
-use crate::auth::{AuthConfig, ShadowFileArg};
+use crate::auth::{AuthState, ShadowFileArg};
 use crate::server::tls::TlsConfig;
 
 /// Simple HTTP/WebDAV Server
@@ -82,6 +82,15 @@ pub struct Cli {
         value_parser = clap::value_parser!(u64)
     )]
     pub lock_timeout: u64,
+
+    /// Auth cache TTL in seconds (0 disables, re-check every request)
+    #[arg(
+        long = "auth-cache-ttl",
+        default_value = "60",
+        env = "RSHS_AUTH_CACHE_TTL",
+        value_parser = clap::value_parser!(u64)
+    )]
+    pub auth_cache_ttl: u64,
 }
 
 impl Cli {
@@ -107,9 +116,9 @@ impl Cli {
             .map(|s| ShadowFileArg::from_arg(s))
     }
 
-    /// Builds an `AuthConfig` from `--user` (`username:password`) entries.
-    pub fn to_auth_config(&self) -> AuthConfig {
-        let mut config = AuthConfig::new();
+    /// Builds an `AuthState` from `--user` (`username:password`) entries.
+    pub fn to_auth_state(&self) -> AuthState {
+        let mut config = AuthState::new();
 
         for entry in &self.users {
             if let Some((username, password)) = entry.split_once(':')

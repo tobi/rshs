@@ -71,7 +71,7 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::handlers::http::handle_get_head;
-    use crate::{AppState, AuthConfig};
+    use crate::{AppState, AuthState};
 
     fn setup_health_test_dir() -> tempfile::TempDir {
         use std::io::Write;
@@ -87,7 +87,7 @@ mod tests {
             .layer(super::HealthCheck)
             .with_state(Arc::new(AppState::new(
                 dir.path().to_path_buf(),
-                AuthConfig::new(),
+                AuthState::new(),
                 std::time::Duration::from_secs(300),
             )))
     }

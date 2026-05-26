@@ -271,14 +271,14 @@ mod tests {
     use axum::{Router, body::Body, extract::Request, routing::any};
     use tower::ServiceExt;
 
-    use crate::{AppState, AuthConfig};
+    use crate::{AppState, AuthState};
 
     fn make_app(dir: &tempfile::TempDir) -> Router {
         Router::new()
             .fallback(any(super::handle_lock))
             .with_state(std::sync::Arc::new(AppState::new(
                 dir.path().to_path_buf(),
-                AuthConfig::new(),
+                AuthState::new(),
                 std::time::Duration::from_secs(300),
             )))
     }
@@ -288,7 +288,7 @@ mod tests {
             .fallback(any(super::handle_unlock))
             .with_state(std::sync::Arc::new(AppState::new(
                 dir.path().to_path_buf(),
-                AuthConfig::new(),
+                AuthState::new(),
                 std::time::Duration::from_secs(300),
             )))
     }
@@ -381,7 +381,7 @@ mod tests {
 
         let state = Arc::new(AppState::new(
             dir.path().to_path_buf(),
-            AuthConfig::new(),
+            AuthState::new(),
             std::time::Duration::from_secs(300),
         ));
         let lock_app = Router::new()
@@ -468,7 +468,7 @@ mod tests {
 
         let state = Arc::new(AppState::new(
             dir.path().to_path_buf(),
-            AuthConfig::new(),
+            AuthState::new(),
             std::time::Duration::from_secs(300),
         ));
         let app = Router::new()
@@ -510,7 +510,7 @@ mod tests {
 
         let state = Arc::new(AppState::new(
             dir.path().to_path_buf(),
-            AuthConfig::new(),
+            AuthState::new(),
             std::time::Duration::from_secs(300),
         ));
         let app = Router::new()
@@ -552,7 +552,7 @@ mod tests {
 
         let state = Arc::new(AppState::new(
             dir.path().to_path_buf(),
-            AuthConfig::new(),
+            AuthState::new(),
             std::time::Duration::from_secs(300),
         ));
         let app = Router::new()
@@ -598,7 +598,7 @@ mod tests {
 
         let state = Arc::new(AppState::new(
             dir.path().to_path_buf(),
-            AuthConfig::new(),
+            AuthState::new(),
             std::time::Duration::from_secs(300),
         ));
         let app = Router::new()
