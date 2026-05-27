@@ -10,20 +10,20 @@ use axum::Router;
 use axum::body::{self, Body};
 use axum::extract::Request;
 use axum::http::Method;
-use rshs::{AppState, AuthConfig, make_router};
+use rshs::{AppState, AuthState, make_router};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub fn bench_router(root_dir: &Path) -> Router {
     let state = Arc::new(AppState::new(
         root_dir.to_path_buf(),
-        AuthConfig::new(),
+        AuthState::new(),
         Duration::from_secs(300),
     ));
     make_router(state)
 }
 
-pub fn bench_router_with_auth(root_dir: &Path, auth: AuthConfig) -> Router {
+pub fn bench_router_with_auth(root_dir: &Path, auth: AuthState) -> Router {
     let state = Arc::new(AppState::new(
         root_dir.to_path_buf(),
         auth,

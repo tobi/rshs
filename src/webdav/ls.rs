@@ -25,7 +25,7 @@ pub fn active_slice(infos: &[LockInfo]) -> impl Iterator<Item = &LockInfo> + '_ 
 /// Stops at the first ancestor where `f` returns `true`, or when the walk
 /// reaches the root boundary.
 ///
-/// Re-exported from [`crate::webdav`].
+/// Re-exported from [`crate::webdav::ls`].
 pub fn walk_locked_ancestors<'a>(
     locks: &'a LockStore,
     target: &Path,
@@ -36,20 +36,17 @@ pub fn walk_locked_ancestors<'a>(
         return false;
     }
 
-    let inf_count = locks
-        .values()
-        .filter(|infos| infos.iter().any(|l| l.depth == Depth::Infinity))
-        .count();
+    let inf_entries: Vec<_> = locks
+        .iter()
+        .filter(|(_, infos)| infos.iter().any(|l| l.depth == Depth::Infinity))
+        .collect();
 
-    if inf_count == 0 {
+    if inf_entries.is_empty() {
         return false;
     }
 
-    if inf_count <= 10 {
-        for (lock_path, infos) in locks {
-            if !infos.iter().any(|l| l.depth == Depth::Infinity) {
-                continue;
-            }
+    if inf_entries.len() <= 10 {
+        for (lock_path, infos) in inf_entries {
             if is_ancestor_of(lock_path, target) && f(infos) {
                 return true;
             }
@@ -97,7 +94,7 @@ fn is_ancestor_of(ancestor: &Path, target: &Path) -> bool {
 /// Only considers locks with `Depth::Infinity`. Used by the lock middleware
 /// and the LOCK handler for lock discovery and refresh.
 ///
-/// Re-exported from [`crate::webdav`].
+/// Re-exported from [`crate::webdav::ls`].
 pub fn find_ancestor_lock<'a>(
     locks: &'a LockStore,
     target: &Path,

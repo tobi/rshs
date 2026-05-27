@@ -193,7 +193,7 @@ mod tests {
     use axum::{Router, body::Body, extract::Request};
     use tower::ServiceExt;
 
-    use crate::{AppState, AuthConfig};
+    use crate::{AppState, AuthState};
 
     // -- GET/HEAD tests ------------------------------------------------------
 
@@ -202,7 +202,7 @@ mod tests {
             .fallback(super::handle_get_head)
             .with_state(Arc::new(AppState::new(
                 dir.path().to_path_buf(),
-                AuthConfig::new(),
+                AuthState::new(),
                 std::time::Duration::from_secs(300),
             )))
     }
@@ -281,7 +281,7 @@ mod tests {
             .route("/{*path}", axum::routing::put(super::handle_put))
             .with_state(Arc::new(AppState::new(
                 dir.path().to_path_buf(),
-                AuthConfig::new(),
+                AuthState::new(),
                 std::time::Duration::from_secs(300),
             )))
     }
@@ -355,7 +355,7 @@ mod tests {
             .route("/{*path}", axum::routing::delete(super::handle_delete))
             .with_state(Arc::new(AppState::new(
                 dir.path().to_path_buf(),
-                AuthConfig::new(),
+                AuthState::new(),
                 std::time::Duration::from_secs(300),
             )))
     }

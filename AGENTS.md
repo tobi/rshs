@@ -27,7 +27,7 @@ src/
 
   cli.rs                        # clap-derived CLI args (Cli, ShadowFileArg)
 
-  auth.rs                       # AuthConfig, Credential, shadow file mgmt, auth middleware
+  auth.rs                       # AuthState, Credential, shadow file mgmt, auth cache
 
   html.rs                       # HTML directory listing (DirEntry, rendering)
 
@@ -55,6 +55,8 @@ src/
 
   server/
     mod.rs                      # AppState, ServerConfig, Router construction, serve
+    cleanup.rs                  # Background task: prune expired locks + auth cache entries
+    shutdown.rs                 # Graceful shutdown signal handling (Ctrl+C, SIGTERM)
     tls.rs                      # TlsConfig (PEM + fingerprint + ALPN), TlsListener
 
   utils/
@@ -96,9 +98,11 @@ src/
 
 - **App state**: Shared state via `AppState` struct wrapped in `Arc`, accessed by handlers
   via `axum::extract::State<Arc<AppState>>`. Fields: `root_dir` (serve root path),
-  `root_canonical` (cached canonical form for path traversal checks), `auth_config`,
+  `root_canonical` (cached canonical form for path traversal checks), `auth_state`,
   `dead_props` (WebDAV dead property store), `locks` (lock store),
-  `lock_timeout` (default lock duration when client omits `Timeout` header).
+  `lock_timeout` (default lock duration when client omits `Timeout` header),
+  `auth_cache` (successful auth result cache for SHA-512 credentials),
+  `auth_cache_ttl` (cache lifetime, 0 = disabled).
   Router built with `make_router(Arc::new(state))` — also exposed as a public API
   for integration testing without binding a TCP port.
   `AppState` also provides convenience methods delegates to `utils::path`:
@@ -113,7 +117,7 @@ src/
   compose from inside out — the last `.layer()` in the chain runs first.
 - **Middleware order**: `HealthCheck` (outermost) → `LockEnforce` → `Auth` → `TraceLayer` → handler.
   HealthCheck intercepts `x-health-check: true` before auth. Auth middleware auto-skips when
-  no users are configured (`auth_config.is_empty()`). LockEnforce checks write operations
+  no users are configured (`auth_state.is_empty()`). LockEnforce checks write operations
   (PUT/DELETE/MKCOL/PROPPATCH) against the lock store before the handler runs.
 - **Request dispatch**: `.fallback(any(dispatch))` routes all requests through a single
   `dispatch` function that converts `req.method()` to `webdav::Method` via
@@ -155,7 +159,7 @@ src/
   (`middleware::lock::lock_enforce`), which converts the request method to `webdav::Method`
   via `Method::try_from()` and intercepts `Method::PUT/DELETE/MKCOL/PROPPATCH/MOVE/COPY`
   with `423 Locked` unless the request carries a matching condition.
-  Expired locks pruned every 30s by background task in `start_server()`.
+  Expired locks and auth cache entries pruned every 30s by background task in `start_server()`.
   Default lock timeout is 300s (`--lock-timeout` / `AppState.lock_timeout`);
   `0` means unlimited. Lock enforcement filters expired locks lazily via the
   `active_slice` helper (`infos.iter().filter(|l| !l.is_expired())`),
@@ -163,9 +167,16 @@ src/
   `write_activelock` outputs the lock's actual `depth` value (`"0"`, `"1"`, or `"infinity"`)
   for correct litmus depth:infinity lock semantics.
   Locks are ephemeral (lost on restart).
-- **Auth**: `AuthConfig` holds `HashMap<String, Credential>`. Auth middleware is always present
+- **Auth**: `AuthState` holds `HashMap<String, Credential>`. Auth middleware is always present
   in the chain but becomes a no-op when `is_empty()`. 401 responses include
   `WWW-Authenticate: Basic realm="rshs"` for browser password dialog support.
+  SHA-512 crypt verification results are cached via `AuthCache` with configurable TTL
+  (`--auth-cache-ttl`, default 60s). Cache hits refresh the expiry (sliding
+  TTL), so frequently-used credentials never expire while the horizon resets on
+  each request. Cache misses offload the hash verification to
+  `tokio::task::spawn_blocking` to prevent blocking async worker threads.
+  Failed attempts are never cached, maintaining brute-force resistance.
+  Set `--auth-cache-ttl 0` to disable caching entirely (still uses `spawn_blocking`).
 - **Shadow file**: Persistent credential store (`username:$hash$...` format).
   CLI credentials (`--user`) can be merged in and optionally written back to disk.
 - **TLS**: `TlsListener` implements `axum::serve::Listener` wrapping a `tokio-rustls` acceptor.
@@ -296,7 +307,7 @@ pub fn do_thing() -> ...
 
 | Visibility       | When to use                                                          | Example                                               |
 | ---------------- | -------------------------------------------------------------------- | ----------------------------------------------------- |
-| `pub`            | External consumers: `main.rs`, integration tests, library re-export  | Handlers, `AuthConfig`, `AppState`, `HealthCheck`     |
+| `pub`            | External consumers: `main.rs`, integration tests, library re-export  | Handlers, `AuthState`, `AppState`, `HealthCheck`      |
 | `pub(crate)`     | Used across `src/` modules but not by external callers               | `utils/*`, `DEFAULT_LOG_LEVEL`, `AppState::resolve_*` |
 | `pub(crate) mod` | Module items are re-exported at crate root (no need for direct path) | `cli`, `server`, `utils`                              |
 | `pub mod`        | Items accessed directly via public path (`rshs::module::Item`)       | `handlers`, `middleware`, `webdav`, `auth`            |
@@ -404,6 +415,20 @@ RSHS_SHADOW_FILE=./shadow:ro rshs ./data
 - `-W` / `--shadow-write` writes CLI credentials into the shadow file after merge
 - Shadow files store passwords hashed with SHA-512 crypt (`$6$...`)
 
+Auth caching reduces the overhead of repeated SHA-512 verification for returning clients:
+
+```sh
+rshs --auth-cache-ttl 120 ./data               # 120s TTL
+rshs --auth-cache-ttl 0 ./data                  # disable caching
+RSHS_AUTH_CACHE_TTL=120 rshs ./data             # via env var
+```
+
+- Default TTL is 60 seconds; set `--auth-cache-ttl 0` to disable
+- Only successful authentications are cached — failed attempts always go through full SHA-512 verification
+- Cache hits refresh the TTL (sliding expiration): each successful lookup resets expiry to `now + auth_cache_ttl`
+- Cache entries are pruned by the background cleanup task every 30s when expired
+- Password changes take effect after at most `auth_cache_ttl` seconds
+
 ## TLS
 
 TLS/HTTPS is enabled by providing both a certificate and private key file in PEM format:
@@ -472,15 +497,16 @@ RSHS_LOG="warn,rshs=debug" rshs         # global warn, rshs debug
 
 ## Environment Variables
 
-| Env Var             | Description                                           |
-| ------------------- | ----------------------------------------------------- |
-| `RSHS_ROOT_DIR`     | Root directory (default: `.`)                         |
-| `RSHS_HOST`         | Bind address                                          |
-| `RSHS_PORT`         | Bind port                                             |
-| `RSHS_TLS_CERT`     | TLS certificate file path (PEM format)                |
-| `RSHS_TLS_KEY`      | TLS private key file path (PEM format)                |
-| `RSHS_USERS`        | Basic Auth credentials                                |
-| `RSHS_LOG`          | Logging level (e.g. `info`)                           |
-| `RSHS_LOG_STYLE`    | Log output style (e.g. `auto`, `always`, `never`)     |
-| `RSHS_SHADOW_FILE`  | Shadow file path with optional `:rw`/`:ro` suffix     |
-| `RSHS_LOCK_TIMEOUT` | Default WebDAV lock timeout in seconds (default: 300) |
+| Env Var               | Description                                           |
+| --------------------- | ----------------------------------------------------- |
+| `RSHS_ROOT_DIR`       | Root directory (default: `.`)                         |
+| `RSHS_HOST`           | Bind address                                          |
+| `RSHS_PORT`           | Bind port                                             |
+| `RSHS_TLS_CERT`       | TLS certificate file path (PEM format)                |
+| `RSHS_TLS_KEY`        | TLS private key file path (PEM format)                |
+| `RSHS_USERS`          | Basic Auth credentials                                |
+| `RSHS_LOG`            | Logging level (e.g. `info`)                           |
+| `RSHS_LOG_STYLE`      | Log output style (e.g. `auto`, `always`, `never`)     |
+| `RSHS_SHADOW_FILE`    | Shadow file path with optional `:rw`/`:ro` suffix     |
+| `RSHS_LOCK_TIMEOUT`   | Default WebDAV lock timeout in seconds (default: 300) |
+| `RSHS_AUTH_CACHE_TTL` | Auth cache TTL in seconds (default: 60, 0 = disabled) |

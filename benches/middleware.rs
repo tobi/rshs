@@ -10,7 +10,7 @@ use tower::ServiceExt;
 use axum::extract::Request;
 
 use common::*;
-use rshs::{AppState, AuthConfig, make_router};
+use rshs::{AppState, AuthState, make_router};
 use sha_crypt::PasswordHasher;
 
 fn bench_health_check(c: &mut Criterion) {
@@ -61,7 +61,7 @@ fn bench_auth(c: &mut Criterion) {
     });
 
     // With plaintext auth — valid credentials
-    let mut auth = AuthConfig::new();
+    let mut auth = AuthState::new();
     auth.add_user("admin", "secret");
     let router_plain = bench_router_with_auth(dir.path(), auth);
 
@@ -88,7 +88,7 @@ fn bench_auth(c: &mut Criterion) {
         .hash_password("mypassword".as_bytes())
         .unwrap()
         .to_string();
-    let mut sha_auth = AuthConfig::new();
+    let mut sha_auth = AuthState::new();
     sha_auth
         .users
         .insert("admin".into(), rshs::auth::Credential::Sha512Crypt(hash));
@@ -106,6 +106,17 @@ fn bench_auth(c: &mut Criterion) {
     group.bench_function("sha512_invalid", |b| {
         b.iter(|| {
             let req = make_basic_auth_get("/hello.txt", "admin", "wrong");
+            rt.block_on(async {
+                let _ = router_sha.clone().oneshot(req).await;
+            });
+        });
+    });
+
+    // Same credentials as sha512_valid — cache is warmed by criterion warmup cycle,
+    // so measured iterations hit the cache and skip SHA-512 verification.
+    group.bench_function("sha512_cached_hit", |b| {
+        b.iter(|| {
+            let req = make_basic_auth_get("/hello.txt", "admin", "mypassword");
             rt.block_on(async {
                 let _ = router_sha.clone().oneshot(req).await;
             });
@@ -144,7 +155,7 @@ fn bench_lock_enforce(c: &mut Criterion) {
             create_file(dir.path(), "target.txt", 1024);
             let state = Arc::new(AppState::new(
                 dir.path().to_path_buf(),
-                AuthConfig::new(),
+                AuthState::new(),
                 Duration::from_secs(300),
             ));
             let lock = rshs::webdav::LockInfo::new(
@@ -173,7 +184,7 @@ fn bench_lock_enforce(c: &mut Criterion) {
             create_file(dir.path(), "target.txt", 1024);
             let state = Arc::new(AppState::new(
                 dir.path().to_path_buf(),
-                AuthConfig::new(),
+                AuthState::new(),
                 Duration::from_secs(300),
             ));
             let lock = rshs::webdav::LockInfo::new(
@@ -209,7 +220,7 @@ fn bench_lock_enforce(c: &mut Criterion) {
             create_file(dir.path(), "locked_parent/deep.txt", 1024);
             let state = Arc::new(AppState::new(
                 dir.path().to_path_buf(),
-                AuthConfig::new(),
+                AuthState::new(),
                 Duration::from_secs(300),
             ));
             let lock = rshs::webdav::LockInfo::new(

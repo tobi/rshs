@@ -1,15 +1,24 @@
-//! Authentication types, shadow file management, and the `build_auth_config` entry point.
+//! Authentication types, shadow file management, and the `build_auth_state` entry point.
 
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use derive_new::new;
 use sha_crypt::{PasswordHasher, PasswordVerifier, ShaCrypt};
 
 use crate::cli::Cli;
+
+/// Maps hashed Authorization header values to their cache expiry time.
+/// Presence of a key indicates a previous successful SHA-512 crypt verification;
+/// the value is the [`Instant`] at which the entry should be evicted.
+pub(crate) type AuthCache = HashMap<u64, Instant>;
 
 /// A stored credential for Basic HTTP authentication.
 ///
@@ -68,9 +77,9 @@ impl ShadowFileArg {
 /// credentials, and validating authentication attempts.
 ///
 /// ```
-/// use rshs::auth::AuthConfig;
+/// use rshs::auth::AuthState;
 ///
-/// let mut config = AuthConfig::new();
+/// let mut config = AuthState::new();
 /// assert!(config.is_empty());
 ///
 /// config.add_user("admin", "secret");
@@ -80,15 +89,19 @@ impl ShadowFileArg {
 /// assert!(!config.validate("nobody", "secret"));
 /// ```
 #[derive(Debug, Clone, Default)]
-pub struct AuthConfig {
+pub struct AuthState {
     pub users: HashMap<String, Credential>,
+    pub auth_cache: Arc<RwLock<AuthCache>>,
+    pub auth_cache_ttl: Duration,
 }
 
-impl AuthConfig {
-    /// Create an empty configuration.
+impl AuthState {
+    /// Create an empty configuration with an auth cache defaulting to 60s TTL.
     pub fn new() -> Self {
         Self {
             users: HashMap::new(),
+            auth_cache: Arc::new(RwLock::new(AuthCache::new())),
+            auth_cache_ttl: Duration::from_secs(60),
         }
     }
 
@@ -118,10 +131,10 @@ impl AuthConfig {
     /// Supports both plaintext and SHA-512 crypt hash comparison.
     ///
     /// ```
-    /// use rshs::auth::{AuthConfig, Credential};
+    /// use rshs::auth::{AuthState, Credential};
     /// use std::collections::HashMap;
     ///
-    /// let mut config = AuthConfig { users: HashMap::new() };
+    /// let mut config = AuthState::new();
     /// config.users.insert("admin".into(), Credential::Sha512Crypt(
     ///     "$6$rounds=5000$abc$XyZ...".into()
     /// ));
@@ -137,17 +150,70 @@ impl AuthConfig {
         }
     }
 
+    /// Validate with auth caching for SHA-512 credentials.
+    ///
+    /// For [`Credential::Plaintext`], uses inline comparison (no cache overhead).
+    /// For [`Credential::Sha512Crypt`], first checks the cache keyed by `header_hash`.
+    /// On cache miss, offloads the expensive password verify to
+    /// [`tokio::task::spawn_blocking`] so async worker threads are not blocked,
+    /// then writes successful results back into the cache.
+    ///
+    /// Cache TTL is controlled by `self.auth_cache_ttl`; set to [`Duration::ZERO`]
+    /// to disable caching entirely (re-verify every call, but still uses `spawn_blocking`).
+    pub async fn validate_cached(&self, username: &str, password: &str, header_hash: u64) -> bool {
+        match self.users.get(username) {
+            Some(Credential::Plaintext(expected)) => expected == password,
+            Some(Credential::Sha512Crypt(hash)) => {
+                let cache_enabled = self.auth_cache_ttl.as_secs() > 0;
+
+                if cache_enabled
+                    && if let Ok(g) = self.auth_cache.read() {
+                        g.get(&header_hash).is_some_and(|e| *e > Instant::now())
+                    } else {
+                        false
+                    }
+                {
+                    let expiry = Instant::now() + self.auth_cache_ttl;
+                    if let Ok(mut guard) = self.auth_cache.write() {
+                        guard.entry(header_hash).and_modify(|e| *e = expiry);
+                    }
+                    return true;
+                }
+
+                let pw = password.to_string();
+                let hash = hash.clone();
+                let ok = tokio::task::spawn_blocking(move || {
+                    ShaCrypt::default()
+                        .verify_password(pw.as_bytes(), hash.as_str())
+                        .is_ok()
+                })
+                .await
+                .unwrap_or(false);
+
+                if ok && cache_enabled {
+                    let expiry = Instant::now() + self.auth_cache_ttl;
+                    if let Ok(mut guard) = self.auth_cache.write() {
+                        guard.insert(header_hash, expiry);
+                    }
+                }
+
+                ok
+            }
+            None => false,
+        }
+    }
+
     /// Merge CLI-provided credentials into this config.
     ///
     /// Existing users with the same username are overwritten.
     ///
     /// ```
-    /// use rshs::auth::AuthConfig;
+    /// use rshs::auth::AuthState;
     ///
-    /// let mut base = AuthConfig::new();
+    /// let mut base = AuthState::new();
     /// base.add_user("admin", "old");
     ///
-    /// let mut cli = AuthConfig::new();
+    /// let mut cli = AuthState::new();
     /// cli.add_user("admin", "new");
     /// cli.add_user("viewer", "view");
     ///
@@ -156,7 +222,7 @@ impl AuthConfig {
     /// assert!(base.validate("admin", "new"));
     /// assert!(base.validate("viewer", "view"));
     /// ```
-    pub fn merge_cli(&mut self, other: &AuthConfig) {
+    pub fn merge_cli(&mut self, other: &AuthState) {
         for (username, credential) in &other.users {
             self.users.insert(username.clone(), credential.clone());
         }
@@ -173,7 +239,7 @@ impl AuthConfig {
                 format!("cannot read shadow file {}: {e}", path.display()),
             )
         })?;
-        let mut config = AuthConfig::new();
+        let mut config = AuthState::new();
 
         for (line_no, line) in content.lines().enumerate() {
             let line = line.trim();
@@ -270,15 +336,25 @@ impl AuthConfig {
     }
 }
 
+/// Deterministic SipHash-2-4 of a raw Basic Auth base64 credential string.
+///
+/// Same input always produces the same `u64` within a single process lifetime.
+/// Used as the cache key for [`AuthState::validate_cached`].
+pub(crate) fn hash_auth_header(value: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Build the authentication configuration from CLI arguments.
 ///
 /// Merges credentials from `--user` flags and a shadow file (if specified),
 /// and optionally writes the merged result back to disk via `--shadow-write`.
-pub fn build_auth_config(cli: &Cli) -> AuthConfig {
-    let cli_auth = cli.to_auth_config();
+pub fn build_auth_state(cli: &Cli) -> AuthState {
+    let cli_creds = cli.to_auth_state();
 
     let Some(shadow) = cli.to_shadow_file_arg() else {
-        return cli_auth;
+        return cli_creds;
     };
 
     let shadow_path = Path::new(&shadow.path);
@@ -311,7 +387,7 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
         }
     }
 
-    let mut auth_config = match AuthConfig::load_from_shadow_file(shadow_path) {
+    let mut auth_state = match AuthState::load_from_shadow_file(shadow_path) {
         Ok(cfg) => {
             if cfg.user_count() > 0 {
                 tracing::info!(
@@ -322,12 +398,12 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
         }
         Err(e) => {
             tracing::error!(error = %e, path = %shadow.path, "failed to load shadow file");
-            AuthConfig::new()
+            AuthState::new()
         }
     };
 
-    if !cli_auth.is_empty() {
-        auth_config.merge_cli(&cli_auth);
+    if !cli_creds.is_empty() {
+        auth_state.merge_cli(&cli_creds);
     }
 
     if cli.shadow_write {
@@ -336,10 +412,10 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
                 path = %shadow.path, "shadow file is read-only (OS), ignoring --shadow-write"
             );
         } else {
-            match auth_config.write_to_shadow_file(shadow_path, false) {
+            match auth_state.write_to_shadow_file(shadow_path, false) {
                 Ok(()) => {
                     tracing::info!(
-                        count = auth_config.user_count(), path = %shadow.path, "wrote users to shadow file"
+                        count = auth_state.user_count(), path = %shadow.path, "wrote users to shadow file"
                     );
                 }
                 Err(e) => {
@@ -353,7 +429,13 @@ pub fn build_auth_config(cli: &Cli) -> AuthConfig {
         );
     }
 
-    auth_config
+    auth_state.auth_cache_ttl = if cli.auth_cache_ttl == 0 {
+        Duration::ZERO
+    } else {
+        Duration::from_secs(cli.auth_cache_ttl)
+    };
+
+    auth_state
 }
 
 fn is_path_writable(path: &Path) -> bool {
@@ -391,7 +473,7 @@ mod tests {
             .hash_password("mypassword".as_bytes())
             .unwrap()
             .to_string();
-        let mut config = AuthConfig::new();
+        let mut config = AuthState::new();
         config
             .users
             .insert("admin".to_string(), Credential::Sha512Crypt(hash));
@@ -405,7 +487,7 @@ mod tests {
             .hash_password("hashedpass".as_bytes())
             .unwrap()
             .to_string();
-        let mut config = AuthConfig::new();
+        let mut config = AuthState::new();
         config.add_user("cli_user", "plainpass");
         config
             .users
@@ -422,7 +504,7 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         std::fs::write(file.path(), &content).unwrap();
 
-        let config = AuthConfig::load_from_shadow_file(file.path()).unwrap();
+        let config = AuthState::load_from_shadow_file(file.path()).unwrap();
         assert!(!config.is_empty());
         assert_eq!(config.user_count(), 1);
         assert!(config.validate("admin", "adminpass"));
@@ -437,7 +519,7 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         std::fs::write(file.path(), &content).unwrap();
 
-        let config = AuthConfig::load_from_shadow_file(file.path()).unwrap();
+        let config = AuthState::load_from_shadow_file(file.path()).unwrap();
         assert_eq!(config.user_count(), 3);
         assert!(config.validate("alice", "alicepass"));
         assert!(config.validate("bob", "bobpass"));
@@ -455,7 +537,7 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         std::fs::write(file.path(), &content).unwrap();
 
-        let config = AuthConfig::load_from_shadow_file(file.path()).unwrap();
+        let config = AuthState::load_from_shadow_file(file.path()).unwrap();
         assert_eq!(config.user_count(), 2);
         assert!(config.validate("admin", "adminpass"));
         assert!(config.validate("viewer", "viewerpass"));
@@ -471,7 +553,7 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         std::fs::write(file.path(), &content).unwrap();
 
-        let config = AuthConfig::load_from_shadow_file(file.path()).unwrap();
+        let config = AuthState::load_from_shadow_file(file.path()).unwrap();
         assert_eq!(config.user_count(), 2);
         assert!(config.validate("admin", "adminpass"));
         assert!(config.validate("viewer", "viewerpass"));
@@ -479,13 +561,13 @@ mod tests {
 
     #[test]
     fn test_load_shadow_file_nonexistent() {
-        let result = AuthConfig::load_from_shadow_file(Path::new("/nonexistent/shadow/file"));
+        let result = AuthState::load_from_shadow_file(Path::new("/nonexistent/shadow/file"));
         assert!(result.is_err());
     }
 
     #[test]
     fn test_write_to_shadow_file_roundtrip() {
-        let mut config = AuthConfig::new();
+        let mut config = AuthState::new();
         config.add_user("admin", "adminpass");
         config.add_user("viewer", "viewerpass");
 
@@ -494,7 +576,7 @@ mod tests {
 
         config.write_to_shadow_file(&path, true).unwrap();
 
-        let loaded = AuthConfig::load_from_shadow_file(&path).unwrap();
+        let loaded = AuthState::load_from_shadow_file(&path).unwrap();
         assert_eq!(loaded.user_count(), 2);
         assert!(loaded.validate("admin", "adminpass"));
         assert!(loaded.validate("viewer", "viewerpass"));
@@ -503,7 +585,7 @@ mod tests {
 
     #[test]
     fn test_write_to_shadow_file_hashes_plaintext() {
-        let mut config = AuthConfig::new();
+        let mut config = AuthState::new();
         config.add_user("admin", "secret123");
 
         let dir = tempfile::tempdir().unwrap();
@@ -514,7 +596,7 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.starts_with("admin:$6$"));
 
-        let loaded = AuthConfig::load_from_shadow_file(&path).unwrap();
+        let loaded = AuthState::load_from_shadow_file(&path).unwrap();
         assert!(loaded.validate("admin", "secret123"));
         assert!(!loaded.validate("admin", "wrong"));
     }
@@ -524,7 +606,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("shadow");
 
-        let mut config = AuthConfig::new();
+        let mut config = AuthState::new();
         config.add_user("admin", "secret");
 
         config.write_to_shadow_file(&path, true).unwrap();
@@ -554,5 +636,154 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nonexistent");
         assert!(is_path_writable(&path));
+    }
+
+    #[tokio::test]
+    async fn test_validate_cached_cache_hit_refreshes_ttl() {
+        let hash = ShaCrypt::default()
+            .hash_password("mypassword".as_bytes())
+            .unwrap()
+            .to_string();
+        let mut config = AuthState::new();
+        config
+            .users
+            .insert("admin".into(), Credential::Sha512Crypt(hash));
+        config.auth_cache_ttl = Duration::from_secs(60);
+
+        let creds = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            "admin:mypassword",
+        );
+        let header_hash = hash_auth_header(&creds);
+
+        assert!(
+            config
+                .validate_cached("admin", "mypassword", header_hash)
+                .await
+        );
+
+        let expiry1 = config
+            .auth_cache
+            .read()
+            .unwrap()
+            .get(&header_hash)
+            .copied()
+            .unwrap();
+
+        assert!(
+            config
+                .validate_cached("admin", "mypassword", header_hash)
+                .await
+        );
+
+        let expiry2 = config
+            .auth_cache
+            .read()
+            .unwrap()
+            .get(&header_hash)
+            .copied()
+            .unwrap();
+
+        assert!(expiry2 > expiry1, "TTL should be refreshed on cache hit");
+    }
+
+    #[tokio::test]
+    async fn test_validate_cached_cache_hit_returns_true() {
+        let hash = ShaCrypt::default()
+            .hash_password("mypassword".as_bytes())
+            .unwrap()
+            .to_string();
+        let mut config = AuthState::new();
+        config
+            .users
+            .insert("admin".into(), Credential::Sha512Crypt(hash));
+        config.auth_cache_ttl = Duration::from_secs(60);
+
+        let creds = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            "admin:mypassword",
+        );
+        let header_hash = hash_auth_header(&creds);
+
+        // First call — cache miss
+        assert!(
+            config
+                .validate_cached("admin", "mypassword", header_hash)
+                .await
+        );
+
+        // Subsequent calls — cache hits
+        for _ in 0..5 {
+            assert!(
+                config
+                    .validate_cached("admin", "mypassword", header_hash)
+                    .await
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_validate_cached_wrong_password_not_cached() {
+        let hash = ShaCrypt::default()
+            .hash_password("mypassword".as_bytes())
+            .unwrap()
+            .to_string();
+        let mut config = AuthState::new();
+        config
+            .users
+            .insert("admin".into(), Credential::Sha512Crypt(hash));
+        config.auth_cache_ttl = Duration::from_secs(60);
+
+        let creds = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            "admin:wrongpass",
+        );
+        let wrong_hash = hash_auth_header(&creds);
+
+        assert!(
+            !config
+                .validate_cached("admin", "wrongpass", wrong_hash)
+                .await
+        );
+
+        assert!(
+            config.auth_cache.read().unwrap().get(&wrong_hash).is_none(),
+            "failed auth should not be cached"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_cached_ttl_disabled_skips_cache() {
+        let hash = ShaCrypt::default()
+            .hash_password("mypassword".as_bytes())
+            .unwrap()
+            .to_string();
+        let mut config = AuthState::new();
+        config
+            .users
+            .insert("admin".into(), Credential::Sha512Crypt(hash));
+        config.auth_cache_ttl = Duration::ZERO;
+
+        let creds = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            "admin:mypassword",
+        );
+        let header_hash = hash_auth_header(&creds);
+
+        assert!(
+            config
+                .validate_cached("admin", "mypassword", header_hash)
+                .await
+        );
+
+        assert!(
+            config
+                .auth_cache
+                .read()
+                .unwrap()
+                .get(&header_hash)
+                .is_none(),
+            "TTL=0 should not write to cache"
+        );
     }
 }

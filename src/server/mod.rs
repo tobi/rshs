@@ -1,6 +1,7 @@
 //! Router construction, request dispatch, and server startup for both HTTP and HTTPS.
-//! Also provides the lock-cleanup background task.
 
+pub(crate) mod cleanup;
+pub(crate) mod shutdown;
 pub(crate) mod tls;
 
 use std::collections::HashMap;
@@ -17,10 +18,9 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use derive_new::new;
-use tokio::signal;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::RwLock;
 
-use crate::auth::AuthConfig;
+use crate::auth::AuthState;
 use crate::handlers::{http, locks, webdav as webdav_handler};
 use crate::utils::path::{self, ResolveTargetError};
 use crate::webdav::{DeadPropertyStore, LockStore, Method};
@@ -31,7 +31,7 @@ use crate::webdav::{DeadPropertyStore, LockStore, Method};
 /// All fields are behind `Arc` for cheap cloning.
 #[derive(Clone)]
 pub struct AppState {
-    pub auth_config: Arc<AuthConfig>,
+    pub auth_state: Arc<AuthState>,
     pub root_dir: PathBuf,
     pub root_canonical: PathBuf,
     pub dead_props: Arc<RwLock<DeadPropertyStore>>,
@@ -41,10 +41,10 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(root: PathBuf, auth_config: AuthConfig, lock_timeout: Duration) -> Self {
+    pub fn new(root: PathBuf, auth_state: AuthState, lock_timeout: Duration) -> Self {
         let root_canonical = fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
         Self {
-            auth_config: Arc::new(auth_config),
+            auth_state: Arc::new(auth_state),
             root_dir: root,
             root_canonical,
             dead_props: Arc::new(RwLock::new(DeadPropertyStore::new())),
@@ -84,18 +84,19 @@ pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub tls_config: Option<tls::TlsConfig>,
-    pub auth_config: AuthConfig,
+    pub auth_state: AuthState,
     pub lock_timeout: u64,
 }
 
 /// Builds the axum router with all middleware layers, then starts the HTTP or HTTPS
-/// server. Also spawns a background task to prune expired WebDAV locks every 30 seconds.
+/// server. Also spawns a background task to prune expired locks and auth cache entries
+/// every 30 seconds.
 pub async fn start_server(config: ServerConfig) -> io::Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.host, config.port)
         .parse()
         .map_err(|e| Error::new(ErrorKind::InvalidInput, e))?;
 
-    let auth_config = config.auth_config;
+    let auth_state = config.auth_state;
     let root = config.root_dir;
     let lock_timeout = if config.lock_timeout == 0 {
         Duration::ZERO // A zero lock timeout means locks never expire
@@ -103,12 +104,16 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
         Duration::from_secs(config.lock_timeout)
     };
 
-    let state = Arc::new(AppState::new(root, auth_config, lock_timeout));
+    let state = Arc::new(AppState::new(root, auth_state, lock_timeout));
 
     let router = make_router(state.clone());
 
-    let cleanup_notify = Arc::new(Notify::new());
-    let task = lock_cleanup_task(state.locks.clone(), cleanup_notify.clone());
+    let cleanup_notify = Arc::new(tokio::sync::Notify::new());
+    let task = cleanup::cleanup_task(
+        state.locks.clone(),
+        state.auth_state.auth_cache.clone(),
+        cleanup_notify.clone(),
+    );
     let cleanup_handle = tokio::spawn(task);
 
     match &config.tls_config {
@@ -119,7 +124,7 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
                 "starting HTTPS server"
             );
             axum::serve(listener, router)
-                .with_graceful_shutdown(shutdown_signal())
+                .with_graceful_shutdown(shutdown::shutdown_signal())
                 .await
                 .map_err(Error::other)?;
         }
@@ -127,7 +132,7 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
             let listener = tokio::net::TcpListener::bind(addr).await?;
             tracing::info!(addr = %addr, "starting HTTP server");
             axum::serve(listener, router)
-                .with_graceful_shutdown(shutdown_signal())
+                .with_graceful_shutdown(shutdown::shutdown_signal())
                 .await
                 .map_err(Error::other)?;
         }
@@ -150,8 +155,7 @@ pub fn make_router(state: Arc<AppState>) -> Router {
     use axum::middleware::from_fn_with_state;
     use tower_http::trace::TraceLayer;
 
-    let auth_config = state.auth_config.clone();
-    let auth_mw = from_fn_with_state(auth_config, auth::auth_middleware);
+    let auth_mw = from_fn_with_state(state.auth_state.clone(), auth::auth_middleware);
     let lock_mw = from_fn_with_state(state.clone(), lock::lock_enforce);
     let health_check_mw = health::HealthCheck;
 
@@ -179,57 +183,4 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response 
         Ok(Method::UNLOCK) => locks::handle_unlock(State(state), req).await,
         _ => StatusCode::NOT_IMPLEMENTED.into_response(),
     }
-}
-
-async fn lock_cleanup_task(locks: Arc<RwLock<LockStore>>, shutdown: Arc<Notify>) {
-    loop {
-        tokio::select! {
-            _ = tokio::time::sleep(Duration::from_secs(30)) => {
-                let mut store = locks.write().await;
-                let before = store.values().map(|v| v.len()).sum::<usize>();
-                store.retain(|_path, infos| {
-                    infos.retain(|l| !l.is_expired());
-                    !infos.is_empty()
-                });
-                let after = store.values().map(|v| v.len()).sum::<usize>();
-                if before > after {
-                    tracing::debug!(
-                        removed = before - after, remaining = after, "cleanup expired locks"
-                    );
-                }
-                drop(store);
-            }
-            _ = shutdown.notified() => {
-                tracing::debug!("lock cleanup task shutting down");
-                break;
-            }
-        }
-    }
-}
-
-#[cfg(unix)]
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        signal::ctrl_c().await.expect("failed to listen for Ctrl+C");
-        tracing::info!("received Ctrl+C, shutting down gracefully...");
-    };
-
-    let sigterm = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to listen for SIGTERM")
-            .recv()
-            .await;
-        tracing::info!("received SIGTERM, shutting down gracefully...");
-    };
-
-    tokio::select! {
-        () = sigterm => {},
-        () = ctrl_c => {},
-    }
-}
-
-#[cfg(not(unix))]
-async fn shutdown_signal() {
-    signal::ctrl_c().await.expect("failed to listen for Ctrl+C");
-    tracing::info!("received shutdown signal, shutting down gracefully...");
 }

@@ -17,7 +17,7 @@ fn basic_auth_header(username: &str, password: &str) -> String {
 #[tokio::test]
 async fn test_no_auth_passes_through() {
     let dir = temp_dir_with_files();
-    let app = make_test_router(dir.path(), rshs::AuthConfig::new());
+    let app = make_test_router(dir.path(), rshs::AuthState::new());
 
     let req = axum::http::Request::builder()
         .method(Method::GET)
@@ -31,7 +31,7 @@ async fn test_no_auth_passes_through() {
 #[tokio::test]
 async fn test_auth_returns_401_without_credentials() {
     let dir = temp_dir_with_files();
-    let mut auth = rshs::AuthConfig::new();
+    let mut auth = rshs::AuthState::new();
     auth.add_user("admin", "secret");
     let app = make_test_router(dir.path(), auth);
 
@@ -55,7 +55,7 @@ async fn test_auth_returns_401_without_credentials() {
 #[tokio::test]
 async fn test_auth_success_with_valid_credentials() {
     let dir = temp_dir_with_files();
-    let mut auth = rshs::AuthConfig::new();
+    let mut auth = rshs::AuthState::new();
     auth.add_user("admin", "secret");
     let app = make_test_router(dir.path(), auth);
 
@@ -77,7 +77,7 @@ async fn test_auth_success_with_valid_credentials() {
 #[tokio::test]
 async fn test_auth_wrong_password_returns_401() {
     let dir = temp_dir_with_files();
-    let mut auth = rshs::AuthConfig::new();
+    let mut auth = rshs::AuthState::new();
     auth.add_user("admin", "secret");
     let app = make_test_router(dir.path(), auth);
 
@@ -94,7 +94,7 @@ async fn test_auth_wrong_password_returns_401() {
 #[tokio::test]
 async fn test_auth_unknown_user_returns_401() {
     let dir = temp_dir_with_files();
-    let mut auth = rshs::AuthConfig::new();
+    let mut auth = rshs::AuthState::new();
     auth.add_user("admin", "secret");
     let app = make_test_router(dir.path(), auth);
 
@@ -111,7 +111,7 @@ async fn test_auth_unknown_user_returns_401() {
 #[tokio::test]
 async fn test_health_check_bypasses_auth() {
     let dir = temp_dir_with_files();
-    let mut auth = rshs::AuthConfig::new();
+    let mut auth = rshs::AuthState::new();
     auth.add_user("admin", "secret");
     let app = make_test_router(dir.path(), auth);
 
@@ -133,7 +133,7 @@ async fn test_health_check_bypasses_auth() {
 #[tokio::test]
 async fn test_health_check_with_wrong_value_passes_through() {
     let dir = temp_dir_with_files();
-    let mut auth = rshs::AuthConfig::new();
+    let mut auth = rshs::AuthState::new();
     auth.add_user("admin", "secret");
     let app = make_test_router(dir.path(), auth);
 
@@ -145,4 +145,30 @@ async fn test_health_check_with_wrong_value_passes_through() {
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status().as_u16(), 401, "should be blocked by auth");
+}
+
+#[tokio::test]
+async fn test_auth_sha512_cached_request() {
+    use sha_crypt::PasswordHasher;
+
+    let dir = temp_dir_with_files();
+    let hash = sha_crypt::ShaCrypt::default()
+        .hash_password("mypassword".as_bytes())
+        .unwrap()
+        .to_string();
+    let mut auth = rshs::AuthState::new();
+    auth.users
+        .insert("admin".into(), rshs::auth::Credential::Sha512Crypt(hash));
+    let app = make_test_router(dir.path(), auth);
+
+    for _ in 0..3 {
+        let req = axum::http::Request::builder()
+            .method(Method::GET)
+            .uri("/hello.txt")
+            .header("authorization", basic_auth_header("admin", "mypassword"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+    }
 }

@@ -4,13 +4,14 @@
 use clap::Parser;
 
 use crate::DEFAULT_LOG_LEVEL;
-use crate::auth::{AuthConfig, ShadowFileArg};
+use crate::auth::{AuthState, ShadowFileArg};
 use crate::server::tls::TlsConfig;
 
-/// Simple HTTP/WebDAV Server
+/// A hybrid HTTP file server and WebDAV server
 #[derive(Parser)]
 #[command(
     name = "rshs", version = env!("CARGO_PKG_VERSION"),
+    long_about = "A hybrid HTTP file server and WebDAV server with optional TLS and Basic Auth",
     after_help = concat!(
         "Logging environment variables:\n",
         "  RSHS_LOG          Tracing filter (e.g. info, rshs=debug, rshs[status=500]=trace)\n",
@@ -30,6 +31,8 @@ pub struct Cli {
     pub host: String,
 
     /// Port to bind to (default: 8080, or 8443 with TLS)
+    ///
+    /// Explicit --port always overrides these defaults.
     #[arg(short, long, env = "RSHS_PORT")]
     pub port: Option<u16>,
 
@@ -41,27 +44,20 @@ pub struct Cli {
     #[arg(long = "tls-key", env = "RSHS_TLS_KEY", requires = "tls_cert")]
     pub tls_key: Option<String>,
 
-    /// Increase log verbosity (-v = debug, -vv = trace)
-    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count, conflicts_with = "quiet")]
-    pub verbose: u8,
-
-    /// Suppress all log output
-    #[arg(short = 'q', long = "quiet", conflicts_with = "verbose")]
-    pub quiet: bool,
-
-    /// Basic Auth credentials in format username:password (can be repeated)
+    /// Basic Auth credentials as username:password (repeatable)
+    ///
+    /// Use ; to separate multiple values via the RSHS_USERS env var.
     #[arg(
         short = 'u',
         long = "user",
         value_name = "USER:PASS",
-        verbatim_doc_comment,
         value_delimiter = ';',
         hide_env_values = true,
         env = "RSHS_USERS"
     )]
     pub users: Vec<String>,
 
-    /// Path to shadow file for persistent auth (PATH[:rw|:ro], default :rw)
+    /// Shadow file for persistent SHA-512 credentials (PATH[:rw|:ro], default :rw)
     #[arg(
         short = 'S',
         long = "shadow-file",
@@ -70,11 +66,26 @@ pub struct Cli {
     )]
     pub shadow_file: Option<String>,
 
-    /// Write CLI credentials into the shadow file (requires --shadow-file :rw)
+    /// Write CLI credentials into the shadow file
+    ///
+    /// Ignored if the file was opened read-only (:ro).
     #[arg(short = 'W', long = "shadow-write", requires = "shadow_file")]
     pub shadow_write: bool,
 
-    /// Default WebDAV lock timeout in seconds, 0 for unlimited
+    /// Auth cache TTL in seconds (0 = disabled)
+    ///
+    /// Cached logins skip SHA-512 re-verification; each cache hit resets the expiry.
+    #[arg(
+        long = "auth-cache-ttl",
+        default_value = "60",
+        env = "RSHS_AUTH_CACHE_TTL",
+        value_parser = clap::value_parser!(u64)
+    )]
+    pub auth_cache_ttl: u64,
+
+    /// WebDAV lock timeout in seconds (0 = never expire)
+    ///
+    /// Locks are auto-removed after this period of inactivity.
     #[arg(
         long = "lock-timeout",
         default_value = "300",
@@ -82,6 +93,14 @@ pub struct Cli {
         value_parser = clap::value_parser!(u64)
     )]
     pub lock_timeout: u64,
+
+    /// Increase log verbosity (-v = debug, -vv = trace)
+    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count, conflicts_with = "quiet")]
+    pub verbose: u8,
+
+    /// Suppress all log output
+    #[arg(short = 'q', long = "quiet", conflicts_with = "verbose")]
+    pub quiet: bool,
 }
 
 impl Cli {
@@ -107,9 +126,9 @@ impl Cli {
             .map(|s| ShadowFileArg::from_arg(s))
     }
 
-    /// Builds an `AuthConfig` from `--user` (`username:password`) entries.
-    pub fn to_auth_config(&self) -> AuthConfig {
-        let mut config = AuthConfig::new();
+    /// Builds an `AuthState` from `--user` (`username:password`) entries.
+    pub fn to_auth_state(&self) -> AuthState {
+        let mut config = AuthState::new();
 
         for entry in &self.users {
             if let Some((username, password)) = entry.split_once(':')

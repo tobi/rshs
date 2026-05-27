@@ -7,7 +7,7 @@ use axum::http::{HeaderMap, Method};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use quick_xml::Writer;
 
-use rshs::auth::{AuthConfig, Credential};
+use rshs::auth::{AuthState, Credential};
 use rshs::webdav::ls::{check_existing_exclusive, eval_if};
 use rshs::webdav::{
     Depth, IfCondition, IfList, LockInfo, LockScope, PropEntry, PropRequest, clark_key,
@@ -103,14 +103,14 @@ fn bench_method_try_from(c: &mut Criterion) {
 }
 
 fn bench_auth_validate(c: &mut Criterion) {
-    let mut plaintext_config = AuthConfig::new();
+    let mut plaintext_config = AuthState::new();
     plaintext_config.add_user("admin", "secret");
 
     let hash = sha_crypt::ShaCrypt::default()
         .hash_password("mypassword".as_bytes())
         .unwrap()
         .to_string();
-    let mut sha_config = AuthConfig::new();
+    let mut sha_config = AuthState::new();
     sha_config
         .users
         .insert("admin".to_string(), Credential::Sha512Crypt(hash));

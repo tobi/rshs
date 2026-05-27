@@ -367,7 +367,7 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::webdav::Method;
-    use crate::{AppState, AuthConfig};
+    use crate::{AppState, AuthState};
 
     // -- PROPFIND tests -----------------------------------------------------
 
@@ -376,7 +376,7 @@ mod tests {
             .fallback(any(super::handle_propfind))
             .with_state(std::sync::Arc::new(AppState::new(
                 dir.path().to_path_buf(),
-                AuthConfig::new(),
+                AuthState::new(),
                 std::time::Duration::from_secs(300),
             )))
     }
@@ -514,7 +514,7 @@ mod tests {
             .fallback(any(super::handle_mkcol))
             .with_state(std::sync::Arc::new(AppState::new(
                 dir.path().to_path_buf(),
-                AuthConfig::new(),
+                AuthState::new(),
                 std::time::Duration::from_secs(300),
             )))
     }
@@ -586,7 +586,7 @@ mod tests {
             .fallback(any(super::handle_copy))
             .with_state(Arc::new(AppState::new(
                 dir.path().to_path_buf(),
-                AuthConfig::new(),
+                AuthState::new(),
                 std::time::Duration::from_secs(300),
             )))
     }
@@ -654,7 +654,7 @@ mod tests {
             .fallback(any(super::handle_move))
             .with_state(Arc::new(AppState::new(
                 dir.path().to_path_buf(),
-                AuthConfig::new(),
+                AuthState::new(),
                 std::time::Duration::from_secs(300),
             )))
     }
@@ -703,7 +703,7 @@ mod tests {
             .fallback(any(super::handle_proppatch))
             .with_state(Arc::new(AppState::new(
                 dir.path().to_path_buf(),
-                AuthConfig::new(),
+                AuthState::new(),
                 std::time::Duration::from_secs(300),
             )))
     }
@@ -756,7 +756,7 @@ mod tests {
             ))
             .with_state(std::sync::Arc::new(AppState::new(
                 dir.path().to_path_buf(),
-                AuthConfig::new(),
+                AuthState::new(),
                 std::time::Duration::from_secs(300),
             )))
     }

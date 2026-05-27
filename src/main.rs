@@ -22,7 +22,7 @@ async fn main() -> std::io::Result<()> {
         .with_writer(io::stderr)
         .init();
 
-    let auth_config = rshs::build_auth_config(&cli);
+    let auth_state = rshs::build_auth_state(&cli);
 
     let port = cli.effective_port();
     let tls_config = cli.to_tls_config();
@@ -34,7 +34,7 @@ async fn main() -> std::io::Result<()> {
         host,
         port,
         tls_config,
-        auth_config,
+        auth_state,
         cli.lock_timeout,
     ))
     .await
