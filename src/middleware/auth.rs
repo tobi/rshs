@@ -24,27 +24,11 @@ pub async fn auth_middleware(
         return Ok(next.run(req).await);
     }
 
-    let (username, password) = match parse_basic_auth(req.headers()) {
-        Some(creds) => creds,
-        None => {
-            return Err(unauthorized());
-        }
-    };
-
-    let auth_header = req.headers().get("authorization");
-    let header_hash = auth_header
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.strip_prefix("Basic "))
-        .map(hash_auth_header);
-
-    let Some(header_hash) = header_hash else {
+    let Some((username, passwd, hash)) = parse_basic_auth(req.headers()) else {
         return Err(unauthorized());
     };
 
-    if state
-        .validate_cached(&username, &password, header_hash)
-        .await
-    {
+    if state.validate_cached(&username, &passwd, hash).await {
         tracing::debug!(user = %username, "authentication succeeded");
         Ok(next.run(req).await)
     } else {
@@ -53,13 +37,17 @@ pub async fn auth_middleware(
     }
 }
 
-fn parse_basic_auth(headers: &axum::http::HeaderMap) -> Option<(String, String)> {
+/// Decodes the `Authorization: Basic <base64>` header into username, password, and a
+/// [`hash_auth_header`] cache key. Returns [`None`] if the header is missing, malformed,
+/// or not Basic auth.
+fn parse_basic_auth(headers: &axum::http::HeaderMap) -> Option<(String, String, u64)> {
     let header = headers.get("authorization")?.to_str().ok()?;
     let stripped = header.strip_prefix("Basic ")?;
+    let header_hash = hash_auth_header(stripped);
     let decoded = general_purpose::STANDARD.decode(stripped).ok()?;
     let decoded = std::str::from_utf8(&decoded).ok()?;
     let (user, pass) = decoded.split_once(':')?;
-    Some((user.to_string(), pass.to_string()))
+    Some((user.to_string(), pass.to_string(), header_hash))
 }
 
 fn unauthorized() -> Response {
