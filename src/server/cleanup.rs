@@ -5,11 +5,11 @@ use crate::webdav::LockStore;
 
 type Locks = std::sync::Arc<tokio::sync::RwLock<LockStore>>;
 type Cache = std::sync::Arc<std::sync::RwLock<AuthCache>>;
-type Signal = std::sync::Arc<tokio::sync::Notify>;
+type Notify = std::sync::Arc<tokio::sync::Notify>;
 
 /// Periodically prunes expired WebDAV locks and auth cache entries every 30 seconds.
 /// Stops when notified via `shutdown`.
-pub(super) async fn cleanup_task(locks: Locks, auth_cache: Cache, shutdown: Signal) {
+pub(super) async fn cleanup_task(locks: Locks, auth_cache: Cache, shutdown: Notify) {
     loop {
         tokio::select! {
             _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {

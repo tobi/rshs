@@ -20,16 +20,6 @@ use crate::cli::Cli;
 /// the value is the [`Instant`] at which the entry should be evicted.
 pub(crate) type AuthCache = HashMap<u64, Instant>;
 
-/// Deterministic SipHash-2-4 of a raw Basic Auth base64 credential string.
-///
-/// Same input always produces the same `u64` within a single process lifetime.
-/// Used as the cache key for [`AuthState::validate_cached`].
-pub(crate) fn hash_auth_header(value: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
-}
-
 /// A stored credential for Basic HTTP authentication.
 ///
 /// ```
@@ -106,12 +96,12 @@ pub struct AuthState {
 }
 
 impl AuthState {
-    /// Create an empty configuration with an empty auth cache and disabled caching.
+    /// Create an empty configuration with an auth cache defaulting to 60s TTL.
     pub fn new() -> Self {
         Self {
             users: HashMap::new(),
             auth_cache: Arc::new(RwLock::new(AuthCache::new())),
-            auth_cache_ttl: Duration::ZERO,
+            auth_cache_ttl: Duration::from_secs(60),
         }
     }
 
@@ -181,8 +171,8 @@ impl AuthState {
                         }
                     }
                 }
-                let hash = hash.clone();
                 let pw = password.to_string();
+                let hash = hash.clone();
                 let ok = tokio::task::spawn_blocking(move || {
                     ShaCrypt::default()
                         .verify_password(pw.as_bytes(), hash.as_str())
@@ -332,6 +322,16 @@ impl AuthState {
 
         Ok(())
     }
+}
+
+/// Deterministic SipHash-2-4 of a raw Basic Auth base64 credential string.
+///
+/// Same input always produces the same `u64` within a single process lifetime.
+/// Used as the cache key for [`AuthState::validate_cached`].
+pub(crate) fn hash_auth_header(value: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Build the authentication configuration from CLI arguments.
