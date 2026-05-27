@@ -4,7 +4,7 @@
 
 | Item       | Detail                                 |
 | ---------- | -------------------------------------- |
-| rshs       | v0.8.2                                 |
+| rshs       | v0.8.4                                 |
 | Rust       | 1.87+ (edition 2024)                   |
 | Criterion  | 0.5 with `async_tokio`, `html_reports` |
 | Platform   | macOS aarch64 (Apple Silicon)          |
@@ -31,11 +31,11 @@ Results are written to `target/criterion/`. Open `target/criterion/report/index.
 | micro        | `benches/micro.rs`        | 35    | Pure CPU functions — parsing, XML gen, auth, lock eval           |
 | fileserver   | `benches/fileserver.rs`   | 15    | GET (dispatch + body-drain), PUT (1KB–10MB), DELETE, dir listing |
 | webdav       | `benches/webdav.rs`       | 9     | PROPFIND, MKCOL, COPY, MOVE, LOCK/UNLOCK, PROPPATCH              |
-| middleware   | `benches/middleware.rs`   | 10    | HealthCheck, Auth (plaintext/SHA-512), LockEnforce               |
+| middleware   | `benches/middleware.rs`   | 11    | HealthCheck, Auth (plaintext/SHA-512/cached), LockEnforce        |
 | path_resolve | `benches/path_resolve.rs` | 8     | Path resolution depth, percent-encoding, cold/hot cache          |
 | scenarios    | `benches/scenarios.rs`    | 4     | Browser browse, WebDAV sync, lock-edit-unlock, mixed             |
 
-**Total: 55 benchmarks across 6 suites.**
+**Total: 56 benchmarks across 6 suites.**
 
 All benchmarks use `tower::ServiceExt::oneshot()` against the production `make_router()` — no TCP binding, isolating application-layer performance from network noise.
 
@@ -69,8 +69,10 @@ All benchmarks use `tower::ServiceExt::oneshot()` against the production `make_r
 | LOCK exclusive         | Latency            | **248 µs**    |
 | UNLOCK                 | Latency            | **358 µs**    |
 | HealthCheck intercept  | Latency            | **1.12 µs**   |
-| Auth plaintext valid   | Latency            | **42 µs**     |
-| Auth SHA-512 valid     | Latency            | **572 µs**    |
+| Auth plaintext valid   | Latency            | **45 µs**     |
+| Auth SHA-512 cached    | Latency            | **42.7 µs**   |
+| Auth SHA-512 cold miss | Latency            | **~572 µs**   |
+| Auth SHA-512 invalid   | Latency            | **537 µs**    |
 | SHA-512 crypt (pure)   | Latency            | **524 µs**    |
 | Lock enforce reject    | Latency            | **310 µs**    |
 | Ancestor lock reject   | Latency            | **430 µs**    |
@@ -207,15 +209,26 @@ GET benchmarks measure two independent dimensions of read performance:
 
 ### Authentication
 
-| Scenario                | Latency     | Δ from no-auth         |
-| ----------------------- | ----------- | ---------------------- |
-| No users (noop)         | **42 µs**   | —                      |
-| Plaintext valid         | **42 µs**   | **0 µs**               |
-| Plaintext invalid (401) | **2.36 µs** | shorter (early return) |
-| SHA-512 valid           | **572 µs**  | **+530 µs**            |
-| SHA-512 invalid         | **530 µs**  | **+488 µs**            |
+Auth caching reduces repeated SHA-512 crypt verification overhead:
 
-> SHA-512 crypt adds ~530µs per authenticated request. This is by design — a slow hash to resist brute force attacks. The pure `ShaCrypt::verify` call alone takes **524µs** (measured independently).
+| Scenario                | Latency     | Cache? | Δ from no-auth         |
+| ----------------------- | ----------- | ------ | ---------------------- |
+| No users (noop)         | **43.0 µs** | —      | —                      |
+| Plaintext valid         | **45.4 µs** | —      | **+2.4 µs**            |
+| Plaintext invalid (401) | **2.40 µs** | —      | shorter (early return) |
+| SHA-512 valid (cached)  | **42.7 µs** | hit    | **−0.3 µs**            |
+| SHA-512 valid (miss)    | **~572 µs** | miss   | **+530 µs**            |
+| SHA-512 invalid (401)   | **537 µs**  | no     | **+494 µs**            |
+
+> Cache hits complete in **~43µs** — identical to the no-auth baseline.
+> Cache misses fall through to `spawn_blocking` SHA-512 crypt verification
+> (524µs raw cost), isolating the expensive work onto the blocking thread pool
+> so async worker threads remain free.
+>
+> Failed authentications are **never cached**, maintaining brute-force resistance.
+> Default TTL is 60 seconds, configurable via `--auth-cache-ttl` (set to 0 to
+> disable caching entirely). Password changes take effect after at most the TTL
+> window.
 
 ### Lock Enforcement (Middleware)
 
@@ -273,16 +286,20 @@ GET benchmarks measure two independent dimensions of read performance:
 
 | Rank | Component                   | Cost              | % of request (typ.) | Status      |
 | ---- | --------------------------- | ----------------- | ------------------- | ----------- |
-| 1    | **SHA-512 crypt verify**    | 524 µs            | 92% (auth GET)      | Design      |
-| 2    | **fs::canonicalize (cold)** | ~223 µs           | 83% (cold GET)      | OS cache    |
+| 1    | **fs::canonicalize (cold)** | ~223 µs           | 83% (cold GET)      | OS cache    |
+| 2    | **SHA-512 crypt verify**    | 524 µs            | 92% (first auth)    | ✅ Cached   |
 | 3    | **read_dir + metadata**     | ~5 µs/entry       | 95% (dir listing)   | Optimal     |
-| 4    | **create_new fallback**     | → eliminated      | → 64µs (was 93µs)   | ✅ Solved   |
-| 5    | **Ancestor lock walk**      | → 66µs (was 95µs) | passthrough         | ✅ Improved |
-| 6    | **PROPFIND fs traversal**   | ~100 µs/entry     | 97% (PROPFIND)      | OS-bound    |
+| 4    | **Ancestor lock walk**      | → 66µs (was 95µs) | passthrough         | ✅ Improved |
+| 5    | **PROPFIND fs traversal**   | ~100 µs/entry     | 97% (PROPFIND)      | OS-bound    |
 
-> Items 4 and 5 have been addressed in performance improvements:
+> - **SHA-512 auth (#2)**: First request per client pays the full 524µs cost
+>   on the blocking thread pool. Subsequent requests (within 60s TTL) hit the
+>   auth cache: cost drops from 524µs to <1µs for the hash verification
+>   (43µs total dispatch, identical to no-auth baseline). See Authentication
+>   section.
 >
-> - **PUT overwrite**: Replaced `create_new`-fallback pattern with `try_exists` pre-check + single `create` — saved 31% (93µs → 64µs).
+> Items 4 has been addressed in performance improvements:
+>
 > - **Lock enforce**: Replaced per-ancestor `HashMap` walk with lock-count shortcut for depth:infinity locks — unlocked passthrough reduced 33% (95µs → 66µs).
 
 ### Low-cost / Optimal Paths
@@ -304,7 +321,7 @@ GET benchmarks measure two independent dimensions of read performance:
 - **Dispatch latency is flat**: GET ~42µs regardless of file size — `canonicalize` + `metadata` + `open` dominate.
 - **Body-drain throughput is high**: 846 MiB/s read, 749 MiB/s write. Read is ~12% faster than write (expected: writes incur flush overhead).
 - **WebDAV overhead is moderate**: PROPFIND costs ~110µs per entry, dominated by fs traversal — not XML generation.
-- **SHA-512 auth is the deliberate bottleneck**: 524µs per validation. Mitigate with persistent sessions if high-throughput auth is needed.
+- **SHA-512 auth with caching**: First request costs 524µs (blocking thread pool, not worker threads). Subsequent requests within the 60s TTL hit the auth cache: 524µs → <1µs per verification (43µs total dispatch). Configurable via `--auth-cache-ttl` (0 = disable).
 - **Path depth matters**: 5-level deep paths cost 3× more than single-level — `canonicalize` per component.
 - **Concurrency ceiling**: In hot-cache scenarios, each GET dispatch takes ~42µs. Ceiling: **~24,000 requests/second** (single-core).
 

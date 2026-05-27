@@ -63,6 +63,29 @@ RSHS_SHADOW_FILE=./shadow:ro rshs ./data
 - `-W` / `--shadow-write` writes CLI credentials into the shadow file after merging
 - Shadow files store passwords as SHA-512 crypt hashes (`$6$...`), compatible with Unix shadow file format
 
+### Auth Caching
+
+Auth caching reduces repeated SHA-512 crypt verification overhead for returning clients:
+
+```sh
+# Default TTL: 60 seconds
+rshs --user admin:secret ./data
+
+# Custom TTL: 120 seconds
+rshs --user admin:secret --auth-cache-ttl 120 ./data
+
+# Disable caching (re-verify every request)
+rshs --user admin:secret --auth-cache-ttl 0 ./data
+
+# Via environment variable
+RSHS_AUTH_CACHE_TTL=120 rshs --user admin:secret ./data
+```
+
+- Only successful authentications are cached — failed attempts always re-verify
+- Cache hits refresh the TTL (sliding expiration): frequently-used credentials never expire as long as requests arrive within the TTL window
+- Cache entries expire after TTL and are pruned every 30s
+- Password changes take effect after at most `auth_cache_ttl` seconds
+
 > [!TIP]
 > Since the RSHS shadow file is compatible with Unix shadow. You can mount the Linux shadow file as read-only into the container. This allows you to use existing system credentials for authentication.
 >
@@ -204,18 +227,32 @@ Arguments:
   [ROOT_DIR]  Root directory to serve [env: RSHS_ROOT_DIR=] [default: .]
 
 Options:
-  -H, --host <HOST>                  Host address to bind to [env: RSHS_HOST=] [default: 0.0.0.0]
-  -p, --port <PORT>                  Port to bind to (default: 8080, or 8443 with TLS) [env: RSHS_PORT=]
-      --tls-cert <TLS_CERT>          TLS certificate file path (PEM format) [env: RSHS_TLS_CERT=]
-      --tls-key <TLS_KEY>            TLS private key file path (PEM format) [env: RSHS_TLS_KEY=]
-  -v, --verbose...                   Increase log verbosity (-v = debug, -vv = trace)
-  -q, --quiet                        Suppress all log output
-  -u, --user <USER:PASS>             Basic Auth credentials in format username:password (can be repeated) [env: RSHS_USERS]
-  -S, --shadow-file <PATH[:rw|:ro]>  Path to shadow file for persistent auth (PATH[:rw|:ro], default :rw) [env: RSHS_SHADOW_FILE=]
-  -W, --shadow-write                 Write CLI credentials into the shadow file (requires --shadow-file :rw)
-      --lock-timeout <LOCK_TIMEOUT>  Default WebDAV lock timeout in seconds, 0 for unlimited [env: RSHS_LOCK_TIMEOUT=] [default: 300]
-  -h, --help                         Print help
-  -V, --version                      Print version
+  -H, --host <HOST>
+          Host address to bind to [env: RSHS_HOST=] [default: 0.0.0.0]
+  -p, --port <PORT>
+          Port to bind to (default: 8080, or 8443 with TLS) [env: RSHS_PORT=]
+      --tls-cert <TLS_CERT>
+          TLS certificate file path (PEM format) [env: RSHS_TLS_CERT=]
+      --tls-key <TLS_KEY>
+          TLS private key file path (PEM format) [env: RSHS_TLS_KEY=]
+  -v, --verbose...
+          Increase log verbosity (-v = debug, -vv = trace)
+  -q, --quiet
+          Suppress all log output
+  -u, --user <USER:PASS>
+          Basic Auth credentials in format username:password (can be repeated) [env: RSHS_USERS]
+  -S, --shadow-file <PATH[:rw|:ro]>
+          Path to shadow file for persistent auth (PATH[:rw|:ro], default :rw) [env: RSHS_SHADOW_FILE=]
+  -W, --shadow-write
+          Write CLI credentials into the shadow file (requires --shadow-file :rw)
+      --lock-timeout <LOCK_TIMEOUT>
+          Default WebDAV lock timeout in seconds, 0 for unlimited [env: RSHS_LOCK_TIMEOUT=] [default: 300]
+      --auth-cache-ttl <AUTH_CACHE_TTL>
+          Auth cache TTL in seconds (0 disables, re-check every request) [env: RSHS_AUTH_CACHE_TTL=] [default: 60]
+  -h, --help
+          Print help
+  -V, --version
+          Print version
 
 Logging environment variables:
   RSHS_LOG          Tracing filter (e.g. info, rshs=debug, rshs[status=500]=trace)

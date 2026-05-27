@@ -171,8 +171,9 @@ src/
   in the chain but becomes a no-op when `is_empty()`. 401 responses include
   `WWW-Authenticate: Basic realm="rshs"` for browser password dialog support.
   SHA-512 crypt verification results are cached via `AuthCache` with configurable TTL
-  (`--auth-cache-ttl`, default 60s). Successful verifications are cached by hashing the
-  raw `Authorization` header value; cache misses offload the hash verification to
+  (`--auth-cache-ttl`, default 60s). Cache hits refresh the expiry (sliding
+  TTL), so frequently-used credentials never expire while the horizon resets on
+  each request. Cache misses offload the hash verification to
   `tokio::task::spawn_blocking` to prevent blocking async worker threads.
   Failed attempts are never cached, maintaining brute-force resistance.
   Set `--auth-cache-ttl 0` to disable caching entirely (still uses `spawn_blocking`).
@@ -424,6 +425,7 @@ RSHS_AUTH_CACHE_TTL=120 rshs ./data             # via env var
 
 - Default TTL is 60 seconds; set `--auth-cache-ttl 0` to disable
 - Only successful authentications are cached — failed attempts always go through full SHA-512 verification
+- Cache hits refresh the TTL (sliding expiration): each successful lookup resets expiry to `now + auth_cache_ttl`
 - Cache entries are pruned by the background cleanup task every 30s when expired
 - Password changes take effect after at most `auth_cache_ttl` seconds
 
