@@ -219,7 +219,7 @@ The following fields are available for filtering:
 ## CLI Reference
 
 ```plaintext
-Simple HTTP/WebDAV Server
+A hybrid HTTP file server and WebDAV server
 
 Usage: rshs [OPTIONS] [ROOT_DIR]
 
@@ -235,22 +235,22 @@ Options:
           TLS certificate file path (PEM format) [env: RSHS_TLS_CERT=]
       --tls-key <TLS_KEY>
           TLS private key file path (PEM format) [env: RSHS_TLS_KEY=]
+  -u, --user <USER:PASS>
+          Basic Auth credentials as username:password (repeatable) [env: RSHS_USERS]
+  -S, --shadow-file <PATH[:rw|:ro]>
+          Shadow file for persistent SHA-512 credentials (PATH[:rw|:ro], default :rw) [env: RSHS_SHADOW_FILE=]
+  -W, --shadow-write
+          Write CLI credentials into the shadow file
+      --auth-cache-ttl <AUTH_CACHE_TTL>
+          Auth cache TTL in seconds (0 = disabled) [env: RSHS_AUTH_CACHE_TTL=] [default: 60]
+      --lock-timeout <LOCK_TIMEOUT>
+          WebDAV lock timeout in seconds (0 = never expire) [env: RSHS_LOCK_TIMEOUT=] [default: 300]
   -v, --verbose...
           Increase log verbosity (-v = debug, -vv = trace)
   -q, --quiet
           Suppress all log output
-  -u, --user <USER:PASS>
-          Basic Auth credentials in format username:password (can be repeated) [env: RSHS_USERS]
-  -S, --shadow-file <PATH[:rw|:ro]>
-          Path to shadow file for persistent auth (PATH[:rw|:ro], default :rw) [env: RSHS_SHADOW_FILE=]
-  -W, --shadow-write
-          Write CLI credentials into the shadow file (requires --shadow-file :rw)
-      --lock-timeout <LOCK_TIMEOUT>
-          Default WebDAV lock timeout in seconds, 0 for unlimited [env: RSHS_LOCK_TIMEOUT=] [default: 300]
-      --auth-cache-ttl <AUTH_CACHE_TTL>
-          Auth cache TTL in seconds (0 disables, re-check every request) [env: RSHS_AUTH_CACHE_TTL=] [default: 60]
   -h, --help
-          Print help
+          Print help (see more with '--help')
   -V, --version
           Print version
 
