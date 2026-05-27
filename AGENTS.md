@@ -55,6 +55,8 @@ src/
 
   server/
     mod.rs                      # AppState, ServerConfig, Router construction, serve
+    cleanup.rs                  # Background task: prune expired locks + auth cache entries
+    shutdown.rs                 # Graceful shutdown signal handling (Ctrl+C, SIGTERM)
     tls.rs                      # TlsConfig (PEM + fingerprint + ALPN), TlsListener
 
   utils/
@@ -304,7 +306,7 @@ pub fn do_thing() -> ...
 
 | Visibility       | When to use                                                          | Example                                               |
 | ---------------- | -------------------------------------------------------------------- | ----------------------------------------------------- |
-| `pub`            | External consumers: `main.rs`, integration tests, library re-export  | Handlers, `AuthState`, `AppState`, `HealthCheck`     |
+| `pub`            | External consumers: `main.rs`, integration tests, library re-export  | Handlers, `AuthState`, `AppState`, `HealthCheck`      |
 | `pub(crate)`     | Used across `src/` modules but not by external callers               | `utils/*`, `DEFAULT_LOG_LEVEL`, `AppState::resolve_*` |
 | `pub(crate) mod` | Module items are re-exported at crate root (no need for direct path) | `cli`, `server`, `utils`                              |
 | `pub mod`        | Items accessed directly via public path (`rshs::module::Item`)       | `handlers`, `middleware`, `webdav`, `auth`            |

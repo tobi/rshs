@@ -6,8 +6,7 @@ use std::sync::Arc;
 use axum::{body::Body, http::StatusCode, middleware::Next, response::Response};
 use base64::{Engine as _, engine::general_purpose};
 
-use crate::auth::AuthState;
-use crate::auth::hash_auth_header;
+use crate::auth::{AuthState, hash_auth_header};
 
 /// Validates HTTP Basic Authentication credentials against the configured `AuthState`.
 /// Skips authentication entirely when no users are configured (backward compatible).
@@ -32,9 +31,8 @@ pub async fn auth_middleware(
         }
     };
 
-    let header_hash = req
-        .headers()
-        .get("authorization")
+    let auth_header = req.headers().get("authorization");
+    let header_hash = auth_header
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.strip_prefix("Basic "))
         .map(hash_auth_header);

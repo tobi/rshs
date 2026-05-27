@@ -1,6 +1,7 @@
 //! Router construction, request dispatch, and server startup for both HTTP and HTTPS.
-//! Also provides the background cleanup task for expiring locks and auth cache entries.
 
+pub(crate) mod cleanup;
+pub(crate) mod shutdown;
 pub(crate) mod tls;
 
 use std::collections::HashMap;
@@ -17,9 +18,9 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use derive_new::new;
-use tokio::signal;
+use tokio::sync::RwLock;
 
-use crate::auth::{AuthCache, AuthState};
+use crate::auth::AuthState;
 use crate::handlers::{http, locks, webdav as webdav_handler};
 use crate::utils::path::{self, ResolveTargetError};
 use crate::webdav::{DeadPropertyStore, LockStore, Method};
@@ -33,8 +34,8 @@ pub struct AppState {
     pub auth_state: Arc<AuthState>,
     pub root_dir: PathBuf,
     pub root_canonical: PathBuf,
-    pub dead_props: Arc<tokio::sync::RwLock<DeadPropertyStore>>,
-    pub locks: Arc<tokio::sync::RwLock<LockStore>>,
+    pub dead_props: Arc<RwLock<DeadPropertyStore>>,
+    pub locks: Arc<RwLock<LockStore>>,
     pub canonical_cache: Arc<Mutex<HashMap<PathBuf, PathBuf>>>,
     pub lock_timeout: Duration,
 }
@@ -46,8 +47,8 @@ impl AppState {
             auth_state: Arc::new(auth_state),
             root_dir: root,
             root_canonical,
-            dead_props: Arc::new(tokio::sync::RwLock::new(DeadPropertyStore::new())),
-            locks: Arc::new(tokio::sync::RwLock::new(LockStore::new())),
+            dead_props: Arc::new(RwLock::new(DeadPropertyStore::new())),
+            locks: Arc::new(RwLock::new(LockStore::new())),
             canonical_cache: Arc::new(Mutex::new(HashMap::new())),
             lock_timeout,
         }
@@ -108,7 +109,7 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
     let router = make_router(state.clone());
 
     let cleanup_notify = Arc::new(tokio::sync::Notify::new());
-    let task = cleanup_task(
+    let task = cleanup::cleanup_task(
         state.locks.clone(),
         state.auth_state.auth_cache.clone(),
         cleanup_notify.clone(),
@@ -123,7 +124,7 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
                 "starting HTTPS server"
             );
             axum::serve(listener, router)
-                .with_graceful_shutdown(shutdown_signal())
+                .with_graceful_shutdown(shutdown::shutdown_signal())
                 .await
                 .map_err(Error::other)?;
         }
@@ -131,7 +132,7 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
             let listener = tokio::net::TcpListener::bind(addr).await?;
             tracing::info!(addr = %addr, "starting HTTP server");
             axum::serve(listener, router)
-                .with_graceful_shutdown(shutdown_signal())
+                .with_graceful_shutdown(shutdown::shutdown_signal())
                 .await
                 .map_err(Error::other)?;
         }
@@ -182,72 +183,4 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response 
         Ok(Method::UNLOCK) => locks::handle_unlock(State(state), req).await,
         _ => StatusCode::NOT_IMPLEMENTED.into_response(),
     }
-}
-
-async fn cleanup_task(
-    locks: Arc<tokio::sync::RwLock<LockStore>>,
-    auth_cache: Arc<std::sync::RwLock<AuthCache>>,
-    shutdown: Arc<tokio::sync::Notify>,
-) {
-    loop {
-        tokio::select! {
-            _ = tokio::time::sleep(Duration::from_secs(30)) => {
-                let mut store = locks.write().await;
-                let before = store.values().map(|v| v.len()).sum::<usize>();
-                store.retain(|_path, infos| {
-                    infos.retain(|l| !l.is_expired());
-                    !infos.is_empty()
-                });
-                let after = store.values().map(|v| v.len()).sum::<usize>();
-                if before > after {
-                    tracing::debug!(
-                        removed = before - after, remaining = after,
-                        "cleanup expired locks"
-                    );
-                }
-
-                let mut cache = auth_cache.write().unwrap();
-                let before = cache.len();
-                cache.retain(|_, expiry| *expiry > std::time::Instant::now());
-                let after = cache.len();
-                if before > after {
-                    tracing::debug!(
-                        removed = before - after, remaining = after,
-                        "cleanup expired auth cache"
-                    );
-                }
-            }
-            _ = shutdown.notified() => {
-                tracing::debug!("cleanup task shutting down");
-                break;
-            }
-        }
-    }
-}
-
-#[cfg(unix)]
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        signal::ctrl_c().await.expect("failed to listen for Ctrl+C");
-        tracing::info!("received Ctrl+C, shutting down gracefully...");
-    };
-
-    let sigterm = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to listen for SIGTERM")
-            .recv()
-            .await;
-        tracing::info!("received SIGTERM, shutting down gracefully...");
-    };
-
-    tokio::select! {
-        () = sigterm => {},
-        () = ctrl_c => {},
-    }
-}
-
-#[cfg(not(unix))]
-async fn shutdown_signal() {
-    signal::ctrl_c().await.expect("failed to listen for Ctrl+C");
-    tracing::info!("received shutdown signal, shutting down gracefully...");
 }
