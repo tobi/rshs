@@ -164,13 +164,22 @@ impl AuthState {
         match self.users.get(username) {
             Some(Credential::Plaintext(expected)) => expected == password,
             Some(Credential::Sha512Crypt(hash)) => {
-                if self.auth_cache_ttl.as_secs() > 0 {
-                    if let Ok(guard) = self.auth_cache.read() {
-                        if guard.get(&header_hash).is_some_and(|e| *e > Instant::now()) {
-                            return true;
-                        }
+                let cache_enabled = self.auth_cache_ttl.as_secs() > 0;
+
+                if cache_enabled
+                    && if let Ok(g) = self.auth_cache.read() {
+                        g.get(&header_hash).is_some_and(|e| *e > Instant::now())
+                    } else {
+                        false
                     }
+                {
+                    let expiry = Instant::now() + self.auth_cache_ttl;
+                    if let Ok(mut guard) = self.auth_cache.write() {
+                        guard.entry(header_hash).and_modify(|e| *e = expiry);
+                    }
+                    return true;
                 }
+
                 let pw = password.to_string();
                 let hash = hash.clone();
                 let ok = tokio::task::spawn_blocking(move || {
@@ -180,11 +189,14 @@ impl AuthState {
                 })
                 .await
                 .unwrap_or(false);
-                if ok && self.auth_cache_ttl.as_secs() > 0 {
+
+                if ok && cache_enabled {
+                    let expiry = Instant::now() + self.auth_cache_ttl;
                     if let Ok(mut guard) = self.auth_cache.write() {
-                        guard.insert(header_hash, Instant::now() + self.auth_cache_ttl);
+                        guard.insert(header_hash, expiry);
                     }
                 }
+
                 ok
             }
             None => false,
@@ -624,5 +636,154 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nonexistent");
         assert!(is_path_writable(&path));
+    }
+
+    #[tokio::test]
+    async fn test_validate_cached_cache_hit_refreshes_ttl() {
+        let hash = ShaCrypt::default()
+            .hash_password("mypassword".as_bytes())
+            .unwrap()
+            .to_string();
+        let mut config = AuthState::new();
+        config
+            .users
+            .insert("admin".into(), Credential::Sha512Crypt(hash));
+        config.auth_cache_ttl = Duration::from_secs(60);
+
+        let creds = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            "admin:mypassword",
+        );
+        let header_hash = hash_auth_header(&creds);
+
+        assert!(
+            config
+                .validate_cached("admin", "mypassword", header_hash)
+                .await
+        );
+
+        let expiry1 = config
+            .auth_cache
+            .read()
+            .unwrap()
+            .get(&header_hash)
+            .copied()
+            .unwrap();
+
+        assert!(
+            config
+                .validate_cached("admin", "mypassword", header_hash)
+                .await
+        );
+
+        let expiry2 = config
+            .auth_cache
+            .read()
+            .unwrap()
+            .get(&header_hash)
+            .copied()
+            .unwrap();
+
+        assert!(expiry2 > expiry1, "TTL should be refreshed on cache hit");
+    }
+
+    #[tokio::test]
+    async fn test_validate_cached_cache_hit_returns_true() {
+        let hash = ShaCrypt::default()
+            .hash_password("mypassword".as_bytes())
+            .unwrap()
+            .to_string();
+        let mut config = AuthState::new();
+        config
+            .users
+            .insert("admin".into(), Credential::Sha512Crypt(hash));
+        config.auth_cache_ttl = Duration::from_secs(60);
+
+        let creds = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            "admin:mypassword",
+        );
+        let header_hash = hash_auth_header(&creds);
+
+        // First call — cache miss
+        assert!(
+            config
+                .validate_cached("admin", "mypassword", header_hash)
+                .await
+        );
+
+        // Subsequent calls — cache hits
+        for _ in 0..5 {
+            assert!(
+                config
+                    .validate_cached("admin", "mypassword", header_hash)
+                    .await
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_validate_cached_wrong_password_not_cached() {
+        let hash = ShaCrypt::default()
+            .hash_password("mypassword".as_bytes())
+            .unwrap()
+            .to_string();
+        let mut config = AuthState::new();
+        config
+            .users
+            .insert("admin".into(), Credential::Sha512Crypt(hash));
+        config.auth_cache_ttl = Duration::from_secs(60);
+
+        let creds = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            "admin:wrongpass",
+        );
+        let wrong_hash = hash_auth_header(&creds);
+
+        assert!(
+            !config
+                .validate_cached("admin", "wrongpass", wrong_hash)
+                .await
+        );
+
+        assert!(
+            config.auth_cache.read().unwrap().get(&wrong_hash).is_none(),
+            "failed auth should not be cached"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_cached_ttl_disabled_skips_cache() {
+        let hash = ShaCrypt::default()
+            .hash_password("mypassword".as_bytes())
+            .unwrap()
+            .to_string();
+        let mut config = AuthState::new();
+        config
+            .users
+            .insert("admin".into(), Credential::Sha512Crypt(hash));
+        config.auth_cache_ttl = Duration::ZERO;
+
+        let creds = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            "admin:mypassword",
+        );
+        let header_hash = hash_auth_header(&creds);
+
+        assert!(
+            config
+                .validate_cached("admin", "mypassword", header_hash)
+                .await
+        );
+
+        assert!(
+            config
+                .auth_cache
+                .read()
+                .unwrap()
+                .get(&header_hash)
+                .is_none(),
+            "TTL=0 should not write to cache"
+        );
     }
 }
