@@ -1,13 +1,14 @@
 //! TLS certificate/key loading and a custom `axum::serve::Listener` that wraps a
 //! TCP listener with a `tokio-rustls` acceptor.
 
+use std::fmt::Write;
 use std::fs::File;
 use std::io::{self, BufReader};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::pki_types::PrivateKeyDer;
 use sha2::{Digest, Sha256};
 use tokio_rustls::TlsAcceptor;
 
@@ -41,28 +42,30 @@ impl TlsConfig {
         };
         let cert_file = &mut BufReader::new(cert_file);
 
-        let certs: Vec<CertificateDer> = match rustls_pemfile::certs(cert_file).collect() {
-            Ok(c) => c,
-            Err(e) => {
+        let mut certs = Vec::new();
+        for (i, result) in rustls_pemfile::certs(cert_file).enumerate() {
+            let cert = result.map_err(|e| {
                 tracing::error!(path = %self.cert_path, error = %e, "failed to parse TLS certificate");
-                return Err(io::Error::new(io::ErrorKind::InvalidData, e));
+                io::Error::new(io::ErrorKind::InvalidData, e)
+            })?;
+
+            let fingerprint = Sha256::digest(cert.as_ref());
+            let mut hex = String::with_capacity(fingerprint.len() * 3);
+            for (j, b) in fingerprint.iter().enumerate() {
+                if j > 0 {
+                    hex.push(':');
+                }
+                write!(&mut hex, "{b:02X}").unwrap();
             }
-        };
+            tracing::info!(%self.cert_path, index = i, fingerprint = %hex, "TLS certificate loaded");
+
+            certs.push(cert);
+        }
 
         if certs.is_empty() {
             tracing::error!(path = %self.cert_path, "no certificates found in TLS certificate file");
             let e = "no certificates found";
             return Err(io::Error::new(io::ErrorKind::InvalidData, e));
-        }
-
-        for (i, cert) in certs.iter().enumerate() {
-            let fingerprint = Sha256::digest(cert.as_ref());
-            let hex = fingerprint
-                .iter()
-                .map(|b| format!("{b:02X}"))
-                .collect::<Vec<_>>()
-                .join(":");
-            tracing::info!(%self.cert_path, index = i, fingerprint = %hex, "TLS certificate loaded");
         }
 
         let key_file = match File::open(&self.key_path) {
@@ -78,10 +81,8 @@ impl TlsConfig {
             Ok(Some(k)) => k,
             Ok(None) => {
                 tracing::error!(path = %self.key_path, "no private key found in TLS key file");
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "no private key found",
-                ));
+                let e = "no private key found";
+                return Err(io::Error::new(io::ErrorKind::InvalidData, e));
             }
             Err(e) => {
                 tracing::error!(path = %self.key_path, error = %e, "failed to parse TLS private key");
@@ -95,10 +96,8 @@ impl TlsConfig {
             PrivateKeyDer::Pkcs1(k) => k.into(),
             _ => {
                 tracing::error!(path = %self.key_path, "unsupported private key format");
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unsupported private key format",
-                ));
+                let e = "unsupported private key format";
+                return Err(io::Error::new(io::ErrorKind::InvalidData, e));
             }
         };
 
@@ -145,7 +144,7 @@ impl axum::serve::Listener for TlsListener {
             let (stream, addr) = match self.inner.accept().await {
                 Ok(tup) => tup,
                 Err(e) => {
-                    tracing::error!("accept error: {e}");
+                    tracing::error!(error = %e, "failed to accept TCP connection");
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     continue;
                 }
@@ -153,7 +152,7 @@ impl axum::serve::Listener for TlsListener {
             match self.acceptor.accept(stream).await {
                 Ok(tls_stream) => return (tls_stream, addr),
                 Err(e) => {
-                    tracing::debug!(%addr, error = %e, "TLS handshake failed");
+                    tracing::debug!(addr = %addr, error = %e, "TLS handshake failed");
                     continue;
                 }
             }

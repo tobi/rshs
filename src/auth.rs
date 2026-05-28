@@ -1,9 +1,8 @@
 //! Authentication types, shadow file management, and the `build_auth_state` entry point.
 
 use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
 use std::fs;
-use std::hash::{Hash, Hasher};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
