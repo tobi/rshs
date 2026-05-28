@@ -1,6 +1,7 @@
 //! TLS certificate/key loading and a custom `axum::serve::Listener` that wraps a
 //! TCP listener with a `tokio-rustls` acceptor.
 
+use std::fmt::Write;
 use std::fs::File;
 use std::io::{self, BufReader};
 use std::net::SocketAddr;
@@ -57,11 +58,13 @@ impl TlsConfig {
 
         for (i, cert) in certs.iter().enumerate() {
             let fingerprint = Sha256::digest(cert.as_ref());
-            let hex = fingerprint
-                .iter()
-                .map(|b| format!("{b:02X}"))
-                .collect::<Vec<_>>()
-                .join(":");
+            let mut hex = String::with_capacity(fingerprint.len() * 3);
+            for (j, b) in fingerprint.iter().enumerate() {
+                if j > 0 {
+                    hex.push(':');
+                }
+                write!(&mut hex, "{b:02X}").unwrap();
+            }
             tracing::info!(%self.cert_path, index = i, fingerprint = %hex, "TLS certificate loaded");
         }
 
