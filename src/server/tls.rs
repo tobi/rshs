@@ -148,7 +148,7 @@ impl axum::serve::Listener for TlsListener {
             let (stream, addr) = match self.inner.accept().await {
                 Ok(tup) => tup,
                 Err(e) => {
-                    tracing::error!("accept error: {e}");
+                    tracing::error!(error = %e, "failed to accept TCP connection");
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     continue;
                 }
@@ -156,7 +156,7 @@ impl axum::serve::Listener for TlsListener {
             match self.acceptor.accept(stream).await {
                 Ok(tls_stream) => return (tls_stream, addr),
                 Err(e) => {
-                    tracing::debug!(%addr, error = %e, "TLS handshake failed");
+                    tracing::debug!(addr = %addr, error = %e, "TLS handshake failed");
                     continue;
                 }
             }
