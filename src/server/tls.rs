@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::pki_types::PrivateKeyDer;
 use sha2::{Digest, Sha256};
 use tokio_rustls::TlsAcceptor;
 
@@ -42,21 +42,13 @@ impl TlsConfig {
         };
         let cert_file = &mut BufReader::new(cert_file);
 
-        let certs: Vec<CertificateDer> = match rustls_pemfile::certs(cert_file).collect() {
-            Ok(c) => c,
-            Err(e) => {
+        let mut certs = Vec::new();
+        for (i, result) in rustls_pemfile::certs(cert_file).enumerate() {
+            let cert = result.map_err(|e| {
                 tracing::error!(path = %self.cert_path, error = %e, "failed to parse TLS certificate");
-                return Err(io::Error::new(io::ErrorKind::InvalidData, e));
-            }
-        };
+                io::Error::new(io::ErrorKind::InvalidData, e)
+            })?;
 
-        if certs.is_empty() {
-            tracing::error!(path = %self.cert_path, "no certificates found in TLS certificate file");
-            let e = "no certificates found";
-            return Err(io::Error::new(io::ErrorKind::InvalidData, e));
-        }
-
-        for (i, cert) in certs.iter().enumerate() {
             let fingerprint = Sha256::digest(cert.as_ref());
             let mut hex = String::with_capacity(fingerprint.len() * 3);
             for (j, b) in fingerprint.iter().enumerate() {
@@ -66,6 +58,14 @@ impl TlsConfig {
                 write!(&mut hex, "{b:02X}").unwrap();
             }
             tracing::info!(%self.cert_path, index = i, fingerprint = %hex, "TLS certificate loaded");
+
+            certs.push(cert);
+        }
+
+        if certs.is_empty() {
+            tracing::error!(path = %self.cert_path, "no certificates found in TLS certificate file");
+            let e = "no certificates found";
+            return Err(io::Error::new(io::ErrorKind::InvalidData, e));
         }
 
         let key_file = match File::open(&self.key_path) {
@@ -81,10 +81,8 @@ impl TlsConfig {
             Ok(Some(k)) => k,
             Ok(None) => {
                 tracing::error!(path = %self.key_path, "no private key found in TLS key file");
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "no private key found",
-                ));
+                let e = "no private key found";
+                return Err(io::Error::new(io::ErrorKind::InvalidData, e));
             }
             Err(e) => {
                 tracing::error!(path = %self.key_path, error = %e, "failed to parse TLS private key");
@@ -98,10 +96,8 @@ impl TlsConfig {
             PrivateKeyDer::Pkcs1(k) => k.into(),
             _ => {
                 tracing::error!(path = %self.key_path, "unsupported private key format");
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unsupported private key format",
-                ));
+                let e = "unsupported private key format";
+                return Err(io::Error::new(io::ErrorKind::InvalidData, e));
             }
         };
 
