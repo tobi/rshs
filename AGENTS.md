@@ -62,7 +62,7 @@ src/
   utils/
     mod.rs
     error.rs                    # OrStatus trait + ok_or_return! macro
-    fs_batch.rs                 # Batch statx via io_uring (Linux) or spawn_blocking fallback
+    scandir.rs                  # Batch statx via io_uring (Linux) or spawn_blocking fallback
     path.rs                     # Path resolution (resolve_existing, resolve_write_target, resolve_and_guard)
     time.rs                     # Calendar formatting for directory listings
 ```

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 use super::{Depth, PropEntry};
-use crate::utils::fs_batch;
+use crate::utils::scandir;
 
 /// Characters that do NOT need percent-encoding in a WebDAV href path segment.
 const HREF_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
@@ -56,7 +56,7 @@ fn guess_content_type(child_name: &impl AsRef<Path>) -> Option<String> {
 }
 
 async fn collect_direct_children(dir_path: &Path, parent_href: &str, entries: &mut Vec<PropEntry>) {
-    let children = match fs_batch::batch_read_dir_entries(dir_path).await {
+    let children = match scandir::batch_read_dir_entries(dir_path).await {
         Ok(c) => c,
         Err(_) => return,
     };
@@ -89,7 +89,7 @@ async fn collect_descendants(root_dir: &Path, root_href: &str, entries: &mut Vec
     stack.push((root_dir.to_path_buf(), normalize_href(root_href, true)));
 
     while let Some((dir_path, parent_href)) = stack.pop() {
-        let children = match fs_batch::batch_read_dir_entries(&dir_path).await {
+        let children = match scandir::batch_read_dir_entries(&dir_path).await {
             Ok(c) => c,
             Err(_) => continue,
         };

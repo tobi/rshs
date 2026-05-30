@@ -300,7 +300,7 @@ Auth caching reduces repeated SHA-512 crypt verification overhead:
 >   back to serial `std::fs::metadata()` calls inside the single `spawn_blocking` —
 >   still a significant improvement by eliminating per-entry tokio scheduling
 >   overhead. The same optimization applies to HTML directory listing.
->   See `src/utils/fs_batch.rs`.
+>   See `src/utils/scandir.rs`.
 >   Items 4 has been addressed in performance improvements:
 > - **Lock enforce**: Replaced per-ancestor `HashMap` walk with lock-count shortcut for depth:infinity locks — unlocked passthrough reduced 33% (95µs → 63µs).
 

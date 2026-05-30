@@ -9,7 +9,7 @@ use std::time::SystemTime;
 
 use derive_new::new;
 
-use crate::utils::fs_batch;
+use crate::utils::scandir;
 use crate::utils::time::format_rfc850;
 
 #[derive(new)]
@@ -78,7 +78,7 @@ pub(crate) async fn generate_dir_listing(dir_path: &Path, request_path: &str) ->
 }
 
 async fn collect_dir_entries(dir_path: &Path) -> Option<Vec<DirEntry>> {
-    let children = fs_batch::batch_read_dir_entries(dir_path).await.ok()?;
+    let children = scandir::batch_read_dir_entries(dir_path).await.ok()?;
 
     let entries = children
         .into_iter()

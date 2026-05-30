@@ -3,6 +3,6 @@
 //! operations.
 
 pub(crate) mod error;
-pub(crate) mod fs_batch;
 pub(crate) mod path;
+pub(crate) mod scandir;
 pub(crate) mod time;
