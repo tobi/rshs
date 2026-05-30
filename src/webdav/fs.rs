@@ -30,7 +30,7 @@ pub async fn collect_entries(fs_path: &Path, request_path: &str, depth: Depth) -
     };
 
     let is_dir = meta.is_dir();
-    let mut base_entry = PropEntry::from_meta(normalize_href(request_path, is_dir), is_dir, &meta);
+    let mut base_entry = PropEntry::from_meta(&meta, normalize_href(request_path, is_dir), is_dir);
     base_entry.canonical_path = Some(fs_path.to_path_buf());
     if !is_dir {
         base_entry.content_type = guess_content_type(&fs_path);
@@ -70,13 +70,7 @@ async fn collect_direct_children(dir_path: &Path, parent_href: &str, entries: &m
             encoded = utf8_percent_encode(&name_str, HREF_ENCODE_SET)
         );
 
-        let mut entry = PropEntry::new(
-            child_href,
-            child.modified,
-            child.created,
-            child.size,
-            child.is_dir,
-        );
+        let mut entry = PropEntry::from_scandir(&child, child_href);
         if !child.is_dir {
             entry.content_type = guess_content_type(&child.name);
         }
@@ -102,13 +96,7 @@ async fn collect_descendants(root_dir: &Path, root_href: &str, entries: &mut Vec
                 encoded = utf8_percent_encode(&name_str, HREF_ENCODE_SET)
             );
 
-            let mut entry = PropEntry::new(
-                child_href.clone(),
-                child.modified,
-                child.created,
-                child.size,
-                child.is_dir,
-            );
+            let mut entry = PropEntry::from_scandir(&child, child_href.clone());
             if !child.is_dir {
                 entry.content_type = guess_content_type(&child.name);
             }
