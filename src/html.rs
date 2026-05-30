@@ -5,10 +5,11 @@
 //! to produce directory index pages.
 
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use derive_new::new;
 
+use crate::utils::fs_batch;
 use crate::utils::time::format_rfc850;
 
 #[derive(new)]
@@ -77,25 +78,20 @@ pub(crate) async fn generate_dir_listing(dir_path: &Path, request_path: &str) ->
 }
 
 async fn collect_dir_entries(dir_path: &Path) -> Option<Vec<DirEntry>> {
-    let mut read_dir = tokio::fs::read_dir(dir_path).await.ok()?;
+    let children = fs_batch::batch_read_dir_entries(dir_path).await.ok()?;
 
-    let mut entries = Vec::new();
-    loop {
-        let entry = match read_dir.next_entry().await {
-            Ok(Some(e)) => e,
-            Ok(None) => break,
-            Err(_) => continue,
-        };
-        let name = entry.file_name().to_string_lossy().to_string();
-        let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
-        let metadata = entry.metadata().await.ok();
-        let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
-        let modified = metadata
-            .as_ref()
-            .and_then(|m| m.modified().ok())
-            .unwrap_or(UNIX_EPOCH);
-        entries.push(DirEntry::new(name, is_dir, size, modified));
-    }
+    let entries = children
+        .into_iter()
+        .map(|c| {
+            DirEntry::new(
+                c.name.to_string_lossy().into_owned(),
+                c.is_dir,
+                c.size,
+                c.modified,
+            )
+        })
+        .collect();
+
     Some(entries)
 }
 

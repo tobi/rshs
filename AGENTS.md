@@ -62,6 +62,7 @@ src/
   utils/
     mod.rs
     error.rs                    # OrStatus trait + ok_or_return! macro
+    fs_batch.rs                 # Batch statx via io_uring (Linux) or spawn_blocking fallback
     path.rs                     # Path resolution (resolve_existing, resolve_write_target, resolve_and_guard)
     time.rs                     # Calendar formatting for directory listings
 ```
@@ -89,6 +90,8 @@ src/
 | `sha-crypt` 0.6          | `getrandom`                            | SHA-512 crypt hash verification     |
 | `tracing` 0.1            | —                                      | Structured logging facade           |
 | `tracing-subscriber` 0.3 | `env-filter`, `fmt`                    | Log output + filter engine          |
+| `io-uring` 0.6           | —, _linux-only_                        | Batch statx for PROPFIND traversal  |
+| `libc` 0.2               | —, _linux-only_                        | `statx` struct for io_uring batch   |
 | —                        | —                                      | —                                   |
 | `tempfile` 3.27          | _dev_                                  | Temporary directories in tests      |
 | `libc` 0.2               | _dev, unix-only_                       | SIGINT/SIGTERM in shutdown tests    |

@@ -35,7 +35,7 @@ fn bench_propfind(c: &mut Criterion) {
     });
 
     // Depth:1 on directory (parameterized by size)
-    for count in [10u32, 50, 200] {
+    for count in [10u32, 50, 200, 1000] {
         group.throughput(Throughput::Elements(count as u64));
         group.bench_with_input(
             BenchmarkId::new("depth1_dir", count),

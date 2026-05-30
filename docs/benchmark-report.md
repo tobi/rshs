@@ -284,22 +284,24 @@ Auth caching reduces repeated SHA-512 crypt verification overhead:
 
 ### Bottleneck Ranking
 
-| Rank | Component                   | Cost              | % of request (typ.) | Status      |
-| ---- | --------------------------- | ----------------- | ------------------- | ----------- |
-| 1    | **fs::canonicalize (cold)** | ~224 µs           | 83% (cold GET)      | OS cache    |
-| 2    | **SHA-512 crypt verify**    | 528 µs            | 92% (first auth)    | ✅ Cached   |
-| 3    | **read_dir + metadata**     | ~5 µs/entry       | 95% (dir listing)   | Optimal     |
-| 4    | **Ancestor lock walk**      | → 63µs (was 95µs) | passthrough         | ✅ Improved |
-| 5    | **PROPFIND fs traversal**   | ~100 µs/entry     | 97% (PROPFIND)      | OS-bound    |
+| Rank | Component                   | Cost              | % of request (typ.) | Status            |
+| ---- | --------------------------- | ----------------- | ------------------- | ----------------- |
+| 1    | **fs::canonicalize (cold)** | ~224 µs           | 83% (cold GET)      | OS cache          |
+| 2    | **SHA-512 crypt verify**    | 528 µs            | 92% (first auth)    | ✅ Cached         |
+| 3    | **read_dir + metadata**     | ~5 µs/entry       | 95% (dir listing)   | ✅ Batched        |
+| 4    | **Ancestor lock walk**      | → 63µs (was 95µs) | passthrough         | ✅ Improved       |
+| 5    | **PROPFIND fs traversal**   | → batched         | (was 97%)           | ✅ io_uring batch |
 
-> - **SHA-512 auth (#2)**: First request per client pays the full 528µs cost
->   on the blocking thread pool. Subsequent requests (within 60s TTL) hit the
->   auth cache: cost drops from 528µs to <1µs for the hash verification
->   (43µs total dispatch, identical to no-auth baseline). See Authentication
->   section.
->
-> Items 4 has been addressed in performance improvements:
->
+> - **PROPFIND fs traversal (#5)**: Replaced per-entry `tokio::fs::metadata()` (serial,
+>   one `spawn_blocking` per entry) with a single `spawn_blocking` call that
+>   enumerates the directory via `std::fs::read_dir` and batches all `statx`
+>   metadata calls. On Linux, uses `io_uring` (`IORING_OP_STATX`) to submit all
+>   `statx` calls in a single `io_uring_enter` syscall. Non-Linux platforms fall
+>   back to serial `std::fs::metadata()` calls inside the single `spawn_blocking` —
+>   still a significant improvement by eliminating per-entry tokio scheduling
+>   overhead. The same optimization applies to HTML directory listing.
+>   See `src/utils/fs_batch.rs`.
+>   Items 4 has been addressed in performance improvements:
 > - **Lock enforce**: Replaced per-ancestor `HashMap` walk with lock-count shortcut for depth:infinity locks — unlocked passthrough reduced 33% (95µs → 63µs).
 
 ### Low-cost / Optimal Paths
