@@ -8,6 +8,8 @@
 use std::fmt::Write;
 use std::path::Path;
 
+use percent_encoding::percent_decode_str;
+
 use crate::utils::scandir::{self, DirEntryMeta};
 use crate::utils::time::format_rfc850;
 
@@ -24,6 +26,8 @@ use crate::utils::time::format_rfc850;
 /// [`handle_get_head`](crate::handlers::http::handle_get_head) to serve
 /// directory index pages to browsers.
 pub(crate) async fn generate_dir_listing(dir_path: &Path, request_path: &str) -> (String, usize) {
+    let mut html = String::new();
+
     let mut entries = match scandir::batch_read_dir_entries(dir_path).await {
         Ok(entries) => entries,
         Err(_) => {
@@ -42,12 +46,14 @@ pub(crate) async fn generate_dir_listing(dir_path: &Path, request_path: &str) ->
     });
     let name_col = max_name_len + 20;
 
-    let mut html = String::new();
+    let decoded_path = percent_decode_str(request_path).decode_utf8_lossy();
+
     write!(
         html,
-        "<!DOCTYPE html><html><head><title>Index of {request_path}</title><meta charset=\"utf-8\"></head><body><h1>Index of {request_path}</h1><hr><pre>"
+        "<!DOCTYPE html><html><head><title>Index of {decoded_path}</title><meta charset=\"utf-8\"></head><body><h1>Index of {decoded_path}</h1><hr><pre>"
     )
     .unwrap();
+
     if request_path != "/" {
         html.push_str("<a href=\"../\">../</a>\n");
     }
