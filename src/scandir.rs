@@ -100,7 +100,6 @@ mod linux_impl {
                         bufs.as_mut_ptr().add(i) as *mut io_uring::types::statx,
                     )
                     .mask(libc::STATX_BASIC_STATS | libc::STATX_BTIME)
-                    .flags(libc::AT_SYMLINK_NOFOLLOW)
                     .build()
                     .user_data(i as u64);
 
@@ -251,16 +250,11 @@ fn batch_fallback(dir_path: &Path) -> io::Result<Vec<DirEntryMeta>> {
     let mut entries = Vec::new();
 
     for entry in read_dir {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
+        let Ok(entry) = entry else { continue };
+
         let name = entry.file_name();
-        // symlink_metadata so symlinks are reported as themselves,
-        // matching batch_linux which uses AT_SYMLINK_NOFOLLOW.
-        let meta = match std::fs::symlink_metadata(entry.path()) {
-            Ok(m) => m,
-            Err(_) => continue,
+        let Ok(meta) = std::fs::metadata(entry.path()) else {
+            continue;
         };
 
         entries.push(DirEntryMeta {
@@ -368,7 +362,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg(unix)]
-    async fn symlink_reported_as_itself_not_target() {
+    async fn symlink_followed_to_target() {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::File::create(dir.path().join("real.txt"))
             .unwrap()
@@ -383,16 +377,9 @@ mod tests {
         assert_eq!(entries.len(), 2);
 
         let link = entries.iter().find(|e| e.name == "link.txt").unwrap();
-        assert!(
-            !link.is_dir,
-            "symlink to file should not be reported as dir"
-        );
-        // symlink's own metadata, not the target's — size is small (the link path length)
-        assert!(
-            link.size < 1024,
-            "symlink size should be small, got {}",
-            link.size
-        );
+        assert!(!link.is_dir, "symlink to file should report as a file");
+        // Symlink is transparent — returns target's metadata (size 11, not the link path length)
+        assert_eq!(link.size, 11, "symlink size should match target file size");
     }
 
     // -- Linux-only: direct io_uring path tests ------------------------
