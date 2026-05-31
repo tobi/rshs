@@ -191,16 +191,22 @@ fn batch_linux(dir_path: &Path) -> io::Result<Vec<DirEntryMeta>> {
     for entry in read_dir {
         let entry = match entry {
             Ok(e) => e,
-            Err(_) => continue,
+            Err(e) => {
+                tracing::debug!(error = %e, "skipping unreadable directory entry");
+                continue;
+            }
         };
-        let name = entry.file_name();
 
         // d_type may already tell us file vs directory — record it so we
         // can skip a redundant is_dir check from statx on most filesystems.
         let ft_is_dir = entry.file_type().ok().map(|ft| ft.is_dir());
-        let c_name = match CString::new(name.as_encoded_bytes()) {
-            Ok(c) => c,
-            Err(_) => continue, // interior NUL byte — skip
+
+        let name = entry.file_name();
+        let Ok(c_name) = CString::new(name.as_encoded_bytes()) else {
+            tracing::debug!(
+                name = %name.to_string_lossy(), "skipping filename with interior NUL"
+            );
+            continue;
         };
 
         names_c.push(c_name);
@@ -219,9 +225,11 @@ fn batch_linux(dir_path: &Path) -> io::Result<Vec<DirEntryMeta>> {
     // — merge results —
     let mut entries = Vec::with_capacity(names_c.len());
     for i in 0..names_c.len() {
-        let stx = match &stat_results[i] {
-            Some(s) => s,
-            None => continue,
+        let Some(stx) = &stat_results[i] else {
+            tracing::debug!(
+                name = %names_os[i].to_string_lossy(), "statx failed, skipping entry"
+            );
+            continue;
         };
 
         // Prefer d_type when available (zero-cost on most filesystems);
@@ -250,11 +258,24 @@ fn batch_fallback(dir_path: &Path) -> io::Result<Vec<DirEntryMeta>> {
     let mut entries = Vec::new();
 
     for entry in read_dir {
-        let Ok(entry) = entry else { continue };
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::debug!(error = %e, "skipping unreadable directory entry");
+                continue;
+            }
+        };
 
         let name = entry.file_name();
-        let Ok(meta) = std::fs::metadata(entry.path()) else {
-            continue;
+        let meta = match std::fs::metadata(entry.path()) {
+            Ok(m) => m,
+            Err(e) => {
+                let name = name.to_string_lossy();
+                tracing::debug!(
+                    error = %e, name = %name, "metadata failed, skipping entry"
+                );
+                continue;
+            }
         };
 
         entries.push(DirEntryMeta {
