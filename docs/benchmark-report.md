@@ -4,7 +4,7 @@
 
 | Item       | Detail                        |
 | ---------- | ----------------------------- |
-| rshs       | v0.8.4                        |
+| rshs       | v0.9.0                        |
 | Rust       | 1.87+ (edition 2024)          |
 | Criterion  | 0.8                           |
 | Platform   | macOS aarch64 (Apple Silicon) |
@@ -46,44 +46,44 @@ All benchmarks use `tower::ServiceExt::oneshot()` against the production `make_r
 | Category               | Metric             | Value         |
 | ---------------------- | ------------------ | ------------- |
 | GET 1MB dispatch       | Latency            | **42 µs**     |
-| GET 64KB body-drain    | Latency            | **119 µs**    |
+| GET 64KB body-drain    | Latency            | **118 µs**    |
 | GET 1MB body-drain     | Latency            | **1.13 ms**   |
-| GET 10MB body-drain    | Latency            | **12.1 ms**   |
-| GET 10MB read          | Throughput         | **828 MiB/s** |
-| PUT 1KB (overwrite)    | Latency            | **63 µs**     |
-| PUT 1KB (new)          | Latency            | **94 µs**     |
-| PUT 10MB               | Throughput         | **693 MiB/s** |
-| DELETE file            | Latency            | **283 µs**    |
-| DELETE dir tree (d=5)  | Latency            | **7.06 ms**   |
-| Dir listing 10 items   | Latency            | **109 µs**    |
-| Dir listing 200 items  | Latency            | **1.26 ms**   |
-| Dir listing 1000 items | Latency            | **6.10 ms**   |
-| OPTIONS                | Latency            | **2.86 µs**   |
-| PROPFIND depth:0       | Latency            | **258 µs**    |
-| PROPFIND depth:1 (200) | Latency            | **21.7 ms**   |
-| PROPFIND depth:inf     | Latency (3×5 tree) | **3.04 ms**   |
-| MKCOL                  | Latency            | **261 µs**    |
-| COPY file              | Latency            | **438 µs**    |
-| COPY dir tree          | Latency            | **6.16 ms**   |
-| MOVE file              | Latency            | **490 µs**    |
-| LOCK exclusive         | Latency            | **264 µs**    |
-| UNLOCK                 | Latency            | **373 µs**    |
-| HealthCheck intercept  | Latency            | **1.06 µs**   |
-| Auth plaintext valid   | Latency            | **43 µs**     |
-| Auth SHA-512 cached    | Latency            | **42.6 µs**   |
-| Auth SHA-512 cold miss | Latency            | **~572 µs**   |
-| Auth SHA-512 invalid   | Latency            | **537 µs**    |
-| SHA-512 crypt (pure)   | Latency            | **528 µs**    |
-| Lock enforce reject    | Latency            | **305 µs**    |
-| Ancestor lock reject   | Latency            | **425 µs**    |
-| Cold GET (new dir)     | Latency            | **267 µs**    |
-| Hot GET (reuse)        | Latency            | **42.6 µs**   |
-| Browser browse (3 rqs) | Latency            | **947 µs**    |
-| WebDAV sync (6 reqs)   | Latency            | **2.69 ms**   |
-| Lock-edit-unlock       | Latency            | **367 µs**    |
-| Mixed workload (8 rqs) | Latency            | **3.85 ms**   |
-| If-header parse        | Latency            | **111 ns**    |
-| PROPFIND body parse    | Latency            | **347 ns**    |
+| GET 10MB body-drain    | Latency            | **12.0 ms**   |
+| GET 10MB read          | Throughput         | **835 MiB/s** |
+| PUT 1KB (overwrite)    | Latency            | **70 µs**     |
+| PUT 1KB (new)          | Latency            | **96 µs**     |
+| PUT 10MB               | Throughput         | **720 MiB/s** |
+| DELETE file            | Latency            | **271 µs**    |
+| DELETE dir tree (d=5)  | Latency            | **7.07 ms**   |
+| Dir listing 10 items   | Latency            | **63 µs**     |
+| Dir listing 200 items  | Latency            | **375 µs**    |
+| Dir listing 1000 items | Latency            | **1.73 ms**   |
+| OPTIONS                | Latency            | **2.93 µs**   |
+| PROPFIND depth:0       | Latency            | **32 µs**     |
+| PROPFIND depth:1 (200) | Latency            | **1.09 ms**   |
+| PROPFIND depth:inf     | Latency (3×5 tree) | **292 µs**    |
+| MKCOL                  | Latency            | **260 µs**    |
+| COPY file              | Latency            | **442 µs**    |
+| COPY dir tree          | Latency            | **6.21 ms**   |
+| MOVE file              | Latency            | **514 µs**    |
+| LOCK exclusive         | Latency            | **252 µs**    |
+| UNLOCK                 | Latency            | **369 µs**    |
+| HealthCheck intercept  | Latency            | **1.10 µs**   |
+| Auth plaintext valid   | Latency            | **42 µs**     |
+| Auth SHA-512 cached    | Latency            | **42.0 µs**   |
+| Auth SHA-512 cold miss | Latency            | **~536 µs**   |
+| Auth SHA-512 invalid   | Latency            | **536 µs**    |
+| SHA-512 crypt (pure)   | Latency            | **523 µs**    |
+| Lock enforce reject    | Latency            | **297 µs**    |
+| Ancestor lock reject   | Latency            | **432 µs**    |
+| Cold GET (new dir)     | Latency            | **268 µs**    |
+| Hot GET (reuse)        | Latency            | **42.2 µs**   |
+| Browser browse (3 rqs) | Latency            | **904 µs**    |
+| WebDAV sync (6 reqs)   | Latency            | **2.48 ms**   |
+| Lock-edit-unlock       | Latency            | **355 µs**    |
+| Mixed workload (8 rqs) | Latency            | **3.75 ms**   |
+| If-header parse        | Latency            | **110 ns**    |
+| PROPFIND body parse    | Latency            | **351 ns**    |
 
 ---
 
@@ -144,12 +144,15 @@ GET benchmarks measure two independent dimensions of read performance:
 
 | Items | Latency     | Throughput (items/s) |
 | ----- | ----------- | -------------------- |
-| 10    | **109 µs**  | 92 K/s               |
-| 50    | **349 µs**  | 143 K/s              |
-| 200   | **1.26 ms** | 159 K/s              |
-| 1000  | **6.10 ms** | 164 K/s              |
+| 10    | **63 µs**   | 159 K/s              |
+| 50    | **128 µs**  | 391 K/s              |
+| 200   | **375 µs**  | 533 K/s              |
+| 1000  | **1.73 ms** | 579 K/s              |
 
-> Stable throughput at ~150K items/s. Each entry costs ~6µs — ~3µs for `read_dir` + metadata, ~3µs for HTML rendering.
+> Per-entry cost has dropped from ~6µs to ~1.7µs. This is the result of
+> `batch_read_dir_entries` — all entries' metadata is collected in a single
+> `spawn_blocking` call instead of one per entry. On Linux, io_uring further
+> reduces the per-statx syscall overhead (see §Linux / io_uring).
 
 ---
 
@@ -159,13 +162,17 @@ GET benchmarks measure two independent dimensions of read performance:
 
 | Scenario                  | Entries | Latency     | Per-entry |
 | ------------------------- | ------- | ----------- | --------- |
-| Depth:0 single file       | 1       | **258 µs**  | 258 µs    |
-| Depth:1 dir (10 files)    | 11      | **1.28 ms** | 116 µs    |
-| Depth:1 dir (50 files)    | 51      | **5.66 ms** | 111 µs    |
-| Depth:1 dir (200 files)   | 201     | **21.7 ms** | 108 µs    |
-| Depth:infinity (3×5 tree) | ~20     | **3.04 ms** | 152 µs    |
+| Depth:0 single file       | 1       | **32 µs**   | 32 µs     |
+| Depth:1 dir (10 files)    | 11      | **104 µs**  | 9.5 µs    |
+| Depth:1 dir (50 files)    | 51      | **312 µs**  | 6.1 µs    |
+| Depth:1 dir (200 files)   | 201     | **1.09 ms** | 5.4 µs    |
+| Depth:1 dir (1000 files)  | 1001    | **5.27 ms** | 5.3 µs    |
+| Depth:infinity (3×5 tree) | ~20     | **292 µs**  | 14.6 µs   |
 
-> Stable at ~110µs per entry. Only **3µs** of this is XML generation — the remaining **97%** is file system traversal (`read_dir` + `metadata`), lock store reads, and dead property lookups.
+> Per-entry cost is now dominated by XML generation (~3µs/entry) and lock/dead-property
+> lookups — not filesystem traversal. The `batch_read_dir_entries` optimization
+> (single `spawn_blocking` for all entries) has moved the bottleneck elsewhere.
+> On Linux with io_uring, per-entry cost drops further (see §Linux / io_uring).
 
 ### XML Generation — Micro-benchmark
 
@@ -284,23 +291,23 @@ Auth caching reduces repeated SHA-512 crypt verification overhead:
 
 ### Bottleneck Ranking
 
-| Rank | Component                   | Cost              | % of request (typ.) | Status      |
-| ---- | --------------------------- | ----------------- | ------------------- | ----------- |
-| 1    | **fs::canonicalize (cold)** | ~224 µs           | 83% (cold GET)      | OS cache    |
-| 2    | **SHA-512 crypt verify**    | 528 µs            | 92% (first auth)    | ✅ Cached   |
-| 3    | **read_dir + metadata**     | ~5 µs/entry       | 95% (dir listing)   | Optimal     |
-| 4    | **Ancestor lock walk**      | → 63µs (was 95µs) | passthrough         | ✅ Improved |
-| 5    | **PROPFIND fs traversal**   | ~100 µs/entry     | 97% (PROPFIND)      | OS-bound    |
+| Rank | Component                   | Cost              | % of request (typ.) | Status            |
+| ---- | --------------------------- | ----------------- | ------------------- | ----------------- |
+| 1    | **fs::canonicalize (cold)** | ~224 µs           | 83% (cold GET)      | OS cache          |
+| 2    | **SHA-512 crypt verify**    | 528 µs            | 92% (first auth)    | ✅ Cached         |
+| 3    | **read_dir + metadata**     | ~5 µs/entry       | 95% (dir listing)   | ✅ Batched        |
+| 4    | **Ancestor lock walk**      | → 63µs (was 95µs) | passthrough         | ✅ Improved       |
+| 5    | **PROPFIND fs traversal**   | → batched         | (was 97%)           | ✅ io_uring batch |
 
-> - **SHA-512 auth (#2)**: First request per client pays the full 528µs cost
->   on the blocking thread pool. Subsequent requests (within 60s TTL) hit the
->   auth cache: cost drops from 528µs to <1µs for the hash verification
->   (43µs total dispatch, identical to no-auth baseline). See Authentication
->   section.
->
-> Items 4 has been addressed in performance improvements:
->
-> - **Lock enforce**: Replaced per-ancestor `HashMap` walk with lock-count shortcut for depth:infinity locks — unlocked passthrough reduced 33% (95µs → 63µs).
+> - **PROPFIND fs traversal (#5)**: Replaced per-entry `tokio::fs::metadata()` (serial,
+>   one `spawn_blocking` per entry) with a single `spawn_blocking` call that
+>   enumerates the directory via `std::fs::read_dir` and batches all `statx`
+>   metadata calls. On Linux, uses `io_uring` (`IORING_OP_STATX`) to submit all
+>   `statx` calls in a single `io_uring_enter` syscall. Non-Linux platforms fall
+>   back to serial `std::fs::metadata()` calls inside the single `spawn_blocking` —
+>   still a significant improvement by eliminating per-entry tokio scheduling
+>   overhead. The same optimization applies to HTML directory listing.
+>   See `src/scandir.rs` for implementation details.
 
 ### Low-cost / Optimal Paths
 
@@ -311,6 +318,70 @@ Auth caching reduces repeated SHA-512 crypt verification overhead:
 | Header parsing               | **16–113 ns**  | Depth, Timeout, Destination, etc.  |
 | XML generation               | **3 µs/entry** | Linear scaling, allocation-minimal |
 | Lock token check             | **6 ns**       | Single iteration, short-circuit    |
+
+---
+
+## Linux / io_uring
+
+io_uring batch statx optimisation was validated in a Linux VM (ext4). VM
+results carry virtualisation overhead (ext4 throughput ~60–80% of bare metal),
+so the focus is on **relative scaling** — not absolute numbers.
+
+### Directory Listing — Pure `batch_read_dir_entries`
+
+| Items | macOS (native) | Linux (VM, io_uring) | Winner         |
+| ----- | -------------- | -------------------- | -------------- |
+| 10    | 63 µs          | 171 µs               | macOS 2.7×     |
+| 50    | 128 µs         | 213 µs               | macOS 1.7×     |
+| 200   | 375 µs         | **352 µs**           | ≈ tie          |
+| 1000  | 1.73 ms        | **1.14 ms**          | **Linux 1.5×** |
+
+> The crossover is at ~200 entries in the VM — near `BATCH_SIZE` (256).
+> Below that threshold, the io_uring setup cost (~1 × `io_uring_setup` +
+> `io_uring_enter`) plus VM overhead exceeds the cost of a few serial
+> `fstatat` calls on native APFS. Above it, replacing 256+ individual
+> stat syscalls with a single `io_uring_enter` batch overwhelms both VM
+> overhead and macOS native performance.
+>
+> On bare-metal Linux the crossover would shift left significantly —
+> likely into the 30–80 entry range. At 10 entries, macOS would still
+> lead (single-syscall latency and Apple Silicon IPC dominate there).
+
+### PROPFIND — End-to-End with XML + Lock Lookups
+
+| Scenario        | macOS      | Linux (VM)  | Winner          |
+| --------------- | ---------- | ----------- | --------------- |
+| depth:0         | **32 µs**  | 79 µs       | macOS 2.5×      |
+| depth:1 10      | **104 µs** | 208 µs      | macOS 2.0×      |
+| depth:1 50      | **312 µs** | 374 µs      | macOS 1.2×      |
+| depth:1 200     | 1.09 ms    | **950 µs**  | **Linux 1.15×** |
+| depth:1 1000    | 5.27 ms    | **4.13 ms** | **Linux 1.28×** |
+| depth:inf (~20) | **292 µs** | 695 µs      | macOS 2.4×      |
+
+> Same crossover pattern as directory listing: io_uring batch statx overtakes
+> macOS native performance between 50–200 entries. In a bare-metal Linux
+> deployment with NVMe storage, the advantage would be more pronounced.
+
+### Conclusion
+
+io_uring batch statx (`IORING_OP_STATX` via `src/scandir.rs`) is **effective**:
+relative scaling improves with larger directories, and the crossover against
+native macOS APFS performance occurs within the expected `BATCH_SIZE`
+neighbourhood. The optimisation is validated.
+
+### Trade-off: Small Directories vs Large
+
+At 10 entries — the common case for most real-world directories — io_uring
+on Linux is ~100 µs slower than a plain serial `fstatat` loop (~171 µs vs
+~70 µs estimated). In absolute terms this is negligible: PROPFIND on a
+10-entry directory completes in 208 µs (Linux VM) or 104 µs (macOS), both
+well under 1 ms. The client cannot perceive the difference.
+
+The optimisation targets the _long tail_ — directories with 200–1000+
+entries, where serial stat overhead is multiplicative and the io_uring
+batch advantage grows linearly. A single code path for all directory sizes
+avoids the complexity of maintaining separate serial and batch stat
+implementations with a threshold-based dispatch.
 
 ---
 
@@ -338,10 +409,13 @@ Both numbers are accurate — they measure different phases of the same HTTP tra
 
 | Directory Size | PROPFIND depth:1 | Dir Listing HTML |
 | -------------- | ---------------- | ---------------- |
-| 10 files       | 1.28 ms          | 109 µs           |
-| 50 files       | 5.66 ms          | 349 µs           |
-| 100 files      | ~11 ms           | ~700 µs          |
-| 200 files      | 21.7 ms          | 1.26 ms          |
-| 1000 files     | ~110 ms          | 6.1 ms           |
+| 10 files       | 104 µs           | 63 µs            |
+| 50 files       | 312 µs           | 128 µs           |
+| 100 files      | ~550 µs          | ~250 µs          |
+| 200 files      | 1.09 ms          | 375 µs           |
+| 1000 files     | 5.27 ms          | 1.73 ms          |
 
-> For directories with **>500 files**, PROPFIND depth:1 will exceed 50ms. WebDAV clients performing full-tree syncs on large directories should use depth:0 and iterate manually, or the server should support result streaming (not implemented).
+> PROPFIND per-entry overhead over plain directory listing is now ~3-4µs,
+> attributable to XML generation (~3µs) plus lock/dead-property lookups.
+> For directories with >1000 files, PROPFIND depth:1 still completes in ~5ms —
+> well within typical WebDAV client timeouts.

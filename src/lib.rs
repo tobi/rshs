@@ -11,6 +11,8 @@ pub mod handlers;
 pub(crate) mod html;
 /// Tower middleware layers.
 pub mod middleware;
+/// Batch filesystem metadata operations.
+pub(crate) mod scandir;
 /// Router construction and server startup.
 pub(crate) mod server;
 /// Internal utilities (errors, path resolution, time formatting).

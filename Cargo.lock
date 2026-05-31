@@ -834,6 +834,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-uring"
+version = "0.7.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d09b98f7eace8982db770e4408e7470b028ce513ac28fecdc6bf4c30fe92b62"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1264,7 +1275,7 @@ dependencies = [
 
 [[package]]
 name = "rshs"
-version = "0.8.4"
+version = "0.9.0"
 dependencies = [
  "axum",
  "base64",
@@ -1272,6 +1283,7 @@ dependencies = [
  "criterion",
  "derive-new",
  "futures-util",
+ "io-uring",
  "libc",
  "mime_guess",
  "percent-encoding",

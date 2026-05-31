@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 use super::{Depth, PropEntry};
+use crate::scandir;
 
 /// Characters that do NOT need percent-encoding in a WebDAV href path segment.
 const HREF_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
@@ -29,7 +30,7 @@ pub async fn collect_entries(fs_path: &Path, request_path: &str, depth: Depth) -
     };
 
     let is_dir = meta.is_dir();
-    let mut base_entry = PropEntry::from_meta(normalize_href(request_path, is_dir), is_dir, &meta);
+    let mut base_entry = PropEntry::from_meta(&meta, normalize_href(request_path, is_dir), is_dir);
     base_entry.canonical_path = Some(fs_path.to_path_buf());
     if !is_dir {
         base_entry.content_type = guess_content_type(&fs_path);
@@ -55,36 +56,23 @@ fn guess_content_type(child_name: &impl AsRef<Path>) -> Option<String> {
 }
 
 async fn collect_direct_children(dir_path: &Path, parent_href: &str, entries: &mut Vec<PropEntry>) {
-    let mut read_dir = match tokio::fs::read_dir(dir_path).await {
-        Ok(rd) => rd,
+    let children = match scandir::batch_read_dir_entries(dir_path).await {
+        Ok(c) => c,
         Err(_) => return,
     };
 
     let base = normalize_href(parent_href, true);
 
-    loop {
-        let dir_entry = match read_dir.next_entry().await {
-            Ok(Some(e)) => e,
-            Ok(None) => break,
-            Err(_) => continue,
-        };
-
-        let name = dir_entry.file_name();
-        let name_str = name.to_string_lossy();
-        let meta = match dir_entry.metadata().await {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-
-        let is_dir = meta.file_type().is_dir();
+    for child in children {
+        let name_str = child.name.to_string_lossy();
         let child_href = format!(
             "{base}{encoded}",
             encoded = utf8_percent_encode(&name_str, HREF_ENCODE_SET)
         );
 
-        let mut entry = PropEntry::from_meta(child_href, is_dir, &meta);
-        if !is_dir {
-            entry.content_type = guess_content_type(&name);
+        let mut entry = PropEntry::from_dirent(&child, child_href);
+        if !child.is_dir {
+            entry.content_type = guess_content_type(&child.name);
         }
         entries.push(entry);
     }
@@ -95,41 +83,28 @@ async fn collect_descendants(root_dir: &Path, root_href: &str, entries: &mut Vec
     stack.push((root_dir.to_path_buf(), normalize_href(root_href, true)));
 
     while let Some((dir_path, parent_href)) = stack.pop() {
-        let mut read_dir = match tokio::fs::read_dir(&dir_path).await {
-            Ok(rd) => rd,
+        let children = match scandir::batch_read_dir_entries(&dir_path).await {
+            Ok(c) => c,
             Err(_) => continue,
         };
 
-        loop {
-            let dir_entry = match read_dir.next_entry().await {
-                Ok(Some(e)) => e,
-                Ok(None) => break,
-                Err(_) => continue,
-            };
-
-            let name = dir_entry.file_name();
-            let name_str = name.to_string_lossy();
-            let meta = match dir_entry.metadata().await {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-
-            let is_dir = meta.file_type().is_dir();
+        for child in children {
+            let name_str = child.name.to_string_lossy();
             let child_href = format!(
                 "{base}{encoded}",
                 base = parent_href,
                 encoded = utf8_percent_encode(&name_str, HREF_ENCODE_SET)
             );
 
-            let mut entry = PropEntry::from_meta(child_href.clone(), is_dir, &meta);
-            if !is_dir {
-                entry.content_type = guess_content_type(&name);
+            let mut entry = PropEntry::from_dirent(&child, child_href.clone());
+            if !child.is_dir {
+                entry.content_type = guess_content_type(&child.name);
             }
             entries.push(entry);
 
-            if is_dir {
+            if child.is_dir {
                 let sub_href = normalize_href_dir(&child_href);
-                stack.push((dir_entry.path(), sub_href));
+                stack.push((dir_path.join(&child.name), sub_href));
             }
         }
     }

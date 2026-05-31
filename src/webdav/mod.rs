@@ -9,6 +9,7 @@ pub mod xml;
 
 use std::collections::HashMap;
 use std::fmt;
+use std::fs::Metadata;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -17,6 +18,8 @@ use derive_new::new;
 use percent_encoding::percent_decode_str;
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
+
+use crate::scandir::DirEntryMeta;
 
 pub use ls::{find_ancestor_lock, walk_locked_ancestors};
 pub use method::Method;
@@ -129,10 +132,10 @@ impl PropEntry {
     /// use rshs::webdav::PropEntry;
     ///
     /// let meta = fs::metadata("Cargo.toml").unwrap();
-    /// let entry = PropEntry::from_meta("/Cargo.toml".into(), false, &meta);
+    /// let entry = PropEntry::from_meta(&meta, "/Cargo.toml".into(), false);
     /// assert!(entry.size > 0);
     /// ```
-    pub fn from_meta(href: String, is_dir: bool, meta: &std::fs::Metadata) -> Self {
+    pub fn from_meta(meta: &Metadata, href: String, is_dir: bool) -> Self {
         Self::new(
             href,
             meta.modified().unwrap_or(UNIX_EPOCH),
@@ -140,6 +143,15 @@ impl PropEntry {
             meta.len(),
             is_dir,
         )
+    }
+
+    /// Create a `PropEntry` from a [`scandir::DirEntryMeta`] and an href.
+    ///
+    /// The remaining WebDAV fields (`content_type`, `dead_props`,
+    /// `active_locks`, `canonical_path`) are left at `None` — callers
+    /// set them afterwards as needed.
+    pub(crate) fn from_dirent(meta: &DirEntryMeta, href: String) -> Self {
+        Self::new(href, meta.modified, meta.created, meta.size, meta.is_dir)
     }
 }
 

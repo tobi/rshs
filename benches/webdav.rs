@@ -20,47 +20,54 @@ fn bench_propfind(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let mut group = c.benchmark_group("webdav/PROPFIND");
 
-    // Depth:0 on a single file
+    // Depth:0 on a single file — file created outside iter so the
+    // benchmark measures only the PROPFIND request path.
     group.bench_function("depth0_file", |b| {
+        let dir = TempDir::new().unwrap();
+        create_file(dir.path(), "file.txt", 1024);
+        let router = bench_router(dir.path());
         b.iter(|| {
-            let dir = TempDir::new().unwrap();
-            create_file(dir.path(), "file.txt", 1024);
-            let router = bench_router(dir.path());
             rt.block_on(async {
                 let _ = router
+                    .clone()
                     .oneshot(make_propfind("/file.txt", "0", ALLPROP_BODY))
                     .await;
             });
         });
     });
 
-    // Depth:1 on directory (parameterized by size)
-    for count in [10u32, 50, 200] {
+    // Depth:1 on directory — files + router created once per input size,
+    // measuring only the PROPFIND dispatch (including batch statx on Linux).
+    for count in [10u32, 50, 200, 1000] {
         group.throughput(Throughput::Elements(count as u64));
         group.bench_with_input(
             BenchmarkId::new("depth1_dir", count),
             &count,
             |b, &count| {
+                let dir = TempDir::new().unwrap();
+                create_small_files(dir.path(), count as usize);
+                let router = bench_router(dir.path());
                 b.iter(|| {
-                    let dir = TempDir::new().unwrap();
-                    create_small_files(dir.path(), count as usize);
-                    let router = bench_router(dir.path());
                     rt.block_on(async {
-                        let _ = router.oneshot(make_propfind("/", "1", ALLPROP_BODY)).await;
+                        let _ = router
+                            .clone()
+                            .oneshot(make_propfind("/", "1", ALLPROP_BODY))
+                            .await;
                     });
                 });
             },
         );
     }
 
-    // Depth:infinity on nested tree
+    // Depth:infinity on nested tree — tree built once, router reused.
     group.bench_function("depth_infinity_tree", |b| {
+        let dir = TempDir::new().unwrap();
+        create_nested_tree(dir.path(), 3, 5);
+        let router = bench_router(dir.path());
         b.iter(|| {
-            let dir = TempDir::new().unwrap();
-            create_nested_tree(dir.path(), 3, 5);
-            let router = bench_router(dir.path());
             rt.block_on(async {
                 let _ = router
+                    .clone()
                     .oneshot(make_propfind("/level_0", "infinity", ALLPROP_BODY))
                     .await;
             });

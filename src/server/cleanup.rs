@@ -27,7 +27,10 @@ pub(super) async fn cleanup_task(locks: Locks, auth_cache: Cache, shutdown: Noti
                     );
                 }
 
-                let mut cache = auth_cache.write().unwrap();
+                let Ok(mut cache) = auth_cache.write() else {
+                    tracing::warn!("auth cache lock poisoned during cleanup");
+                    continue;
+                };
                 let before = cache.len();
                 cache.retain(|_, expiry| *expiry > std::time::Instant::now());
                 let after = cache.len();

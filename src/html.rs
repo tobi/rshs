@@ -1,53 +1,17 @@
 //! HTML directory listing generation.
 //!
-//! Provides the data model (`DirEntry`), filesystem traversal, and HTML
-//! rendering used by [`handle_get_head`](crate::handlers::http::handle_get_head)
-//! to produce directory index pages.
+//! Provides the HTML rendering and formatting helpers used by
+//! [`handle_get_head`](crate::handlers::http::handle_get_head) to produce
+//! directory index pages.  Directory enumeration is delegated to
+//! [`scandir::batch_read_dir_entries`].
 
+use std::fmt::Write;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use derive_new::new;
+use percent_encoding::percent_decode_str;
 
+use crate::scandir::{self, DirEntryMeta};
 use crate::utils::time::format_rfc850;
-
-#[derive(new)]
-struct DirEntry {
-    name: String,
-    is_dir: bool,
-    size: u64,
-    modified: SystemTime,
-}
-
-impl DirEntry {
-    fn display_name(&self) -> String {
-        if self.is_dir {
-            format!("{}/", self.name)
-        } else {
-            self.name.clone()
-        }
-    }
-
-    fn display_name_len(&self) -> usize {
-        self.name.len() + if self.is_dir { 1 } else { 0 }
-    }
-
-    fn size_label(&self) -> String {
-        if self.is_dir {
-            "-".to_string()
-        } else {
-            self.size.to_string()
-        }
-    }
-
-    fn size_label_len(&self) -> usize {
-        if self.is_dir {
-            1
-        } else {
-            self.size.checked_ilog10().unwrap_or(0) as usize + 1
-        }
-    }
-}
 
 /// Generate an HTML directory listing for a filesystem path.
 ///
@@ -62,9 +26,11 @@ impl DirEntry {
 /// [`handle_get_head`](crate::handlers::http::handle_get_head) to serve
 /// directory index pages to browsers.
 pub(crate) async fn generate_dir_listing(dir_path: &Path, request_path: &str) -> (String, usize) {
-    let entries = match collect_dir_entries(dir_path).await {
-        Some(entries) => entries,
-        None => {
+    let mut html = String::new();
+
+    let mut entries = match scandir::batch_read_dir_entries(dir_path).await {
+        Ok(entries) => entries,
+        Err(_) => {
             return (
                 "<!DOCTYPE html><html><head><title>Error</title></head><body><h1>Cannot read directory</h1></body></html>"
                     .to_string(),
@@ -73,62 +39,37 @@ pub(crate) async fn generate_dir_listing(dir_path: &Path, request_path: &str) ->
         }
     };
 
-    render_dir_html(request_path, entries)
-}
-
-async fn collect_dir_entries(dir_path: &Path) -> Option<Vec<DirEntry>> {
-    let mut read_dir = tokio::fs::read_dir(dir_path).await.ok()?;
-
-    let mut entries = Vec::new();
-    loop {
-        let entry = match read_dir.next_entry().await {
-            Ok(Some(e)) => e,
-            Ok(None) => break,
-            Err(_) => continue,
-        };
-        let name = entry.file_name().to_string_lossy().to_string();
-        let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
-        let metadata = entry.metadata().await.ok();
-        let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
-        let modified = metadata
-            .as_ref()
-            .and_then(|m| m.modified().ok())
-            .unwrap_or(UNIX_EPOCH);
-        entries.push(DirEntry::new(name, is_dir, size, modified));
-    }
-    Some(entries)
-}
-
-fn render_dir_html(request_path: &str, mut entries: Vec<DirEntry>) -> (String, usize) {
     entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
 
     let (max_name_len, max_size_len) = entries.iter().fold((0, 0), |(mn, ms), e| {
-        (mn.max(e.display_name_len()), ms.max(e.size_label_len()))
+        (mn.max(display_name_len(e)), ms.max(size_label_len(e)))
     });
     let name_col = max_name_len + 20;
 
-    use std::fmt::Write;
-    let mut html = String::new();
+    let decoded_path = percent_decode_str(request_path).decode_utf8_lossy();
+
     write!(
         html,
-        "<!DOCTYPE html><html><head><title>Index of {request_path}</title><meta charset=\"utf-8\"></head><body><h1>Index of {request_path}</h1><hr><pre>"
+        "<!DOCTYPE html><html><head><title>Index of {decoded_path}</title><meta charset=\"utf-8\"></head><body><h1>Index of {decoded_path}</h1><hr><pre>"
     )
     .unwrap();
+
     if request_path != "/" {
         html.push_str("<a href=\"../\">../</a>\n");
     }
 
     for entry in &entries {
-        let disp = entry.display_name();
-        let size_str = entry.size_label();
-        let date_str = format_rfc850(entry.modified);
-        let pad1 = name_col.saturating_sub(disp.len());
+        let name = entry.name.to_string_lossy();
 
         if entry.is_dir {
-            write!(html, "<a href=\"{}/\">{}/</a>", entry.name, entry.name).unwrap();
+            write!(html, "<a href=\"{name}/\">{name}/</a>").unwrap();
         } else {
-            write!(html, "<a href=\"{}\">{}</a>", entry.name, entry.name).unwrap();
+            write!(html, "<a href=\"{name}\">{name}</a>").unwrap();
         }
+
+        let pad1 = name_col.saturating_sub(display_name_len(entry));
+        let size_str = size_label(entry);
+        let date_str = format_rfc850(entry.modified);
 
         writeln!(
             html,
@@ -138,9 +79,29 @@ fn render_dir_html(request_path: &str, mut entries: Vec<DirEntry>) -> (String, u
         .unwrap();
     }
 
-    let entry_count = entries.len();
     html.push_str("</pre><hr></body></html>");
-    (html, entry_count)
+
+    (html, entries.len())
+}
+
+fn display_name_len(e: &DirEntryMeta) -> usize {
+    e.name.len() + if e.is_dir { 1 } else { 0 }
+}
+
+fn size_label(e: &DirEntryMeta) -> String {
+    if e.is_dir {
+        "-".to_string()
+    } else {
+        e.size.to_string()
+    }
+}
+
+fn size_label_len(e: &DirEntryMeta) -> usize {
+    if e.is_dir {
+        1
+    } else {
+        e.size.checked_ilog10().unwrap_or(0) as usize + 1
+    }
 }
 
 #[cfg(test)]

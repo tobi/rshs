@@ -3,12 +3,33 @@
 ## Build & Run
 
 ```sh
-cargo build
-cargo run
-cargo test
+# Build
+cargo check                 # fast (no codegen), use during iteration
+cargo build                 # debug
+cargo build --release       # optimized
+
+# Run
+cargo run                   # serve current directory
+cargo run --release -- ./data -v
+
+# Pre-commit checklist (must produce zero warnings)
 cargo fmt
-cargo clippy
-cargo bench
+cargo clippy -- -D warnings
+cargo test
+
+# Run specific tests
+cargo test -- utils::scandir            # unit test module
+cargo test --test webdav_tests          # integration test file
+cargo test PROPFIND                     # filter by test name
+
+# Benchmarks
+cargo bench                             # all 6 suites
+cargo bench --bench webdav              # WebDAV protocol only
+cargo bench -- "PROPFIND/depth1_dir"    # filter by name
+
+# Litmus compliance (see Testing section)
+cargo run --release -- ./data -vv       # start server
+TESTS="basic http copymove locks props" TESTROOT=. ./litmus http://localhost:8080
 ```
 
 ## Architecture
@@ -28,6 +49,8 @@ src/
   cli.rs                        # clap-derived CLI args (Cli, ShadowFileArg)
 
   auth.rs                       # AuthState, Credential, shadow file mgmt, auth cache
+
+  scandir.rs                    # Batch statx via io_uring (Linux) or std::fs::read_dir (fallback)
 
   html.rs                       # HTML directory listing (DirEntry, rendering)
 
@@ -71,28 +94,45 @@ src/
 | Crate                    | Features                               | Purpose                             |
 | ------------------------ | -------------------------------------- | ----------------------------------- |
 | `axum` 0.8               | `http2`                                | HTTP server framework               |
-| `tokio` 1.52             | `rt-multi-thread,net,macros,fs,signal` | Async runtime + graceful shutdown   |
-| `tower` 0.5              | —                                      | Middleware traits (Layer, Service)  |
-| `tower-http` 0.6         | `trace`                                | Request tracing middleware          |
-| `tokio-rustls` 0.26      | —                                      | TLS acceptor for axum               |
-| `tokio-util` 0.7         | `io`                                   | StreamReader for PUT body streaming |
-| `rustls` 0.23            | —                                      | TLS protocol implementation         |
-| `rustls-pemfile` 2.2     | —                                      | PEM certificate/key parsing         |
-| `sha2` 0.11              | —                                      | Certificate fingerprint             |
+| `base64` 0.22            | —                                      | Basic Auth header decoding          |
 | `clap` 4.6               | `derive`, `env`                        | CLI args + env var support          |
 | `derive-new` 0.7         | —                                      | `#[derive(new)]` constructor macro  |
 | `futures-util` 0.3       | —                                      | Stream combinators (TryStreamExt)   |
 | `mime_guess` 2           | —                                      | MIME type detection                 |
 | `percent-encoding` 2     | —                                      | URI percent-encode/decode           |
 | `quick-xml` 0.40         | —                                      | XML parsing + generation (WebDAV)   |
-| `base64` 0.22            | —                                      | Basic Auth header decoding          |
+| `rustls` 0.23            | —                                      | TLS protocol implementation         |
+| `rustls-pemfile` 2.2     | —                                      | PEM certificate/key parsing         |
 | `sha-crypt` 0.6          | `getrandom`                            | SHA-512 crypt hash verification     |
+| `sha2` 0.11              | —                                      | Certificate fingerprint             |
+| `tokio` 1.52             | `rt-multi-thread,net,macros,fs,signal` | Async runtime + graceful shutdown   |
+| `tokio-rustls` 0.26      | —                                      | TLS acceptor for axum               |
+| `tokio-util` 0.7         | `io`                                   | StreamReader for PUT body streaming |
+| `tower` 0.5              | —                                      | Middleware traits (Layer, Service)  |
+| `tower-http` 0.6         | `trace`                                | Request tracing middleware          |
 | `tracing` 0.1            | —                                      | Structured logging facade           |
 | `tracing-subscriber` 0.3 | `env-filter`, `fmt`                    | Log output + filter engine          |
-| —                        | —                                      | —                                   |
-| `tempfile` 3.27          | _dev_                                  | Temporary directories in tests      |
-| `libc` 0.2               | _dev, unix-only_                       | SIGINT/SIGTERM in shutdown tests    |
-| `criterion` 0.5          | _dev_                                  | Performance benchmarking            |
+
+**Linux-only**
+
+| Crate          | Features | Purpose                     |
+| -------------- | -------- | --------------------------- |
+| `io-uring` 0.6 | —        | Batch statx for PROPFIND    |
+| `libc` 0.2     | —        | `statx` struct for io_uring |
+
+**Dev**
+
+| Crate           | Features                      | Purpose                        |
+| --------------- | ----------------------------- | ------------------------------ |
+| `criterion` 0.8 | `async_tokio`, `html_reports` | Benchmarking                   |
+| `rcgen` 0.14    | —                             | TLS cert generation in tests   |
+| `tempfile` 3.27 | —                             | Temporary directories in tests |
+
+**Dev (Unix-only)**
+
+| Crate      | Features | Purpose                          |
+| ---------- | -------- | -------------------------------- |
+| `libc` 0.2 | —        | SIGINT/SIGTERM in shutdown tests |
 
 ### Key Patterns
 
