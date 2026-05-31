@@ -400,7 +400,6 @@ mod tests {
     #[cfg(target_os = "linux")]
     mod linux_tests {
         use super::super::linux_impl;
-        use std::io::Write;
         use std::os::unix::io::AsRawFd;
 
         /// batch_statx with empty name list returns empty result set.
