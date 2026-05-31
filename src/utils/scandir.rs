@@ -104,9 +104,8 @@ mod linux_impl {
                     .build()
                     .user_data(i as u64);
 
-                    sq.push(&statx_e).map_err(|_| {
-                        io::Error::new(io::ErrorKind::Other, "io_uring submission queue full")
-                    })?;
+                    sq.push(&statx_e)
+                        .map_err(|_| io::Error::other("io_uring submission queue full"))?;
                 }
             }
 
@@ -257,7 +256,9 @@ fn batch_fallback(dir_path: &Path) -> io::Result<Vec<DirEntryMeta>> {
             Err(_) => continue,
         };
         let name = entry.file_name();
-        let meta = match entry.metadata() {
+        // symlink_metadata so symlinks are reported as themselves,
+        // matching batch_linux which uses AT_SYMLINK_NOFOLLOW.
+        let meta = match std::fs::symlink_metadata(entry.path()) {
             Ok(m) => m,
             Err(_) => continue,
         };
@@ -332,5 +333,145 @@ mod tests {
         // Allow 2 s tolerance for coarse filesystem timestamp granularity
         let tolerance = std::time::Duration::from_secs(2);
         assert!(entries[0].modified + tolerance >= before);
+    }
+
+    #[tokio::test]
+    async fn large_directory_over_batch_size() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let count = 300; // > BATCH_SIZE (256) to exercise chunked io_uring
+        for i in 0..count {
+            std::fs::File::create(dir.path().join(format!("file_{i:05}.txt"))).unwrap();
+        }
+
+        let entries = batch_read_dir_entries(dir.path()).await.unwrap();
+        assert_eq!(entries.len(), count);
+    }
+
+    #[tokio::test]
+    async fn unicode_filenames_preserved() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let names = ["普通文件.txt", "🍕.dat", "名前.txt"];
+        for name in &names {
+            std::fs::File::create(dir.path().join(name)).unwrap();
+        }
+
+        let mut entries = batch_read_dir_entries(dir.path()).await.unwrap();
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+        assert_eq!(entries.len(), 3);
+        // OsString round-trip: names must survive the read_dir + CString + statx chain
+        for entry in &entries {
+            let s = entry.name.to_str().unwrap();
+            assert!(names.contains(&s), "unexpected name: {s}");
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn symlink_reported_as_itself_not_target() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::File::create(dir.path().join("real.txt"))
+            .unwrap()
+            .write_all(b"hello world")
+            .unwrap();
+        std::os::unix::fs::symlink(dir.path().join("real.txt"), dir.path().join("link.txt"))
+            .unwrap();
+
+        let mut entries = batch_read_dir_entries(dir.path()).await.unwrap();
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+        assert_eq!(entries.len(), 2);
+
+        let link = entries.iter().find(|e| e.name == "link.txt").unwrap();
+        assert!(
+            !link.is_dir,
+            "symlink to file should not be reported as dir"
+        );
+        // symlink's own metadata, not the target's — size is small (the link path length)
+        assert!(
+            link.size < 1024,
+            "symlink size should be small, got {}",
+            link.size
+        );
+    }
+
+    // -- Linux-only: direct io_uring path tests ------------------------
+
+    #[cfg(target_os = "linux")]
+    mod linux_tests {
+        use super::super::linux_impl;
+        use std::io::Write;
+        use std::os::unix::io::AsRawFd;
+
+        /// batch_statx with empty name list returns empty result set.
+        #[test]
+        fn batch_statx_empty_names() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let dir_file = std::fs::File::open(dir.path()).unwrap();
+            let fd = dir_file.as_raw_fd();
+
+            let result = linux_impl::batch_statx(fd, &[]).unwrap();
+            assert!(result.is_empty());
+        }
+
+        /// batch_statx with a single file name returns one valid result.
+        #[test]
+        fn batch_statx_single_entry() {
+            let dir = tempfile::TempDir::new().unwrap();
+            std::fs::File::create(dir.path().join("f")).unwrap();
+            let dir_file = std::fs::File::open(dir.path()).unwrap();
+            let fd = dir_file.as_raw_fd();
+
+            let name = std::ffi::CString::new("f").unwrap();
+            let result = linux_impl::batch_statx(fd, &[name]).unwrap();
+
+            assert_eq!(result.len(), 1);
+            assert!(result[0].is_some(), "valid file should return statx data");
+        }
+
+        /// batch_statx with more entries than BATCH_SIZE splits into chunks
+        /// correctly — all entries returned, none lost.
+        #[test]
+        fn batch_statx_chunking() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let count = 300; // > BATCH_SIZE (256)
+            for i in 0..count {
+                std::fs::File::create(dir.path().join(format!("f_{i:05}"))).unwrap();
+            }
+
+            let dir_file = std::fs::File::open(dir.path()).unwrap();
+            let fd = dir_file.as_raw_fd();
+
+            let names: Vec<_> = (0..count)
+                .map(|i| std::ffi::CString::new(format!("f_{i:05}")).unwrap())
+                .collect();
+
+            let result = linux_impl::batch_statx(fd, &names).unwrap();
+
+            assert_eq!(result.len(), count);
+            let success_count = result.iter().filter(|r| r.is_some()).count();
+            assert_eq!(success_count, count, "all {} entries should succeed", count);
+        }
+
+        /// batch_statx with an entry that disappeared returns None for that slot.
+        #[test]
+        fn batch_statx_missing_entry_returns_none() {
+            let dir = tempfile::TempDir::new().unwrap();
+            std::fs::File::create(dir.path().join("exists")).unwrap();
+
+            let dir_file = std::fs::File::open(dir.path()).unwrap();
+            let fd = dir_file.as_raw_fd();
+
+            let names = vec![
+                std::ffi::CString::new("exists").unwrap(),
+                std::ffi::CString::new("ghost").unwrap(), // never created
+            ];
+
+            let result = linux_impl::batch_statx(fd, &names).unwrap();
+
+            assert_eq!(result.len(), 2);
+            assert!(result[0].is_some(), "existing file should succeed");
+            assert!(result[1].is_none(), "missing file should be None");
+        }
     }
 }
