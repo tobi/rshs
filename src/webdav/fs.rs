@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 use super::{Depth, PropEntry};
-use crate::utils::scandir;
+use crate::scandir;
 
 /// Characters that do NOT need percent-encoding in a WebDAV href path segment.
 const HREF_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
@@ -70,7 +70,7 @@ async fn collect_direct_children(dir_path: &Path, parent_href: &str, entries: &m
             encoded = utf8_percent_encode(&name_str, HREF_ENCODE_SET)
         );
 
-        let mut entry = PropEntry::from_scandir(&child, child_href);
+        let mut entry = PropEntry::from_dirent(&child, child_href);
         if !child.is_dir {
             entry.content_type = guess_content_type(&child.name);
         }
@@ -96,7 +96,7 @@ async fn collect_descendants(root_dir: &Path, root_href: &str, entries: &mut Vec
                 encoded = utf8_percent_encode(&name_str, HREF_ENCODE_SET)
             );
 
-            let mut entry = PropEntry::from_scandir(&child, child_href.clone());
+            let mut entry = PropEntry::from_dirent(&child, child_href.clone());
             if !child.is_dir {
                 entry.content_type = guess_content_type(&child.name);
             }

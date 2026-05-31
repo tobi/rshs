@@ -19,7 +19,7 @@ use percent_encoding::percent_decode_str;
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 
-use crate::utils::scandir::DirEntryMeta;
+use crate::scandir::DirEntryMeta;
 
 pub use ls::{find_ancestor_lock, walk_locked_ancestors};
 pub use method::Method;
@@ -150,7 +150,7 @@ impl PropEntry {
     /// The remaining WebDAV fields (`content_type`, `dead_props`,
     /// `active_locks`, `canonical_path`) are left at `None` — callers
     /// set them afterwards as needed.
-    pub(crate) fn from_scandir(meta: &DirEntryMeta, href: String) -> Self {
+    pub(crate) fn from_dirent(meta: &DirEntryMeta, href: String) -> Self {
         Self::new(href, meta.modified, meta.created, meta.size, meta.is_dir)
     }
 }

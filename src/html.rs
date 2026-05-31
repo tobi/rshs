@@ -10,7 +10,7 @@ use std::path::Path;
 
 use percent_encoding::percent_decode_str;
 
-use crate::utils::scandir::{self, DirEntryMeta};
+use crate::scandir::{self, DirEntryMeta};
 use crate::utils::time::format_rfc850;
 
 /// Generate an HTML directory listing for a filesystem path.
