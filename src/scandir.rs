@@ -267,7 +267,7 @@ fn batch_fallback(dir_path: &Path) -> io::Result<Vec<DirEntryMeta>> {
         };
 
         let name = entry.file_name();
-        let meta = match std::fs::metadata(entry.path()) {
+        let meta = match entry.metadata() {
             Ok(m) => m,
             Err(e) => {
                 let name = name.to_string_lossy();
