@@ -14,7 +14,7 @@ cargo run --release -- ./data -v
 
 # Pre-commit checklist (must produce zero warnings)
 cargo fmt
-cargo clippy - D warnings
+cargo clippy -- -D warnings
 cargo test
 
 # Run specific tests
