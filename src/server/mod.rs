@@ -162,8 +162,8 @@ pub fn make_router(state: Arc<AppState>) -> Router {
     Router::new()
         .fallback(any(dispatch))
         .layer(TraceLayer::new_for_http())
-        .layer(auth_mw)
         .layer(lock_mw)
+        .layer(auth_mw)
         .layer(health_check_mw)
         .with_state(state)
 }
