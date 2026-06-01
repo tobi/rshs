@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use futures_util::TryStreamExt;
@@ -11,7 +10,6 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::html::generate_dir_listing;
-use crate::ok_or_return;
 use crate::server::AppState;
 use crate::utils::error::{IntoResolved, OrStatus};
 
@@ -19,14 +17,17 @@ use crate::utils::error::{IntoResolved, OrStatus};
 ///
 /// Supports conditional `If-Modified-Since` via the `Last-Modified` header.
 /// Accepts `Range` requests for partial content delivery.
-pub async fn handle_get_head(State(state): State<Arc<AppState>>, req: Request) -> Response {
+pub async fn handle_get_head(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    req: axum::extract::Request,
+) -> Result<Response, StatusCode> {
     let request_path = req.uri().path().to_owned();
 
     let fs_path = state.resolve_existing(&request_path).await;
-    let fs_path = ok_or_return!(fs_path.or_404("path resolution failed"));
+    let fs_path = fs_path.or_404("path resolution failed")?;
 
     let meta = tokio::fs::metadata(&fs_path).await;
-    let meta = ok_or_return!(meta.or_404("metadata failed for GET/HEAD"));
+    let meta = meta.or_404("metadata failed for GET/HEAD")?;
 
     let method = req.method();
     if meta.is_dir() {
@@ -37,9 +38,9 @@ pub async fn handle_get_head(State(state): State<Arc<AppState>>, req: Request) -
             .header("content-type", "text/html; charset=utf-8")
             .header("content-length", html.len());
         if method == axum::http::Method::HEAD {
-            return resp.body(Body::empty()).unwrap();
+            return Ok(resp.body(Body::empty()).unwrap());
         }
-        resp.body(Body::from(html)).unwrap()
+        Ok(resp.body(Body::from(html)).unwrap())
     } else {
         let file_size = meta.len();
         let mime = mime_guess::from_path(&fs_path).first_or_octet_stream();
@@ -49,16 +50,16 @@ pub async fn handle_get_head(State(state): State<Arc<AppState>>, req: Request) -
             .header("content-type", mime.as_ref())
             .header("content-length", file_size);
         if method == axum::http::Method::HEAD {
-            return resp.body(Body::empty()).unwrap();
+            return Ok(resp.body(Body::empty()).unwrap());
         }
         match tokio::fs::File::open(&fs_path).await {
             Ok(file) => {
                 let stream = ReaderStream::new(file);
-                resp.body(Body::from_stream(stream)).unwrap()
+                Ok(resp.body(Body::from_stream(stream)).unwrap())
             }
             Err(e) => {
                 tracing::error!(error = %e, "open failed");
-                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                Err(StatusCode::INTERNAL_SERVER_ERROR)
             }
         }
     }
@@ -69,12 +70,15 @@ pub async fn handle_get_head(State(state): State<Arc<AppState>>, req: Request) -
 /// Returns `201 Created` for new files, `200 OK` for overwrites.
 /// Rejects directory paths, missing parents, and traversal attempts.
 /// Intermediate collections are NOT created (per RFC 4918 §9.6).
-pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Response {
+pub async fn handle_put(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    req: axum::extract::Request,
+) -> Result<Response, StatusCode> {
     let request_path = req.uri().path().to_owned();
 
     // PUT MUST NOT create intermediate collections (RFC 4918 §9.6)
     let target = state.resolve_and_guard(&request_path).await;
-    let target = ok_or_return!(target.or_invalid(StatusCode::BAD_REQUEST));
+    let target = target.or_invalid(StatusCode::BAD_REQUEST)?;
 
     let existed = tokio::fs::try_exists(&target).await.unwrap_or(false);
     let mut file = match tokio::fs::File::create(&target).await {
@@ -83,7 +87,7 @@ pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Res
             tracing::error!(
                 error = %e, path = %target.display(), "failed to create file for PUT"
             );
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
 
@@ -97,13 +101,13 @@ pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Res
             tracing::error!(
                 error = %e, path = %target.display(), "error writing PUT body"
             );
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
 
     if let Err(e) = file.flush().await {
         tracing::error!(error = %e, path = %target.display(), "error flushing PUT file");
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     tracing::debug!(
@@ -111,9 +115,9 @@ pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Res
     );
 
     if existed {
-        StatusCode::OK.into_response()
+        Ok(StatusCode::OK.into_response())
     } else {
-        StatusCode::CREATED.into_response()
+        Ok(StatusCode::CREATED.into_response())
     }
 }
 
@@ -121,43 +125,46 @@ pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> Res
 ///
 /// Returns `204 No Content` on success, `404 Not Found` if the target
 /// does not exist. Root directory deletion is rejected.
-pub async fn handle_delete(State(state): State<Arc<AppState>>, req: Request) -> Response {
+pub async fn handle_delete(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    req: axum::extract::Request,
+) -> Result<Response, StatusCode> {
     let request_path = req.uri().path().to_owned();
 
     let fs_path = state.resolve_existing(&request_path).await;
-    let fs_path = ok_or_return!(fs_path.or_404("path resolution failed for DELETE"));
+    let fs_path = fs_path.or_404("path resolution failed for DELETE")?;
 
     let meta = tokio::fs::metadata(&fs_path).await;
-    let meta = ok_or_return!(meta.or_404("metadata failed for DELETE"));
+    let meta = meta.or_404("metadata failed for DELETE")?;
 
     if meta.is_dir() {
         if fs_path == state.root_canonical {
             tracing::debug!("DELETE rejected: root directory");
-            return StatusCode::BAD_REQUEST.into_response();
+            return Err(StatusCode::BAD_REQUEST);
         }
         match tokio::fs::remove_dir_all(&fs_path).await {
             Ok(()) => {
                 tracing::debug!(path = %fs_path.display(), "DELETE directory completed");
-                StatusCode::NO_CONTENT.into_response()
+                Ok(StatusCode::NO_CONTENT.into_response())
             }
             Err(e) => {
                 tracing::error!(
                     error = %e, path = %fs_path.display(), "failed to remove directory for DELETE"
                 );
-                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                Err(StatusCode::INTERNAL_SERVER_ERROR)
             }
         }
     } else {
         match tokio::fs::remove_file(&fs_path).await {
             Ok(()) => {
                 tracing::debug!(path = %fs_path.display(), "DELETE completed");
-                StatusCode::NO_CONTENT.into_response()
+                Ok(StatusCode::NO_CONTENT.into_response())
             }
             Err(e) => {
                 tracing::error!(
                     error = %e, path = %fs_path.display(), "failed to remove file for DELETE"
                 );
-                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                Err(StatusCode::INTERNAL_SERVER_ERROR)
             }
         }
     }
@@ -167,8 +174,8 @@ pub async fn handle_delete(State(state): State<Arc<AppState>>, req: Request) -> 
 ///
 /// Includes the `DAV: 1,2` compliance level and `MS-Author-Via: DAV` header
 /// for compatibility with legacy clients.
-pub async fn handle_options() -> Response {
-    Response::builder()
+pub async fn handle_options() -> Result<Response, StatusCode> {
+    Ok(Response::builder()
         .status(StatusCode::OK)
         .header(
             "allow",
@@ -178,7 +185,7 @@ pub async fn handle_options() -> Response {
         .header("ms-author-via", "DAV")
         .header("content-length", "0")
         .body(Body::empty())
-        .unwrap()
+        .unwrap())
 }
 
 // ---------------------------------------------------------------------------
@@ -413,7 +420,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_options_returns_ok() {
-        let resp = super::handle_options().await;
+        let resp = super::handle_options().await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
         let allow = resp.headers().get("allow").unwrap().to_str().unwrap();
         assert!(allow.contains("GET"));
@@ -434,7 +441,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_options_has_content_length_zero() {
-        let resp = super::handle_options().await;
+        let resp = super::handle_options().await.unwrap();
         let cl = resp
             .headers()
             .get("content-length")
@@ -446,7 +453,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_options_body_empty() {
-        let resp = super::handle_options().await;
+        let resp = super::handle_options().await.unwrap();
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
             .unwrap();

@@ -4,13 +4,11 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use axum::body::{self, Body};
-use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 
-use crate::ok_or_return;
 use crate::server::AppState;
 use crate::utils::error::{IntoResolved, OrStatus};
 use crate::webdav::{
@@ -23,11 +21,14 @@ use crate::webdav::{
 /// Supports exclusive and shared locks. Handles lock-null resource creation
 /// for locking non-existent URLs. Refreshes existing locks when the same
 /// token is presented. Returns the `Lock-Token` header and activelock XML.
-pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Response {
+pub async fn handle_lock(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    req: axum::extract::Request,
+) -> Result<Response, StatusCode> {
     let request_path = req.uri().path().trim_end_matches('/').to_owned();
 
     let target = state.resolve_and_guard(&request_path).await;
-    let target = ok_or_return!(target.or_invalid(StatusCode::FORBIDDEN));
+    let target = target.or_invalid(StatusCode::FORBIDDEN)?;
 
     let timeout = webdav::parse_timeout(req.headers()).or_else(|| {
         if state.lock_timeout == std::time::Duration::ZERO {
@@ -44,7 +45,7 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
         .map(|t| t.to_string())
         .collect();
     let body_bytes = body::to_bytes(req.into_body(), 65536).await;
-    let body_bytes = ok_or_return!(body_bytes.or_400("failed to read LOCK body"));
+    let body_bytes = body_bytes.or_400("failed to read LOCK body")?;
 
     let (owner, lock_scope) = parse_lock_body(&body_bytes);
 
@@ -62,12 +63,12 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
             "indirect LOCK refresh via ancestor depth:infinity lock"
         );
         drop(locks);
-        return Response::builder()
+        return Ok(Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/xml; charset=utf-8")
             .header("lock-token", format!("<{}>", al.token))
             .body(Body::from(xml))
-            .unwrap();
+            .unwrap());
     }
 
     let entry = locks.entry(target.clone()).or_default();
@@ -78,7 +79,7 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
                 Ok(v) => v,
                 Err(status) => {
                     drop(locks);
-                    return status.into_response();
+                    return Err(status);
                 }
             }
         }
@@ -86,7 +87,7 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
             Ok(v) => v,
             Err(status) => {
                 drop(locks);
-                return status.into_response();
+                return Err(status);
             }
         },
     };
@@ -106,7 +107,7 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
 
     drop(locks);
 
-    Response::builder()
+    Ok(Response::builder()
         .status(if created_locknull {
             StatusCode::CREATED
         } else {
@@ -115,7 +116,7 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
         .header("content-type", "application/xml; charset=utf-8")
         .header("lock-token", format!("<{token}>"))
         .body(Body::from(xml))
-        .unwrap()
+        .unwrap())
 }
 
 fn parse_lock_body(xml: &[u8]) -> (Option<String>, webdav::LockScope) {
@@ -237,14 +238,17 @@ async fn try_acquire_shared(
 ///
 /// Requires the `Lock-Token` header. Returns `204 No Content` on success.
 /// Returns `403 Forbidden` if the token does not match any existing lock.
-pub async fn handle_unlock(State(state): State<Arc<AppState>>, req: Request) -> Response {
+pub async fn handle_unlock(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    req: axum::extract::Request,
+) -> Result<axum::response::Response, StatusCode> {
     let request_path = req.uri().path().to_owned();
 
     let token = webdav::parse_lock_token_header(req.headers());
-    let token = ok_or_return!(token.or_400("missing or invalid lock-token header for UNLOCK"));
+    let token = token.or_400("missing or invalid lock-token header for UNLOCK")?;
 
     let fs_path = state.resolve_existing(&request_path).await;
-    let fs_path = ok_or_return!(fs_path.or_404("resource not found for UNLOCK"));
+    let fs_path = fs_path.or_404("resource not found for UNLOCK")?;
 
     let mut locks = state.locks.write().await;
     if let Some(entry) = locks.get_mut(&fs_path) {
@@ -253,11 +257,11 @@ pub async fn handle_unlock(State(state): State<Arc<AppState>>, req: Request) -> 
         if entry.len() < before {
             tracing::debug!(path = %fs_path.display(), token = %token, "UNLOCK completed");
             drop(locks);
-            return StatusCode::NO_CONTENT.into_response();
+            return Ok(StatusCode::NO_CONTENT.into_response());
         }
     }
     drop(locks);
-    StatusCode::FORBIDDEN.into_response()
+    Err(StatusCode::FORBIDDEN)
 }
 
 // ---------------------------------------------------------------------------

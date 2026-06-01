@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use axum::http::StatusCode;
 use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 
 use crate::server::AppState;
 use crate::webdav::{self, Method, ls};
@@ -23,7 +23,7 @@ pub async fn lock_enforce(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     req: axum::extract::Request,
     next: Next,
-) -> Result<Response, Response> {
+) -> Result<Response, StatusCode> {
     let Ok(method) = Method::try_from(req.method()) else {
         return Ok(next.run(req).await);
     };
@@ -45,7 +45,7 @@ pub async fn lock_enforce(
         && !lists.iter().any(|l| l.has_lock_token())
         && !req.headers().contains_key("lock-token")
     {
-        return Err(StatusCode::PRECONDITION_FAILED.into_response());
+        return Err(StatusCode::PRECONDITION_FAILED);
     }
 
     let locks = state.locks.read().await;
@@ -55,7 +55,7 @@ pub async fn lock_enforce(
         if let Ok(src) = state.resolve_and_guard(&request_path).await {
             if is_path_locked(&locks, &src, &lists, &state.root_canonical, &request_path) {
                 tracing::debug!(path = %src.display(), "source locked, rejecting write");
-                return Err(StatusCode::LOCKED.into_response());
+                return Err(StatusCode::LOCKED);
             }
         }
     }
@@ -67,7 +67,7 @@ pub async fn lock_enforce(
             if let Ok(dest_path) = state.resolve_and_guard(dest_norm).await {
                 if is_path_locked(&locks, &dest_path, &lists, &state.root_canonical, dest_norm) {
                     tracing::debug!(path = %dest_norm, "destination locked, rejecting COPY/MOVE");
-                    return Err(StatusCode::LOCKED.into_response());
+                    return Err(StatusCode::LOCKED);
                 }
             }
         }

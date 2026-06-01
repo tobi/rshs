@@ -15,7 +15,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
+use axum::response::IntoResponse;
 use axum::routing::any;
 use derive_new::new;
 use tokio::sync::RwLock;
@@ -168,7 +168,7 @@ pub fn make_router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response {
+async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> impl IntoResponse {
     match Method::try_from(req.method()) {
         Ok(Method::GET) | Ok(Method::HEAD) => http::handle_get_head(State(state), req).await,
         Ok(Method::PUT) => http::handle_put(State(state), req).await,
@@ -181,6 +181,6 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response 
         Ok(Method::PROPPATCH) => webdav_handler::handle_proppatch(State(state), req).await,
         Ok(Method::LOCK) => locks::handle_lock(State(state), req).await,
         Ok(Method::UNLOCK) => locks::handle_unlock(State(state), req).await,
-        _ => StatusCode::NOT_IMPLEMENTED.into_response(),
+        _ => Err(StatusCode::NOT_IMPLEMENTED),
     }
 }

@@ -84,7 +84,7 @@ src/
 
   utils/
     mod.rs
-    error.rs                    # OrStatus trait + ok_or_return! macro
+    error.rs                    # OrStatus + IntoResolved traits (error-to-status-code conversion)
     path.rs                     # Path resolution (resolve_existing, resolve_write_target, resolve_and_guard)
     time.rs                     # Calendar formatting for directory listings
 ```
@@ -182,9 +182,13 @@ src/
     implements `Display` + `status(on_invalid) -> StatusCode` for handler use.
     All percent-decode the URI path via `percent_encoding::percent_decode_str`.
 - **Error handling**: `utils::error::OrStatus` trait extends `Result<T, E: Display>` with
-  `.or_400(msg)` and `.or_500(msg)` methods that
-  map errors to `Result<T, Response>` with tracing log. `ok_or_return!` macro unwraps
-  `Result<T, Response>` or early-returns from the enclosing handler function.
+  `.or_400(msg)` and `.or_500(msg)` methods that map errors to `Result<T, StatusCode>`
+  with tracing log. Handlers return `Result<Response, StatusCode>`,
+  using the `?` operator to propagate errors (axum auto-converts via its blanket
+  `IntoResponse` impl for `Result<T: IntoResponse, E: IntoResponse>`).
+  `IntoResolved` trait converts `ResolveTargetError` to `Result<T, StatusCode>`.
+  Middleware returns `Result<Response, Response>` because it may need custom
+  headers on error responses (e.g. `WWW-Authenticate` for 401).
 - **XML generation**: `webdav/xml.rs` defines `XmlWriterExt` trait (adds `.ev(event)` to
   `Writer<Cursor<Vec<u8>>>` as shorthand for `.write_event(event).unwrap()`).
   `write_activelock(lock)` is the shared function for LOCK response + PROPFIND lockdiscovery XML.
