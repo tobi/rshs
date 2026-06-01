@@ -16,6 +16,17 @@ use crate::webdav::{
     xml::{XmlWriterExt, dav_qname, write_activelock},
 };
 
+/// Result of conflict checking before lock-null resource creation.
+enum TryAcquire {
+    /// Lock acquired under the write guard — the entry has been modified.
+    /// No file I/O needed. The token is returned.
+    Acquired(String),
+    /// Entry was empty — caller should drop the lock guard, create the
+    /// lock-null resource, reacquire, re-verify the entry is still empty,
+    /// then commit the new lock entry.
+    NeedsLockNull,
+}
+
 /// LOCK handler — creates or refreshes a WebDAV lock (RFC 4918 §9.10).
 ///
 /// Supports exclusive and shared locks. Handles lock-null resource creation
@@ -54,69 +65,93 @@ pub async fn handle_lock(
     if let Some(al) = webdav::find_ancestor_lock(&locks, &target, &state.root_canonical, |l| {
         if_tokens.contains(&l.token)
     }) {
-        let al = al.clone();
-        let xml = build_lock_response(&al);
+        let xml = build_lock_response(al);
+
         tracing::debug!(
-            path = %target.display(),
-            token = %al.token,
-            ancestor = true,
+            path = %target.display(), token = %al.token, ancestor = true,
             "indirect LOCK refresh via ancestor depth:infinity lock"
         );
-        drop(locks);
-        return Ok(Response::builder()
-            .status(StatusCode::OK)
-            .header("content-type", "application/xml; charset=utf-8")
-            .header("lock-token", format!("<{}>", al.token))
-            .body(Body::from(xml))
-            .unwrap());
+
+        return Ok(lock_response(&al.token, xml, StatusCode::OK));
     }
 
     let entry = locks.entry(target.clone()).or_default();
 
-    let (token, is_refresh, created_locknull) = match lock_scope {
-        webdav::LockScope::Exclusive => {
-            match try_acquire_exclusive(entry, &if_tokens, &target).await {
-                Ok(v) => v,
-                Err(status) => {
-                    drop(locks);
-                    return Err(status);
-                }
-            }
-        }
-        webdav::LockScope::Shared => match try_acquire_shared(entry, &if_tokens, &target).await {
-            Ok(v) => v,
-            Err(status) => {
-                drop(locks);
-                return Err(status);
-            }
-        },
+    let decision = match lock_scope {
+        webdav::LockScope::Exclusive => try_acquire_exclusive(entry, &if_tokens).await?,
+        webdav::LockScope::Shared => try_acquire_shared(entry, &if_tokens).await?,
     };
 
-    let lock = webdav::LockInfo::new(
-        lock_scope,
-        token.clone(),
-        owner,
-        std::time::SystemTime::now(),
-        timeout,
-        depth,
-    );
-    let xml = build_lock_response(&lock);
-    entry.push(lock);
+    match decision {
+        TryAcquire::Acquired(token) => {
+            let lock = webdav::LockInfo::new(
+                lock_scope,
+                token.clone(),
+                owner,
+                std::time::SystemTime::now(),
+                timeout,
+                depth,
+            );
+            let xml = build_lock_response(&lock);
 
-    tracing::debug!(path = %target.display(), token = %token, is_refresh, "LOCK completed");
+            entry.push(lock);
 
-    drop(locks);
+            tracing::debug!(
+                path = %target.display(), token = %token, is_refresh = true, "LOCK completed"
+            );
 
-    Ok(Response::builder()
-        .status(if created_locknull {
-            StatusCode::CREATED
-        } else {
-            StatusCode::OK
-        })
+            Ok(lock_response(&token, xml, StatusCode::OK))
+        }
+        TryAcquire::NeedsLockNull => {
+            // Release the write guard before file I/O, then re-verify.
+            drop(locks);
+
+            let created = ensure_lock_null_resource(&target).await?;
+
+            // Reacquire and verify no conflicting lock appeared.
+            let mut locks = state.locks.write().await;
+            let entry = locks.entry(target.clone()).or_default();
+
+            if !entry.is_empty() {
+                return Err(StatusCode::LOCKED);
+            }
+
+            let token = webdav::generate_lock_token();
+            let lock = webdav::LockInfo::new(
+                lock_scope,
+                token.clone(),
+                owner,
+                std::time::SystemTime::now(),
+                timeout,
+                depth,
+            );
+            let xml = build_lock_response(&lock);
+
+            entry.push(lock);
+
+            tracing::debug!(
+                path = %target.display(), token = %token, is_refresh = false, "LOCK completed"
+            );
+
+            let status = if created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            };
+
+            Ok(lock_response(&token, xml, status))
+        }
+    }
+}
+
+/// Build an HTTP response for LOCK with the lock-token header and XML body.
+fn lock_response(token: &str, xml: String, status: StatusCode) -> Response {
+    Response::builder()
+        .status(status)
         .header("content-type", "application/xml; charset=utf-8")
         .header("lock-token", format!("<{token}>"))
         .body(Body::from(xml))
-        .unwrap())
+        .unwrap()
 }
 
 fn parse_lock_body(xml: &[u8]) -> (Option<String>, webdav::LockScope) {
@@ -195,43 +230,44 @@ async fn ensure_lock_null_resource(target: &std::path::Path) -> Result<bool, Sta
 async fn try_acquire_exclusive(
     entry: &mut Vec<webdav::LockInfo>,
     if_tokens: &[String],
-    target: &std::path::Path,
-) -> Result<(String, bool, bool), StatusCode> {
+) -> Result<TryAcquire, StatusCode> {
     if let Some(token) = ls::check_existing_exclusive(entry, if_tokens)? {
         entry.retain(|l| !l.is_exclusive());
-        return Ok((token, true, false));
+        return Ok(TryAcquire::Acquired(token));
     }
 
     if !entry.is_empty() {
         if entry.iter().all(|l| if_tokens.contains(&l.token)) {
             entry.clear();
-            return Ok((webdav::generate_lock_token(), false, false));
+            return Ok(TryAcquire::Acquired(webdav::generate_lock_token()));
         }
         return Err(StatusCode::LOCKED);
     }
 
-    let created_locknull = ensure_lock_null_resource(target).await?;
-    Ok((webdav::generate_lock_token(), false, created_locknull))
+    Ok(TryAcquire::NeedsLockNull)
 }
 
 async fn try_acquire_shared(
     entry: &mut Vec<webdav::LockInfo>,
     if_tokens: &[String],
-    target: &std::path::Path,
-) -> Result<(String, bool, bool), StatusCode> {
+) -> Result<TryAcquire, StatusCode> {
     if ls::check_existing_exclusive(entry, if_tokens)?.is_some() {
         entry.retain(|l| !l.is_exclusive());
-        return Ok((webdav::generate_lock_token(), false, false));
+        return Ok(TryAcquire::Acquired(webdav::generate_lock_token()));
     }
 
     if let Some(existing) = entry.iter().find(|l| if_tokens.contains(&l.token)) {
         let token = existing.token.clone();
         entry.retain(|l| l.token != token);
-        return Ok((token, true, false));
+        return Ok(TryAcquire::Acquired(token));
     }
 
-    let created_locknull = ensure_lock_null_resource(target).await?;
-    Ok((webdav::generate_lock_token(), false, created_locknull))
+    if entry.is_empty() {
+        return Ok(TryAcquire::NeedsLockNull);
+    }
+
+    // Non-empty, no exclusive or matching shared — compatible shared locks.
+    Ok(TryAcquire::Acquired(webdav::generate_lock_token()))
 }
 
 /// UNLOCK handler — removes a WebDAV lock (RFC 4918 §9.11).
