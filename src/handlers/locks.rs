@@ -67,9 +67,8 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Ap
         let xml = build_lock_response(&refreshed);
 
         tracing::debug!(
-            path = %target.display(), token = %refreshed.token,
-            timeout = ?refreshed.timeout, ancestor = true,
-            "indirect LOCK refresh via ancestor depth:infinity lock"
+            path = %target.display(), token = %refreshed.token, timeout = ?refreshed.timeout,
+            ancestor = true, "LOCK refreshed on ancestor lock"
         );
 
         return Ok(lock_response(&refreshed.token, xml, StatusCode::OK));
@@ -109,7 +108,8 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Ap
             entry.push(lock);
 
             tracing::debug!(
-                path = %target.display(), token = %token, is_refresh = true, "LOCK completed"
+                path = %target.display(), token = %token,timeout = ?timeout, is_refresh = true,
+                "LOCK completed"
             );
 
             Ok(lock_response(&token, xml, StatusCode::OK))
@@ -120,7 +120,7 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Ap
             let created = ensure_lock_null_resource(&target).await?;
 
             let mut locks = state.locks.write().await;
-            let entry = locks.entry(target).or_default();
+            let entry = locks.entry(target.clone()).or_default();
 
             if !entry.is_empty() {
                 return Err(StatusCode::LOCKED);
@@ -140,7 +140,8 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Ap
             entry.push(lock);
 
             tracing::debug!(
-                token = %token, is_refresh = false, "LOCK completed (lock-null)"
+                path = %target.display(), token = %token, timeout = ?timeout, is_refresh = false,
+                "LOCK completed (lock-null)"
             );
 
             let status = if created {
