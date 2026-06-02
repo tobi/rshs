@@ -21,7 +21,7 @@ use quick_xml::events::{BytesStart, Event};
 
 use crate::scandir::DirEntryMeta;
 
-pub use ls::{find_ancestor_lock, walk_locked_ancestors};
+pub use ls::{find_ancestor_lock, find_and_refresh_ancestor_lock, walk_locked_ancestors};
 pub use method::Method;
 
 /// Per-resource dead property store: resource path → (prop name → value).

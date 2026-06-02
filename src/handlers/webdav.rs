@@ -14,7 +14,7 @@ use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use crate::server::{AppResult, AppState};
 use crate::utils::error::{IntoResolved, OrStatus};
 use crate::webdav::{
-    self,
+    self, ls,
     xml::{XmlWriter, XmlWriterExt, dav_qname},
 };
 
@@ -43,7 +43,10 @@ pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -
         if let Some(ref cp) = entry.canonical_path {
             entry.dead_props = dead_store.get(cp).cloned();
             if let Some(locks) = lock_store.get(cp) {
-                entry.active_locks = Some(locks.clone());
+                let active: Vec<_> = ls::active_slice(locks).cloned().collect();
+                if !active.is_empty() {
+                    entry.active_locks = Some(active);
+                }
             }
         }
     }

@@ -1,6 +1,7 @@
 //! Lock system evaluation — ancestor walk, `If` condition evaluation, active-lock filtering.
 
 use std::path::Path;
+use std::time::SystemTime;
 
 use axum::http::StatusCode;
 
@@ -104,7 +105,7 @@ pub fn find_ancestor_lock<'a>(
     let mut result: Option<&'a LockInfo> = None;
     walk_locked_ancestors(locks, target, root_canonical, |infos| {
         for lock in infos {
-            if lock.depth == Depth::Infinity && predicate(lock) {
+            if lock.depth == Depth::Infinity && !lock.is_expired() && predicate(lock) {
                 result = Some(lock);
                 return true;
             }
@@ -112,6 +113,51 @@ pub fn find_ancestor_lock<'a>(
         false
     });
     result
+}
+
+/// Find and refresh the timeout of an ancestor `Depth::Infinity` lock
+/// matching a predicate.
+///
+/// Walks ancestor directories of `target` within `root_canonical`,
+/// finds the first active infinity lock that satisfies `predicate`,
+/// updates its `created` timestamp to the current time (refreshing
+/// the timeout), and returns a clone of the refreshed lock.
+///
+/// Returns `None` if no matching active ancestor lock exists.
+///
+/// Used by [`handle_lock`](crate::handlers::locks::handle_lock) to
+/// refresh depth:infinity ancestor locks when a client submits a
+/// LOCK request with a matching `If` header token.
+pub fn find_and_refresh_ancestor_lock(
+    locks: &mut LockStore,
+    target: &Path,
+    predicate: impl Fn(&LockInfo) -> bool,
+) -> Option<LockInfo> {
+    // Two-pass approach to avoid borrow conflicts:
+    // 1. Collect candidate paths (immutable iteration)
+    // 2. Mutate the matching lock (mutable access)
+    let candidate_paths: Vec<std::path::PathBuf> = locks
+        .iter()
+        .filter(|(path, infos)| {
+            infos
+                .iter()
+                .any(|l| l.depth == Depth::Infinity && !l.is_expired())
+                && is_ancestor_of(path, target)
+        })
+        .map(|(path, _)| path.clone())
+        .collect();
+
+    for path in candidate_paths {
+        if let Some(infos) = locks.get_mut(&path) {
+            for lock in infos.iter_mut() {
+                if lock.depth == Depth::Infinity && !lock.is_expired() && predicate(lock) {
+                    lock.created = SystemTime::now();
+                    return Some(lock.clone());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Evaluate a single `If` header condition against an active lock slice.
@@ -523,5 +569,85 @@ mod tests {
         assert!(!is_ancestor_of(Path::new("/a/b/c"), Path::new("/a/b")));
         // Empty ancestor
         assert!(!is_ancestor_of(Path::new(""), Path::new("/a")));
+    }
+
+    #[test]
+    fn test_find_ancestor_lock_ignores_expired() {
+        let store = lock_store(vec![(
+            "/a",
+            LockInfo::new(
+                LockScope::Exclusive,
+                "expired-token".into(),
+                None,
+                SystemTime::now() - Duration::from_secs(10),
+                Some(Duration::from_secs(1)),
+                Depth::Infinity,
+            ),
+        )]);
+        let target = Path::new("/a/b/file.txt");
+        let root = Path::new("/");
+        let found = find_ancestor_lock(&store, target, root, |l| l.token == "expired-token");
+        assert!(found.is_none(), "expired ancestor lock should not be found");
+    }
+
+    #[test]
+    fn test_find_and_refresh_ancestor_lock_updates_created() {
+        let old_time = SystemTime::now() - Duration::from_secs(3600);
+        let mut store = lock_store(vec![(
+            "/a",
+            LockInfo::new(
+                LockScope::Exclusive,
+                "t1".into(),
+                None,
+                old_time,
+                Some(Duration::from_secs(7200)),
+                Depth::Infinity,
+            ),
+        )]);
+        let target = Path::new("/a/b/file.txt");
+
+        let refreshed = find_and_refresh_ancestor_lock(&mut store, target, |l| l.token == "t1");
+        assert!(refreshed.is_some());
+
+        let new_created = store.get(Path::new("/a")).unwrap()[0].created;
+        let elapsed = new_created.duration_since(old_time).unwrap();
+        assert!(elapsed >= Duration::from_secs(3599));
+    }
+
+    #[test]
+    fn test_find_and_refresh_ancestor_lock_ignores_expired() {
+        let mut store = lock_store(vec![(
+            "/a",
+            LockInfo::new(
+                LockScope::Exclusive,
+                "expired".into(),
+                None,
+                SystemTime::now() - Duration::from_secs(10),
+                Some(Duration::from_secs(1)),
+                Depth::Infinity,
+            ),
+        )]);
+        let target = Path::new("/a/b/file.txt");
+        let result = find_and_refresh_ancestor_lock(&mut store, target, |l| l.token == "expired");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_and_refresh_ancestor_lock_no_match() {
+        let mut store = lock_store(vec![(
+            "/a",
+            LockInfo::new(
+                LockScope::Exclusive,
+                "t1".into(),
+                None,
+                SystemTime::now(),
+                None,
+                Depth::Infinity,
+            ),
+        )]);
+        let target = Path::new("/a/b/file.txt");
+        let result =
+            find_and_refresh_ancestor_lock(&mut store, target, |l| l.token == "wrong-token");
+        assert!(result.is_none());
     }
 }

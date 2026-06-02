@@ -60,17 +60,18 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Ap
 
     let mut locks = state.locks.write().await;
 
-    if let Some(al) = webdav::find_ancestor_lock(&locks, &target, &state.root_canonical, |l| {
+    if let Some(refreshed) = webdav::find_and_refresh_ancestor_lock(&mut locks, &target, |l| {
         if_tokens.contains(&l.token)
     }) {
-        let xml = build_lock_response(al);
+        let xml = build_lock_response(&refreshed);
 
         tracing::debug!(
-            path = %target.display(), token = %al.token, ancestor = true,
+            path = %target.display(), token = %refreshed.token,
+            timeout = ?refreshed.timeout, ancestor = true,
             "indirect LOCK refresh via ancestor depth:infinity lock"
         );
 
-        return Ok(lock_response(&al.token, xml, StatusCode::OK));
+        return Ok(lock_response(&refreshed.token, xml, StatusCode::OK));
     }
 
     let entry = locks.entry(target.clone()).or_default();
