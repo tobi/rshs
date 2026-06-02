@@ -9,9 +9,9 @@ use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
 use super::{PropEntry, PropRequest};
 
-// Common XML element names and namespaces used in WebDAV responses.
-pub const DAV_PREFIX: &str = "D:";
+/// WebDAV XML namespace URI. Used as the "D" prefix in all generated XML elements.
 pub const DAV_NS: &str = "DAV:";
+// Element names for WebDAV XML responses. Each is prefixed with "D:" in the output.
 pub const EL_ACTIVELOCK: &str = "D:activelock";
 pub const EL_COLLECTION: &str = "D:collection";
 pub const EL_DEPTH: &str = "D:depth";
@@ -33,6 +33,14 @@ pub const EL_STATUS: &str = "D:status";
 pub const EL_SUPPORTEDLOCK: &str = "D:supportedlock";
 pub const EL_TIMEOUT: &str = "D:timeout";
 pub const EL_WRITE: &str = "D:write";
+// Live property element names — used once per entry in PROPFIND responses.
+const EL_CREATIONDATE: &str = "D:creationdate";
+const EL_GETCONTENTLENGTH: &str = "D:getcontentlength";
+const EL_GETCONTENTTYPE: &str = "D:getcontenttype";
+const EL_GETETAG: &str = "D:getetag";
+const EL_GETLASTMODIFIED: &str = "D:getlastmodified";
+
+/// List of supported live properties for PROPFIND responses.
 pub const SUPPORTED_PROPS: &[&str] = &[
     "creationdate",
     "getcontentlength",
@@ -43,18 +51,6 @@ pub const SUPPORTED_PROPS: &[&str] = &[
     "resourcetype",
     "supportedlock",
 ];
-
-/// Build a `DAV:`-prefixed qualified name from a local element name.
-///
-/// ```
-/// use rshs::webdav::xml::dav_qname;
-///
-/// assert_eq!(dav_qname("multistatus"), "D:multistatus");
-/// assert_eq!(dav_qname("href"), "D:href");
-/// ```
-pub fn dav_qname(name: &str) -> String {
-    format!("{DAV_PREFIX}{name}")
-}
 
 /// Convenience alias for the XML writer used throughout `rshs`.
 ///
@@ -69,11 +65,11 @@ pub type XmlWriter = Writer<Cursor<Vec<u8>>>;
 /// ```
 /// use std::io::Cursor;
 /// use quick_xml::{Writer, events::{BytesStart, BytesEnd, Event}};
-/// use rshs::webdav::xml::{XmlWriter, XmlWriterExt, dav_qname};
+/// use rshs::webdav::xml::{XmlWriter, XmlWriterExt, EL_RESPONSE};
 ///
 /// let mut w = Writer::new(Cursor::new(Vec::new()));
-/// w.ev(Event::Start(BytesStart::new(dav_qname("response"))));
-/// w.ev(Event::End(BytesEnd::new(dav_qname("response"))));
+/// w.ev(Event::Start(BytesStart::new(EL_RESPONSE)));
+/// w.ev(Event::End(BytesEnd::new(EL_RESPONSE)));
 /// let xml = String::from_utf8(w.into_inner().into_inner()).unwrap();
 /// assert!(xml.contains("D:response"));
 /// ```
@@ -253,19 +249,15 @@ where
                     .created
                     .map(crate::utils::time::format_rfc3339)
                     .unwrap_or_default();
-                write_prop_text(writer, &dav_qname("creationdate"), &date);
+                write_prop_text(writer, EL_CREATIONDATE, &date);
             }
             "getcontentlength" => {
-                write_prop_text(
-                    writer,
-                    &dav_qname("getcontentlength"),
-                    &entry.size.to_string(),
-                );
+                write_prop_text(writer, EL_GETCONTENTLENGTH, &entry.size.to_string());
             }
             "getcontenttype" => {
                 write_prop_text(
                     writer,
-                    &dav_qname("getcontenttype"),
+                    EL_GETCONTENTTYPE,
                     entry.content_type.as_deref().unwrap_or(""),
                 );
             }
@@ -279,11 +271,11 @@ where
                         .as_secs(),
                     entry.size
                 );
-                write_prop_text(writer, &dav_qname("getetag"), &etag);
+                write_prop_text(writer, EL_GETETAG, &etag);
             }
             "getlastmodified" => {
                 let date = crate::utils::time::format_rfc1123(entry.modified);
-                write_prop_text(writer, &dav_qname("getlastmodified"), &date);
+                write_prop_text(writer, EL_GETLASTMODIFIED, &date);
             }
             "lockdiscovery" => {
                 writer.ev(Event::Start(BytesStart::new(EL_LOCKDISCOVERY)));
@@ -358,7 +350,7 @@ fn write_propname(writer: &mut XmlWriter, props: &[&str]) {
     writer.ev(Event::Start(BytesStart::new(EL_PROP)));
 
     for prop_name in props {
-        writer.ev(Event::Empty(BytesStart::new(dav_qname(prop_name))));
+        writer.ev(Event::Empty(BytesStart::new(format!("D:{prop_name}"))));
     }
 
     writer.ev(Event::End(BytesEnd::new(EL_PROP)));

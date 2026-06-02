@@ -14,8 +14,8 @@ use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use crate::server::{AppResult, AppState};
 use crate::utils::error::{IntoResolved, OrStatus};
 use crate::webdav::{
-    self, ls,
-    xml::{XmlWriter, XmlWriterExt, dav_qname},
+    self,
+    xml::{self, XmlWriter, XmlWriterExt},
 };
 
 /// PROPFIND handler — returns resource properties (RFC 4918 §9.1).
@@ -43,7 +43,7 @@ pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -
         if let Some(ref cp) = entry.canonical_path {
             entry.dead_props = dead_store.get(cp).cloned();
             if let Some(locks) = lock_store.get(cp) {
-                let active: Vec<_> = ls::active_slice(locks).cloned().collect();
+                let active: Vec<_> = webdav::ls::active_slice(locks).cloned().collect();
                 if !active.is_empty() {
                     entry.active_locks = Some(active);
                 }
@@ -310,7 +310,7 @@ fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> Str
 
     writer.ev(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
 
-    let mut ms = BytesStart::new(dav_qname("multistatus"));
+    let mut ms = BytesStart::new(xml::EL_MULTISTATUS);
 
     ms.push_attribute(("xmlns:D", "DAV:"));
 
@@ -320,35 +320,35 @@ fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> Str
         write_proppatch_result(&mut writer, request_path, &action.0, "200 OK");
     }
 
-    writer.ev(Event::End(BytesEnd::new(dav_qname("multistatus"))));
+    writer.ev(Event::End(BytesEnd::new(xml::EL_MULTISTATUS)));
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
 
 fn write_proppatch_result(writer: &mut XmlWriter, href: &str, prop_name: &str, status: &str) {
-    writer.ev(Event::Start(BytesStart::new(dav_qname("response"))));
+    writer.ev(Event::Start(BytesStart::new(xml::EL_RESPONSE)));
 
-    writer.ev(Event::Start(BytesStart::new(dav_qname("href"))));
+    writer.ev(Event::Start(BytesStart::new(xml::EL_HREF)));
     writer.ev(Event::Text(BytesText::new(href)));
-    writer.ev(Event::End(BytesEnd::new(dav_qname("href"))));
+    writer.ev(Event::End(BytesEnd::new(xml::EL_HREF)));
 
-    writer.ev(Event::Start(BytesStart::new(dav_qname("propstat"))));
+    writer.ev(Event::Start(BytesStart::new(xml::EL_PROPSTAT)));
 
-    writer.ev(Event::Start(BytesStart::new(dav_qname("prop"))));
+    writer.ev(Event::Start(BytesStart::new(xml::EL_PROP)));
     let (ns, local) = webdav::parse_clark(prop_name).unwrap_or(("", prop_name));
     let mut elem = BytesStart::new(local);
     if !ns.is_empty() {
         elem.push_attribute(("xmlns", ns));
     }
     writer.ev(Event::Empty(elem));
-    writer.ev(Event::End(BytesEnd::new(dav_qname("prop"))));
+    writer.ev(Event::End(BytesEnd::new(xml::EL_PROP)));
 
-    writer.ev(Event::Start(BytesStart::new(dav_qname("status"))));
+    writer.ev(Event::Start(BytesStart::new(xml::EL_STATUS)));
     writer.ev(Event::Text(BytesText::new(&format!("HTTP/1.1 {status}"))));
-    writer.ev(Event::End(BytesEnd::new(dav_qname("status"))));
+    writer.ev(Event::End(BytesEnd::new(xml::EL_STATUS)));
 
-    writer.ev(Event::End(BytesEnd::new(dav_qname("propstat"))));
-    writer.ev(Event::End(BytesEnd::new(dav_qname("response"))));
+    writer.ev(Event::End(BytesEnd::new(xml::EL_PROPSTAT)));
+    writer.ev(Event::End(BytesEnd::new(xml::EL_RESPONSE)));
 }
 
 // ---------------------------------------------------------------------------

@@ -12,9 +12,10 @@ use quick_xml::events::{BytesEnd, BytesStart, Event};
 
 use crate::server::{AppResult, AppState};
 use crate::utils::error::{IntoResolved, OrStatus};
+use crate::webdav::xml;
 use crate::webdav::{
     self, ls,
-    xml::{XmlWriterExt, dav_qname, write_activelock},
+    xml::{XmlWriterExt, write_activelock},
 };
 
 /// Result of conflict checking before lock-null resource creation.
@@ -209,16 +210,16 @@ fn parse_lock_body(xml: &[u8]) -> (Option<String>, webdav::LockScope) {
 fn build_lock_response(lock: &webdav::LockInfo) -> String {
     let mut writer = Writer::new(Cursor::new(Vec::new()));
 
-    let mut prop = BytesStart::new(dav_qname("prop"));
+    let mut prop = BytesStart::new(xml::EL_PROP);
     prop.push_attribute(("xmlns:D", "DAV:"));
     writer.ev(Event::Start(prop));
 
-    writer.ev(Event::Start(BytesStart::new(dav_qname("lockdiscovery"))));
+    writer.ev(Event::Start(BytesStart::new(xml::EL_LOCKDISCOVERY)));
 
     write_activelock(&mut writer, lock);
 
-    writer.ev(Event::End(BytesEnd::new(dav_qname("lockdiscovery"))));
-    writer.ev(Event::End(BytesEnd::new(dav_qname("prop"))));
+    writer.ev(Event::End(BytesEnd::new(xml::EL_LOCKDISCOVERY)));
+    writer.ev(Event::End(BytesEnd::new(xml::EL_PROP)));
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
