@@ -15,7 +15,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use derive_new::new;
 use tokio::sync::RwLock;
@@ -75,6 +75,9 @@ impl AppState {
         .await
     }
 }
+
+/// Result type alias for handlers, with [`Response`] success and [`StatusCode`] error by default.
+pub type AppResult<T = Response, E = StatusCode> = Result<T, E>;
 
 /// Configuration for starting the server — root directory, bind address,
 /// optional TLS, authentication, and default lock timeout.

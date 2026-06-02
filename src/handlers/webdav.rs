@@ -5,12 +5,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use axum::body;
+use axum::extract::{Request, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
+use axum::response::IntoResponse;
 use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
-use crate::server::AppState;
+use crate::server::{AppResult, AppState};
 use crate::utils::error::{IntoResolved, OrStatus};
 use crate::webdav::{
     self,
@@ -21,10 +22,7 @@ use crate::webdav::{
 ///
 /// Supports `Depth: 0`, `1`, and `infinity`. Accepts `allprop`, `propname`,
 /// and named property requests. Returns a `207 Multi-Status` XML response.
-pub async fn handle_propfind(
-    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-    req: axum::extract::Request,
-) -> Result<Response, StatusCode> {
+pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let depth = webdav::parse_depth(req.headers());
     let request_path = req.uri().path().to_owned();
 
@@ -65,10 +63,7 @@ pub async fn handle_propfind(
 ///
 /// Returns `201 Created` on success. Rejects if the parent does not exist,
 /// a file already occupies the path, or the target is root.
-pub async fn handle_mkcol(
-    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-    req: axum::extract::Request,
-) -> Result<Response, StatusCode> {
+pub async fn handle_mkcol(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     // MKCOL MUST fail with 415 if the request has a body (RFC 2518 §8.3.1)
     let len = req.headers().get("content-length");
     if len.and_then(|v| v.to_str().ok()).is_some_and(|v| v != "0") {
@@ -104,10 +99,7 @@ pub async fn handle_mkcol(
 ///
 /// Supports recursive directory copy. Respects the `Overwrite` header.
 /// Returns `201 Created` for new destinations, `204 No Content` for overwrites.
-pub async fn handle_copy(
-    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-    req: axum::extract::Request,
-) -> Result<Response, StatusCode> {
+pub async fn handle_copy(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     do_move_or_copy(&state, req, false).await
 }
 
@@ -115,18 +107,11 @@ pub async fn handle_copy(
 ///
 /// Supports recursive directory moves. Respects the `Overwrite` header.
 /// Equivalent to COPY + DELETE when source and destination share a filesystem.
-pub async fn handle_move(
-    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-    req: axum::extract::Request,
-) -> Result<Response, StatusCode> {
+pub async fn handle_move(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     do_move_or_copy(&state, req, true).await
 }
 
-async fn do_move_or_copy(
-    state: &Arc<AppState>,
-    req: axum::extract::Request,
-    is_move: bool,
-) -> Result<Response, StatusCode> {
+async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> AppResult {
     let verb = if is_move { "MOVE" } else { "COPY" };
     let headers = req.headers();
     let overwrite = webdav::parse_overwrite(headers);
@@ -276,10 +261,7 @@ async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), Sta
 ///
 /// Processes `set` and `remove` actions from the request body. Returns a
 /// `207 Multi-Status` response with per-property success/failure status.
-pub async fn handle_proppatch(
-    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-    req: axum::extract::Request,
-) -> Result<Response, StatusCode> {
+pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let request_path = req.uri().path().to_owned();
 
     let fs_path = state.resolve_existing(&request_path).await;

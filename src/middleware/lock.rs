@@ -5,11 +5,11 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
-use axum::response::Response;
 
-use crate::server::AppState;
+use crate::server::{AppResult, AppState};
 use crate::webdav::{self, Method, ls};
 
 /// Rejects write requests (`PUT`, `DELETE`, `MKCOL`, `PROPPATCH`, `MOVE`, `COPY`)
@@ -20,10 +20,10 @@ use crate::webdav::{self, Method, ls};
 /// the source and destination paths are checked. If an `If` header with non-token
 /// conditions is present and no `Lock-Token` is provided, returns `412 Precondition Failed`.
 pub async fn lock_enforce(
-    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-    req: axum::extract::Request,
+    State(state): State<Arc<AppState>>,
+    req: Request,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> AppResult {
     let Ok(method) = Method::try_from(req.method()) else {
         return Ok(next.run(req).await);
     };

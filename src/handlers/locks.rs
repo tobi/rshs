@@ -4,12 +4,13 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use axum::body::{self, Body};
+use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 
-use crate::server::AppState;
+use crate::server::{AppResult, AppState};
 use crate::utils::error::{IntoResolved, OrStatus};
 use crate::webdav::{
     self, ls,
@@ -32,10 +33,7 @@ enum TryAcquire {
 /// Supports exclusive and shared locks. Handles lock-null resource creation
 /// for locking non-existent URLs. Refreshes existing locks when the same
 /// token is presented. Returns the `Lock-Token` header and activelock XML.
-pub async fn handle_lock(
-    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-    req: axum::extract::Request,
-) -> Result<Response, StatusCode> {
+pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let request_path = req.uri().path().trim_end_matches('/').to_owned();
 
     let target = state.resolve_and_guard(&request_path).await;
@@ -274,10 +272,7 @@ async fn try_acquire_shared(
 ///
 /// Requires the `Lock-Token` header. Returns `204 No Content` on success.
 /// Returns `403 Forbidden` if the token does not match any existing lock.
-pub async fn handle_unlock(
-    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-    req: axum::extract::Request,
-) -> Result<axum::response::Response, StatusCode> {
+pub async fn handle_unlock(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let request_path = req.uri().path().to_owned();
 
     let token = webdav::parse_lock_token_header(req.headers());

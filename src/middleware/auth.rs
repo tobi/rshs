@@ -3,10 +3,16 @@
 
 use std::sync::Arc;
 
-use axum::{body::Body, http::StatusCode, middleware::Next, response::Response};
-use base64::{Engine as _, engine::general_purpose};
+use axum::body::Body;
+use axum::extract::{Request, State};
+use axum::http::StatusCode;
+use axum::middleware::Next;
+use axum::response::Response;
+use base64::Engine;
+use base64::engine::general_purpose;
 
 use crate::auth::{AuthState, hash_auth_header};
+use crate::server::AppResult;
 
 /// Validates HTTP Basic Authentication credentials against the configured `AuthState`.
 /// Skips authentication entirely when no users are configured (backward compatible).
@@ -16,10 +22,10 @@ use crate::auth::{AuthState, hash_auth_header};
 ///
 /// Returns `401 Unauthorized` with `WWW-Authenticate: Basic realm="rshs"` on failure.
 pub async fn auth_middleware(
-    axum::extract::State(state): axum::extract::State<Arc<AuthState>>,
-    req: axum::extract::Request,
+    State(state): State<Arc<AuthState>>,
+    req: Request,
     next: Next,
-) -> Result<Response, Response> {
+) -> AppResult<Response, Response> {
     if state.is_empty() {
         return Ok(next.run(req).await);
     }

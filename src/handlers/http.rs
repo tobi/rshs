@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use axum::body::Body;
+use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use futures_util::TryStreamExt;
@@ -10,17 +11,14 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::html::generate_dir_listing;
-use crate::server::AppState;
+use crate::server::{AppResult, AppState};
 use crate::utils::error::{IntoResolved, OrStatus};
 
 /// GET / HEAD handler — serves files and generates HTML directory listings.
 ///
 /// Supports conditional `If-Modified-Since` via the `Last-Modified` header.
 /// Accepts `Range` requests for partial content delivery.
-pub async fn handle_get_head(
-    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-    req: axum::extract::Request,
-) -> Result<Response, StatusCode> {
+pub async fn handle_get_head(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let request_path = req.uri().path().to_owned();
 
     let fs_path = state.resolve_existing(&request_path).await;
@@ -70,10 +68,7 @@ pub async fn handle_get_head(
 /// Returns `201 Created` for new files, `200 OK` for overwrites.
 /// Rejects directory paths, missing parents, and traversal attempts.
 /// Intermediate collections are NOT created (per RFC 4918 §9.6).
-pub async fn handle_put(
-    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-    req: axum::extract::Request,
-) -> Result<Response, StatusCode> {
+pub async fn handle_put(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let request_path = req.uri().path().to_owned();
 
     // PUT MUST NOT create intermediate collections (RFC 4918 §9.6)
@@ -125,10 +120,7 @@ pub async fn handle_put(
 ///
 /// Returns `204 No Content` on success, `404 Not Found` if the target
 /// does not exist. Root directory deletion is rejected.
-pub async fn handle_delete(
-    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-    req: axum::extract::Request,
-) -> Result<Response, StatusCode> {
+pub async fn handle_delete(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let request_path = req.uri().path().to_owned();
 
     let fs_path = state.resolve_existing(&request_path).await;
@@ -174,7 +166,7 @@ pub async fn handle_delete(
 ///
 /// Includes the `DAV: 1,2` compliance level and `MS-Author-Via: DAV` header
 /// for compatibility with legacy clients.
-pub async fn handle_options() -> Result<Response, StatusCode> {
+pub async fn handle_options() -> AppResult {
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header(

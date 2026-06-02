@@ -27,7 +27,7 @@ pub use cli::Cli;
 /// TLS certificate/key configuration.
 pub use server::tls::TlsConfig;
 /// Server state, configuration, startup, and router construction.
-pub use server::{AppState, ServerConfig, make_router, start_server};
+pub use server::{AppResult, AppState, ServerConfig, make_router, start_server};
 
 #[cfg(debug_assertions)]
 pub(crate) const DEFAULT_LOG_LEVEL: &str = "debug";
