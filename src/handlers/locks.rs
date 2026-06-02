@@ -76,9 +76,21 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Ap
 
     let entry = locks.entry(target.clone()).or_default();
 
-    let decision = match lock_scope {
-        webdav::LockScope::Exclusive => try_acquire_exclusive(entry, &if_tokens).await?,
-        webdav::LockScope::Shared => try_acquire_shared(entry, &if_tokens).await?,
+    // Common prefix: check for existing exclusive lock matching our tokens
+    let decision = if let Some(token) = ls::check_existing_exclusive(entry, &if_tokens)? {
+        // Matching exclusive lock found — scope determines refresh behavior
+        entry.retain(|l| !l.is_exclusive());
+        let token = match lock_scope {
+            webdav::LockScope::Exclusive => token, // refresh: keep same token
+            webdav::LockScope::Shared => webdav::generate_lock_token(), // downgrade: new token
+        };
+        TryAcquire::Acquired(token)
+    } else {
+        // No exclusive lock matched — try new lock acquisition
+        match lock_scope {
+            webdav::LockScope::Exclusive => try_new_exclusive(entry, &if_tokens)?,
+            webdav::LockScope::Shared => try_new_shared(entry, &if_tokens)?,
+        }
     };
 
     match decision {
@@ -102,14 +114,12 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Ap
             Ok(lock_response(&token, xml, StatusCode::OK))
         }
         TryAcquire::NeedsLockNull => {
-            // Release the write guard before file I/O, then re-verify.
             drop(locks);
 
             let created = ensure_lock_null_resource(&target).await?;
 
-            // Reacquire and verify no conflicting lock appeared.
             let mut locks = state.locks.write().await;
-            let entry = locks.entry(target.clone()).or_default();
+            let entry = locks.entry(target).or_default();
 
             if !entry.is_empty() {
                 return Err(StatusCode::LOCKED);
@@ -129,7 +139,7 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Ap
             entry.push(lock);
 
             tracing::debug!(
-                path = %target.display(), token = %token, is_refresh = false, "LOCK completed"
+                token = %token, is_refresh = false, "LOCK completed (lock-null)"
             );
 
             let status = if created {
@@ -226,46 +236,44 @@ async fn ensure_lock_null_resource(target: &std::path::Path) -> Result<bool, Sta
     }
 }
 
-async fn try_acquire_exclusive(
+/// Try to create a new exclusive lock when no matching exclusive exists.
+///
+/// Precondition: caller has already verified that no exclusive lock
+/// matched `if_tokens` (via [`check_existing_exclusive`](ls::check_existing_exclusive)).
+fn try_new_exclusive(
     entry: &mut Vec<webdav::LockInfo>,
     if_tokens: &[String],
-) -> Result<TryAcquire, StatusCode> {
-    if let Some(token) = ls::check_existing_exclusive(entry, if_tokens)? {
-        entry.retain(|l| !l.is_exclusive());
-        return Ok(TryAcquire::Acquired(token));
+) -> AppResult<TryAcquire> {
+    if entry.is_empty() {
+        return Ok(TryAcquire::NeedsLockNull);
     }
-
-    if !entry.is_empty() {
-        if entry.iter().all(|l| if_tokens.contains(&l.token)) {
-            entry.clear();
-            return Ok(TryAcquire::Acquired(webdav::generate_lock_token()));
-        }
-        return Err(StatusCode::LOCKED);
+    // Only shared locks remain — check if we own all of them
+    if entry.iter().all(|l| if_tokens.contains(&l.token)) {
+        entry.clear();
+        Ok(TryAcquire::Acquired(webdav::generate_lock_token()))
+    } else {
+        Err(StatusCode::LOCKED)
     }
-
-    Ok(TryAcquire::NeedsLockNull)
 }
 
-async fn try_acquire_shared(
+/// Try to create or refresh a shared lock when no matching exclusive exists.
+///
+/// Precondition: caller has already verified that no exclusive lock
+/// matched `if_tokens` (via [`check_existing_exclusive`](ls::check_existing_exclusive)).
+fn try_new_shared(
     entry: &mut Vec<webdav::LockInfo>,
     if_tokens: &[String],
-) -> Result<TryAcquire, StatusCode> {
-    if ls::check_existing_exclusive(entry, if_tokens)?.is_some() {
-        entry.retain(|l| !l.is_exclusive());
-        return Ok(TryAcquire::Acquired(webdav::generate_lock_token()));
-    }
-
+) -> AppResult<TryAcquire> {
+    // Refresh an existing shared lock with matching token
     if let Some(existing) = entry.iter().find(|l| if_tokens.contains(&l.token)) {
         let token = existing.token.clone();
         entry.retain(|l| l.token != token);
         return Ok(TryAcquire::Acquired(token));
     }
-
     if entry.is_empty() {
         return Ok(TryAcquire::NeedsLockNull);
     }
-
-    // Non-empty, no exclusive or matching shared — compatible shared locks.
+    // Compatible shared locks exist — create a new one
     Ok(TryAcquire::Acquired(webdav::generate_lock_token()))
 }
 
