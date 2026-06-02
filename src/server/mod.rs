@@ -76,6 +76,9 @@ impl AppState {
     }
 }
 
+/// Result type alias for handlers, with [`Response`] success and [`StatusCode`] error by default.
+pub type AppResult<T = Response, E = StatusCode> = Result<T, E>;
+
 /// Configuration for starting the server — root directory, bind address,
 /// optional TLS, authentication, and default lock timeout.
 #[derive(Clone, new)]
@@ -162,13 +165,13 @@ pub fn make_router(state: Arc<AppState>) -> Router {
     Router::new()
         .fallback(any(dispatch))
         .layer(TraceLayer::new_for_http())
-        .layer(auth_mw)
         .layer(lock_mw)
+        .layer(auth_mw)
         .layer(health_check_mw)
         .with_state(state)
 }
 
-async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response {
+async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> impl IntoResponse {
     match Method::try_from(req.method()) {
         Ok(Method::GET) | Ok(Method::HEAD) => http::handle_get_head(State(state), req).await,
         Ok(Method::PUT) => http::handle_put(State(state), req).await,
@@ -181,6 +184,6 @@ async fn dispatch(State(state): State<Arc<AppState>>, req: Request) -> Response 
         Ok(Method::PROPPATCH) => webdav_handler::handle_proppatch(State(state), req).await,
         Ok(Method::LOCK) => locks::handle_lock(State(state), req).await,
         Ok(Method::UNLOCK) => locks::handle_unlock(State(state), req).await,
-        _ => StatusCode::NOT_IMPLEMENTED.into_response(),
+        _ => Err(StatusCode::NOT_IMPLEMENTED),
     }
 }

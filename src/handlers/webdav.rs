@@ -7,12 +7,11 @@ use std::sync::Arc;
 use axum::body;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
+use axum::response::IntoResponse;
 use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
-use crate::ok_or_return;
-use crate::server::AppState;
+use crate::server::{AppResult, AppState};
 use crate::utils::error::{IntoResolved, OrStatus};
 use crate::webdav::{
     self,
@@ -23,19 +22,18 @@ use crate::webdav::{
 ///
 /// Supports `Depth: 0`, `1`, and `infinity`. Accepts `allprop`, `propname`,
 /// and named property requests. Returns a `207 Multi-Status` XML response.
-pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -> Response {
+pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let depth = webdav::parse_depth(req.headers());
     let request_path = req.uri().path().to_owned();
 
     let fs_path = state.resolve_existing(&request_path).await;
-    let fs_path = ok_or_return!(fs_path.or_404("path resolution failed for PROPFIND"));
+    let fs_path = fs_path.or_404("path resolution failed for PROPFIND")?;
 
     let body_bytes = body::to_bytes(req.into_body(), 65536).await;
-    let body_bytes = ok_or_return!(body_bytes.or_400("failed to read PROPFIND body"));
+    let body_bytes = body_bytes.or_400("failed to read PROPFIND body")?;
 
-    let prop_request = ok_or_return!(
-        webdav::parse_propfind_request(&body_bytes).or_400("failed to parse PROPFIND request")
-    );
+    let prop_request =
+        webdav::parse_propfind_request(&body_bytes).or_400("failed to parse PROPFIND request")?;
 
     let mut entries = webdav::fs::collect_entries(&fs_path, &request_path, depth).await;
 
@@ -58,41 +56,41 @@ pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -
         path = %fs_path.display(), depth = ?depth, entries = entries.len(), "PROPFIND completed"
     );
 
-    webdav::xml::multistatus(xml)
+    Ok(webdav::xml::multistatus(xml))
 }
 
 /// MKCOL handler — creates a new collection (directory) (RFC 4918 §9.3).
 ///
 /// Returns `201 Created` on success. Rejects if the parent does not exist,
 /// a file already occupies the path, or the target is root.
-pub async fn handle_mkcol(State(state): State<Arc<AppState>>, req: Request) -> Response {
+pub async fn handle_mkcol(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     // MKCOL MUST fail with 415 if the request has a body (RFC 2518 §8.3.1)
     let len = req.headers().get("content-length");
     if len.and_then(|v| v.to_str().ok()).is_some_and(|v| v != "0") {
-        return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
+        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
 
     // MKCOL accepts trailing slashes per WebDAV client convention (e.g. litmus)
     let request_path = req.uri().path().trim_end_matches('/').to_owned();
 
     let target = state.resolve_and_guard(&request_path).await;
-    let target = ok_or_return!(target.or_invalid(StatusCode::FORBIDDEN));
+    let target = target.or_invalid(StatusCode::FORBIDDEN)?;
 
     if tokio::fs::metadata(&target).await.is_ok() {
         tracing::debug!(path = %target.display(), "MKCOL target already exists");
-        return StatusCode::METHOD_NOT_ALLOWED.into_response();
+        return Err(StatusCode::METHOD_NOT_ALLOWED);
     }
 
     match tokio::fs::create_dir(&target).await {
         Ok(()) => {
             tracing::debug!(path = %target.display(), "MKCOL completed");
-            StatusCode::CREATED.into_response()
+            Ok(StatusCode::CREATED.into_response())
         }
         Err(e) => {
             tracing::error!(
                 error = %e, path = %target.display(), "failed to create directory for MKCOL"
             );
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }
@@ -101,7 +99,7 @@ pub async fn handle_mkcol(State(state): State<Arc<AppState>>, req: Request) -> R
 ///
 /// Supports recursive directory copy. Respects the `Overwrite` header.
 /// Returns `201 Created` for new destinations, `204 No Content` for overwrites.
-pub async fn handle_copy(State(state): State<Arc<AppState>>, req: Request) -> Response {
+pub async fn handle_copy(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     do_move_or_copy(&state, req, false).await
 }
 
@@ -109,44 +107,44 @@ pub async fn handle_copy(State(state): State<Arc<AppState>>, req: Request) -> Re
 ///
 /// Supports recursive directory moves. Respects the `Overwrite` header.
 /// Equivalent to COPY + DELETE when source and destination share a filesystem.
-pub async fn handle_move(State(state): State<Arc<AppState>>, req: Request) -> Response {
+pub async fn handle_move(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     do_move_or_copy(&state, req, true).await
 }
 
-async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> Response {
+async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> AppResult {
     let verb = if is_move { "MOVE" } else { "COPY" };
     let headers = req.headers();
     let overwrite = webdav::parse_overwrite(headers);
     let depth = webdav::parse_depth(headers);
 
     let dest_str = webdav::parse_destination(headers);
-    let dest_str = ok_or_return!(dest_str.or_400("missing or invalid Destination header"));
+    let dest_str = dest_str.or_400("missing or invalid Destination header")?;
 
     let src_path = req.uri().path().to_owned();
 
     let fs_src = state.resolve_existing(&src_path).await;
-    let fs_src = ok_or_return!(fs_src.or_404("source not found"));
+    let fs_src = fs_src.or_404("source not found")?;
 
     let fs_dest = state.resolve_write_target(&dest_str);
-    let fs_dest = ok_or_return!(fs_dest.or_403("invalid destination path"));
+    let fs_dest = fs_dest.or_403("invalid destination path")?;
 
     if fs_src == fs_dest {
         tracing::debug!(verb, "source and destination are the same");
-        return StatusCode::FORBIDDEN.into_response();
+        return Err(StatusCode::FORBIDDEN);
     }
 
     let dest = state.resolve_and_guard(&dest_str).await;
-    let dest = ok_or_return!(dest.or_invalid(StatusCode::BAD_REQUEST));
+    let dest = dest.or_invalid(StatusCode::BAD_REQUEST)?;
     let dest_existed_before = tokio::fs::metadata(&dest).await.is_ok();
     let mut dest_existed = dest_existed_before;
 
     if dest_existed && !overwrite {
         tracing::debug!(verb, "target exists and Overwrite is F");
-        return StatusCode::PRECONDITION_FAILED.into_response();
+        return Err(StatusCode::PRECONDITION_FAILED);
     }
 
     let meta = tokio::fs::metadata(&fs_src).await;
-    let meta = ok_or_return!(meta.or_404("source not found for COPY/MOVE"));
+    let meta = meta.or_404("source not found for COPY/MOVE")?;
 
     // Type-incompatible overwrite with Overwrite:T — clean up target first
     if overwrite && dest_existed {
@@ -167,14 +165,14 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
             if !dest_existed {
                 if let Err(e) = tokio::fs::create_dir(&dest).await {
                     tracing::error!(error = %e, "shallow copy create dir failed");
-                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
                 }
             }
-        } else if let Err(resp) = copy_dir(&fs_src, &dest, dest_existed).await {
-            return resp;
+        } else {
+            copy_dir(&fs_src, &dest, dest_existed).await?;
         }
-    } else if let Err(resp) = copy_file(&fs_src, &dest).await {
-        return resp;
+    } else {
+        copy_file(&fs_src, &dest).await?;
     }
 
     if is_move && tokio::fs::rename(&fs_src, &dest).await.is_err() {
@@ -198,24 +196,24 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
     tracing::debug!(verb, src = %fs_src.display(), dest = %dest.display(), "completed");
 
     if dest_existed_before {
-        StatusCode::NO_CONTENT.into_response()
+        Ok(StatusCode::NO_CONTENT.into_response())
     } else {
-        StatusCode::CREATED.into_response()
+        Ok(StatusCode::CREATED.into_response())
     }
 }
 
-async fn copy_file(src: &Path, dest: &Path) -> Result<(), Response> {
+async fn copy_file(src: &Path, dest: &Path) -> Result<(), StatusCode> {
     tokio::fs::copy(src, dest)
         .await
         .or_500("copy file failed")?;
     Ok(())
 }
 
-async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), Response> {
+async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), StatusCode> {
     if !dest_existed {
         tokio::fs::create_dir(dest).await.map_err(|e| {
             tracing::error!(error = %e, dest = %dest.display(), "create dest dir failed");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            StatusCode::INTERNAL_SERVER_ERROR
         })?;
     }
 
@@ -223,16 +221,16 @@ async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), Res
     while let Some((src_dir, dest_dir)) = stack.pop() {
         let mut read_dir = tokio::fs::read_dir(&src_dir).await.map_err(|e| {
             tracing::error!(error = %e, dir = %src_dir.display(), "read dir failed");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
         while let Some(entry) = read_dir.next_entry().await.map_err(|e| {
             tracing::error!(error = %e, "read entry failed");
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            StatusCode::INTERNAL_SERVER_ERROR
         })? {
             let file_type = entry.file_type().await.map_err(|e| {
                 tracing::error!(error = %e, "file_type failed");
-                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                StatusCode::INTERNAL_SERVER_ERROR
             })?;
             let entry_dest = dest_dir.join(entry.file_name());
 
@@ -240,7 +238,7 @@ async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), Res
                 if let Err(e) = tokio::fs::create_dir(&entry_dest).await {
                     if e.kind() != std::io::ErrorKind::AlreadyExists {
                         tracing::error!(error = %e, dest = %entry_dest.display(), "create sub dir failed");
-                        return Err(StatusCode::INTERNAL_SERVER_ERROR.into_response());
+                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
                     }
                 }
                 stack.push((entry.path(), entry_dest));
@@ -251,7 +249,7 @@ async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), Res
                     tracing::error!(
                         error = %e, src = %entry.path().display(), dest = %entry_dest.display(), "copy file failed"
                     );
-                    StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                    StatusCode::INTERNAL_SERVER_ERROR
                 })?;
             }
         }
@@ -263,18 +261,17 @@ async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), Res
 ///
 /// Processes `set` and `remove` actions from the request body. Returns a
 /// `207 Multi-Status` response with per-property success/failure status.
-pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) -> Response {
+pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let request_path = req.uri().path().to_owned();
 
     let fs_path = state.resolve_existing(&request_path).await;
-    let fs_path = ok_or_return!(fs_path.or_404("path resolution failed for PROPPATCH"));
+    let fs_path = fs_path.or_404("path resolution failed for PROPPATCH")?;
 
     let body_bytes = body::to_bytes(req.into_body(), 65536).await;
-    let body_bytes = ok_or_return!(body_bytes.or_400("failed to read PROPPATCH body"));
+    let body_bytes = body_bytes.or_400("failed to read PROPPATCH body")?;
 
-    let op = ok_or_return!(
-        webdav::parse_proppatch_request(&body_bytes).or_400("failed to parse PROPPATCH request")
-    );
+    let op =
+        webdav::parse_proppatch_request(&body_bytes).or_400("failed to parse PROPPATCH request")?;
 
     let mut dead_props = state.dead_props.write().await;
     let entry = dead_props.entry(fs_path.clone()).or_default();
@@ -302,7 +299,7 @@ pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) 
 
     drop(dead_props);
 
-    webdav::xml::multistatus(xml)
+    Ok(webdav::xml::multistatus(xml))
 }
 
 fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> String {
@@ -362,7 +359,6 @@ mod tests {
 
     use axum::extract::State;
     use axum::http::{Method as HttpMethod, StatusCode};
-    use axum::response::IntoResponse;
     use axum::{Router, body::Body, extract::Request, routing::any};
     use tower::ServiceExt;
 
@@ -750,7 +746,7 @@ mod tests {
                     } else if method == Method::PROPPATCH {
                         super::handle_proppatch(State(state), req).await
                     } else {
-                        StatusCode::METHOD_NOT_ALLOWED.into_response()
+                        Err(StatusCode::METHOD_NOT_ALLOWED)
                     }
                 },
             ))

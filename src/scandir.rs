@@ -144,7 +144,7 @@ pub(crate) struct DirEntryMeta {
 /// syscall for up to 256 entries.
 ///
 /// On other platforms, falls back to `std::fs::read_dir` with serial
-/// `entry.metadata()` calls — still a single `spawn_blocking`, eliminating
+/// `std::fs::metadata()` calls — still a single `spawn_blocking`, eliminating
 /// per-entry tokio scheduling overhead compared to the current
 /// `tokio::fs::read_dir` + `metadata()` loop.
 ///
@@ -267,7 +267,7 @@ fn batch_fallback(dir_path: &Path) -> io::Result<Vec<DirEntryMeta>> {
         };
 
         let name = entry.file_name();
-        let meta = match entry.metadata() {
+        let meta = match std::fs::metadata(entry.path()) {
             Ok(m) => m,
             Err(e) => {
                 let name = name.to_string_lossy();

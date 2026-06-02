@@ -10,24 +10,34 @@ use axum::response::{IntoResponse, Response};
 use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 
-use crate::ok_or_return;
-use crate::server::AppState;
+use crate::server::{AppResult, AppState};
 use crate::utils::error::{IntoResolved, OrStatus};
 use crate::webdav::{
     self, ls,
     xml::{XmlWriterExt, dav_qname, write_activelock},
 };
 
+/// Result of conflict checking before lock-null resource creation.
+enum TryAcquire {
+    /// Lock acquired under the write guard — the entry has been modified.
+    /// No file I/O needed. The token is returned.
+    Acquired(String),
+    /// Entry was empty — caller should drop the lock guard, create the
+    /// lock-null resource, reacquire, re-verify the entry is still empty,
+    /// then commit the new lock entry.
+    NeedsLockNull,
+}
+
 /// LOCK handler — creates or refreshes a WebDAV lock (RFC 4918 §9.10).
 ///
 /// Supports exclusive and shared locks. Handles lock-null resource creation
 /// for locking non-existent URLs. Refreshes existing locks when the same
 /// token is presented. Returns the `Lock-Token` header and activelock XML.
-pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Response {
+pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let request_path = req.uri().path().trim_end_matches('/').to_owned();
 
     let target = state.resolve_and_guard(&request_path).await;
-    let target = ok_or_return!(target.or_invalid(StatusCode::FORBIDDEN));
+    let target = target.or_invalid(StatusCode::FORBIDDEN)?;
 
     let timeout = webdav::parse_timeout(req.headers()).or_else(|| {
         if state.lock_timeout == std::time::Duration::ZERO {
@@ -44,7 +54,7 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
         .map(|t| t.to_string())
         .collect();
     let body_bytes = body::to_bytes(req.into_body(), 65536).await;
-    let body_bytes = ok_or_return!(body_bytes.or_400("failed to read LOCK body"));
+    let body_bytes = body_bytes.or_400("failed to read LOCK body")?;
 
     let (owner, lock_scope) = parse_lock_body(&body_bytes);
 
@@ -53,65 +63,89 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Re
     if let Some(al) = webdav::find_ancestor_lock(&locks, &target, &state.root_canonical, |l| {
         if_tokens.contains(&l.token)
     }) {
-        let al = al.clone();
-        let xml = build_lock_response(&al);
+        let xml = build_lock_response(al);
+
         tracing::debug!(
-            path = %target.display(),
-            token = %al.token,
-            ancestor = true,
+            path = %target.display(), token = %al.token, ancestor = true,
             "indirect LOCK refresh via ancestor depth:infinity lock"
         );
-        drop(locks);
-        return Response::builder()
-            .status(StatusCode::OK)
-            .header("content-type", "application/xml; charset=utf-8")
-            .header("lock-token", format!("<{}>", al.token))
-            .body(Body::from(xml))
-            .unwrap();
+
+        return Ok(lock_response(&al.token, xml, StatusCode::OK));
     }
 
     let entry = locks.entry(target.clone()).or_default();
 
-    let (token, is_refresh, created_locknull) = match lock_scope {
-        webdav::LockScope::Exclusive => {
-            match try_acquire_exclusive(entry, &if_tokens, &target).await {
-                Ok(v) => v,
-                Err(status) => {
-                    drop(locks);
-                    return status.into_response();
-                }
-            }
-        }
-        webdav::LockScope::Shared => match try_acquire_shared(entry, &if_tokens, &target).await {
-            Ok(v) => v,
-            Err(status) => {
-                drop(locks);
-                return status.into_response();
-            }
-        },
+    let decision = match lock_scope {
+        webdav::LockScope::Exclusive => try_acquire_exclusive(entry, &if_tokens).await?,
+        webdav::LockScope::Shared => try_acquire_shared(entry, &if_tokens).await?,
     };
 
-    let lock = webdav::LockInfo::new(
-        lock_scope,
-        token.clone(),
-        owner,
-        std::time::SystemTime::now(),
-        timeout,
-        depth,
-    );
-    let xml = build_lock_response(&lock);
-    entry.push(lock);
+    match decision {
+        TryAcquire::Acquired(token) => {
+            let lock = webdav::LockInfo::new(
+                lock_scope,
+                token.clone(),
+                owner,
+                std::time::SystemTime::now(),
+                timeout,
+                depth,
+            );
+            let xml = build_lock_response(&lock);
 
-    tracing::debug!(path = %target.display(), token = %token, is_refresh, "LOCK completed");
+            entry.push(lock);
 
-    drop(locks);
+            tracing::debug!(
+                path = %target.display(), token = %token, is_refresh = true, "LOCK completed"
+            );
 
+            Ok(lock_response(&token, xml, StatusCode::OK))
+        }
+        TryAcquire::NeedsLockNull => {
+            // Release the write guard before file I/O, then re-verify.
+            drop(locks);
+
+            let created = ensure_lock_null_resource(&target).await?;
+
+            // Reacquire and verify no conflicting lock appeared.
+            let mut locks = state.locks.write().await;
+            let entry = locks.entry(target.clone()).or_default();
+
+            if !entry.is_empty() {
+                return Err(StatusCode::LOCKED);
+            }
+
+            let token = webdav::generate_lock_token();
+            let lock = webdav::LockInfo::new(
+                lock_scope,
+                token.clone(),
+                owner,
+                std::time::SystemTime::now(),
+                timeout,
+                depth,
+            );
+            let xml = build_lock_response(&lock);
+
+            entry.push(lock);
+
+            tracing::debug!(
+                path = %target.display(), token = %token, is_refresh = false, "LOCK completed"
+            );
+
+            let status = if created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            };
+
+            Ok(lock_response(&token, xml, status))
+        }
+    }
+}
+
+/// Build an HTTP response for LOCK with the lock-token header and XML body.
+fn lock_response(token: &str, xml: String, status: StatusCode) -> Response {
     Response::builder()
-        .status(if created_locknull {
-            StatusCode::CREATED
-        } else {
-            StatusCode::OK
-        })
+        .status(status)
         .header("content-type", "application/xml; charset=utf-8")
         .header("lock-token", format!("<{token}>"))
         .body(Body::from(xml))
@@ -194,57 +228,58 @@ async fn ensure_lock_null_resource(target: &std::path::Path) -> Result<bool, Sta
 async fn try_acquire_exclusive(
     entry: &mut Vec<webdav::LockInfo>,
     if_tokens: &[String],
-    target: &std::path::Path,
-) -> Result<(String, bool, bool), StatusCode> {
+) -> Result<TryAcquire, StatusCode> {
     if let Some(token) = ls::check_existing_exclusive(entry, if_tokens)? {
         entry.retain(|l| !l.is_exclusive());
-        return Ok((token, true, false));
+        return Ok(TryAcquire::Acquired(token));
     }
 
     if !entry.is_empty() {
         if entry.iter().all(|l| if_tokens.contains(&l.token)) {
             entry.clear();
-            return Ok((webdav::generate_lock_token(), false, false));
+            return Ok(TryAcquire::Acquired(webdav::generate_lock_token()));
         }
         return Err(StatusCode::LOCKED);
     }
 
-    let created_locknull = ensure_lock_null_resource(target).await?;
-    Ok((webdav::generate_lock_token(), false, created_locknull))
+    Ok(TryAcquire::NeedsLockNull)
 }
 
 async fn try_acquire_shared(
     entry: &mut Vec<webdav::LockInfo>,
     if_tokens: &[String],
-    target: &std::path::Path,
-) -> Result<(String, bool, bool), StatusCode> {
+) -> Result<TryAcquire, StatusCode> {
     if ls::check_existing_exclusive(entry, if_tokens)?.is_some() {
         entry.retain(|l| !l.is_exclusive());
-        return Ok((webdav::generate_lock_token(), false, false));
+        return Ok(TryAcquire::Acquired(webdav::generate_lock_token()));
     }
 
     if let Some(existing) = entry.iter().find(|l| if_tokens.contains(&l.token)) {
         let token = existing.token.clone();
         entry.retain(|l| l.token != token);
-        return Ok((token, true, false));
+        return Ok(TryAcquire::Acquired(token));
     }
 
-    let created_locknull = ensure_lock_null_resource(target).await?;
-    Ok((webdav::generate_lock_token(), false, created_locknull))
+    if entry.is_empty() {
+        return Ok(TryAcquire::NeedsLockNull);
+    }
+
+    // Non-empty, no exclusive or matching shared — compatible shared locks.
+    Ok(TryAcquire::Acquired(webdav::generate_lock_token()))
 }
 
 /// UNLOCK handler — removes a WebDAV lock (RFC 4918 §9.11).
 ///
 /// Requires the `Lock-Token` header. Returns `204 No Content` on success.
 /// Returns `403 Forbidden` if the token does not match any existing lock.
-pub async fn handle_unlock(State(state): State<Arc<AppState>>, req: Request) -> Response {
+pub async fn handle_unlock(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let request_path = req.uri().path().to_owned();
 
     let token = webdav::parse_lock_token_header(req.headers());
-    let token = ok_or_return!(token.or_400("missing or invalid lock-token header for UNLOCK"));
+    let token = token.or_400("missing or invalid lock-token header for UNLOCK")?;
 
     let fs_path = state.resolve_existing(&request_path).await;
-    let fs_path = ok_or_return!(fs_path.or_404("resource not found for UNLOCK"));
+    let fs_path = fs_path.or_404("resource not found for UNLOCK")?;
 
     let mut locks = state.locks.write().await;
     if let Some(entry) = locks.get_mut(&fs_path) {
@@ -253,11 +288,11 @@ pub async fn handle_unlock(State(state): State<Arc<AppState>>, req: Request) -> 
         if entry.len() < before {
             tracing::debug!(path = %fs_path.display(), token = %token, "UNLOCK completed");
             drop(locks);
-            return StatusCode::NO_CONTENT.into_response();
+            return Ok(StatusCode::NO_CONTENT.into_response());
         }
     }
     drop(locks);
-    StatusCode::FORBIDDEN.into_response()
+    Err(StatusCode::FORBIDDEN)
 }
 
 // ---------------------------------------------------------------------------
