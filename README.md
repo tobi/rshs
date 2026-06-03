@@ -1,15 +1,34 @@
-# rshs
+<div align="center">
+  <h1>RSHS</h1>
+</div>
+
+<div align="center">
+  <h3>WebDAV, simplified</h3>
+  <a href="https://github.com/mogeko/rshs/blob/master/docs/usage.md">Guide</a> •
+  <a href="https://github.com/mogeko/rshs/blob/master/docs/benchmark-report.md">Benchmark</a> •
+  <a href="https://github.com/mogeko/rshs/blob/master/docs/litmus-test-report.md">Litmus Test</a> •
+  <a href="https://www.rfc-editor.org/info/rfc4918">RFC 4918</a>
+
+</div>
+
+<br/>
+
+<div align="center">
 
 [![Build](https://github.com/mogeko/rshs/actions/workflows/build.yaml/badge.svg)](https://github.com/mogeko/rshs/actions/workflows/build.yaml)
 [![Test](https://github.com/mogeko/rshs/actions/workflows/test.yaml/badge.svg)](https://github.com/mogeko/rshs/actions/workflows/test.yaml)
-[![Litmus](https://img.shields.io/badge/Litmus-102/102-green)](./docs/litmus-test-report.md)
+[![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-A WebDAV server that Just Works — zero config, [litmus 100%](./docs/litmus-test-report.md).
+</div>
+
+A WebDAV server that Just Works — zero config, [litmus 100%](./docs/litmus-test-report.md). Built in Rust for speed and correctness, packaged as a single Docker image for easy deployment.
+
+## Features
 
 - **Browser + WebDAV hybrid** — HTML directory listings for humans, WebDAV protocol for mounting (Finder, Explorer, davfs).
 - **Fast and lightweight** — dispatch ~42µs (GET); 10MB read at 835 MiB/s, 1000-file directory listing in 1.7ms, PROPFIND 200 files in 1.1ms. [Full benchmark report](./docs/benchmark-report.md)
 - **Zero config, [one command](#quick-start)** — no config files, daemons, or runtime dependencies beyond Docker. Just mount a volume and go.
-- **Litmus 102/102** — full [RFC 4918 Class 2](https://datatracker.ietf.org/doc/html/rfc4918) compliance: locks, copy/move, conditional `If` headers, dead properties. All five suites pass.
+- **Litmus 102/102** — full [RFC 4918 Class 2](https://www.rfc-editor.org/info/rfc4918) compliance: locks, copy/move, conditional `If` headers, dead properties. All five suites pass.
 - **TLS + HTTP/2** — built-in HTTPS with automatic HTTP/2 negotiation.
 - **Optional Basic Auth** — per-user credentials with persistent shadow files (SHA-512 crypt).
 
