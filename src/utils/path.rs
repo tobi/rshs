@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use axum::http::StatusCode;
 use percent_encoding::percent_decode_str;
@@ -105,16 +105,13 @@ pub async fn resolve_and_guard(
     let parent = fs_path.parent().unwrap_or(root_dir);
 
     let parent_canonical = {
-        if let Some(cached) = canonical_cache.lock().unwrap().get(parent) {
+        if let Some(cached) = lock_or_recover(canonical_cache).get(parent) {
             cached.clone()
         } else {
             let pc = tokio::fs::canonicalize(parent)
                 .await
                 .map_err(ResolveTargetError::ParentCanonicalizeFailed)?;
-            canonical_cache
-                .lock()
-                .unwrap()
-                .insert(parent.to_path_buf(), pc.clone());
+            lock_or_recover(canonical_cache).insert(parent.to_path_buf(), pc.clone());
             pc
         }
     };
@@ -124,6 +121,11 @@ pub async fn resolve_and_guard(
     }
 
     Ok(parent_canonical.join(fs_path.file_name().unwrap()))
+}
+
+/// Helper to lock a mutex, recovering from poisoning by returning the inner value.
+fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 #[cfg(test)]
