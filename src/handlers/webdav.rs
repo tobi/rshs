@@ -307,7 +307,7 @@ fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> Str
 
     writer.ev(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
 
-    let mut ms = BytesStart::new(El::MULTISTATUS);
+    let mut ms = BytesStart::new(El::MULTI_STATUS);
 
     ms.push_attribute(("xmlns:D", "DAV:"));
 
@@ -317,7 +317,7 @@ fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> Str
         write_proppatch_result(&mut writer, request_path, &action.0, "200 OK");
     }
 
-    writer.ev(Event::End(BytesEnd::new(El::MULTISTATUS)));
+    writer.ev(Event::End(BytesEnd::new(El::MULTI_STATUS)));
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
@@ -329,7 +329,7 @@ fn write_proppatch_result(writer: &mut XmlWriter, href: &str, prop_name: &str, s
     writer.ev(Event::Text(BytesText::new(href)));
     writer.ev(Event::End(BytesEnd::new(El::HREF)));
 
-    writer.ev(Event::Start(BytesStart::new(El::PROPSTAT)));
+    writer.ev(Event::Start(BytesStart::new(El::PROP_STAT)));
 
     writer.ev(Event::Start(BytesStart::new(El::PROP)));
     let (ns, local) = webdav::parse_clark(prop_name).unwrap_or(("", prop_name));
@@ -344,7 +344,7 @@ fn write_proppatch_result(writer: &mut XmlWriter, href: &str, prop_name: &str, s
     writer.ev(Event::Text(BytesText::new(&format!("HTTP/1.1 {status}"))));
     writer.ev(Event::End(BytesEnd::new(El::STATUS)));
 
-    writer.ev(Event::End(BytesEnd::new(El::PROPSTAT)));
+    writer.ev(Event::End(BytesEnd::new(El::PROP_STAT)));
     writer.ev(Event::End(BytesEnd::new(El::RESPONSE)));
 }
 

@@ -211,11 +211,11 @@ fn build_lock_response(lock: &webdav::LockInfo) -> String {
     prop.push_attribute(("xmlns:D", "DAV:"));
     writer.ev(Event::Start(prop));
 
-    writer.ev(Event::Start(BytesStart::new(El::LOCKDISCOVERY)));
+    writer.ev(Event::Start(BytesStart::new(El::LOCK_DISCOVERY)));
 
     webdav::xml::write_activelock(&mut writer, lock);
 
-    writer.ev(Event::End(BytesEnd::new(El::LOCKDISCOVERY)));
+    writer.ev(Event::End(BytesEnd::new(El::LOCK_DISCOVERY)));
     writer.ev(Event::End(BytesEnd::new(El::PROP)));
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
