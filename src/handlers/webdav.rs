@@ -19,6 +19,12 @@ use crate::webdav::{self, El, XmlWriter, XmlWriterExt};
 ///
 /// Supports `Depth: 0`, `1`, and `infinity`. Accepts `allprop`, `propname`,
 /// and named property requests. Returns a `207 Multi-Status` XML response.
+///
+/// # Panics
+///
+/// Panics if XML serialization or response construction fails. In practice
+/// this never occurs — the XML is built from an in-memory buffer and the
+/// response builder is always fresh.
 pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let depth = webdav::parse_depth(req.headers());
     let request_path = req.uri().path().to_owned();
@@ -261,6 +267,12 @@ async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), Sta
 ///
 /// Processes `set` and `remove` actions from the request body. Returns a
 /// `207 Multi-Status` response with per-property success/failure status.
+///
+/// # Panics
+///
+/// Panics if XML serialization or response construction fails. In practice
+/// this never occurs — the XML is built from an in-memory buffer and the
+/// response builder is always fresh.
 pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let request_path = req.uri().path().to_owned();
 

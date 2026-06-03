@@ -30,6 +30,12 @@ enum TryAcquire {
 /// Supports exclusive and shared locks. Handles lock-null resource creation
 /// for locking non-existent URLs. Refreshes existing locks when the same
 /// token is presented. Returns the `Lock-Token` header and activelock XML.
+///
+/// # Panics
+///
+/// Panics if constructing the lock response XML or HTTP response fails.
+/// In practice this never occurs — the XML is always valid UTF-8 from an
+/// in-memory buffer, and the response builder is always fresh.
 pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let request_path = req.uri().path().trim_end_matches('/').to_owned();
 

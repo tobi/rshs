@@ -75,6 +75,12 @@ pub type XmlWriter = Writer<Cursor<Vec<u8>>>;
 /// The `.ev(event)` method is equivalent to `.write_event(event).unwrap()`,
 /// reducing boilerplate in WebDAV response building.
 ///
+/// # Panics
+///
+/// Panics if the underlying XML writer fails to write the event.
+/// In normal operation this never occurs — the backing buffer is an
+/// in-memory `Vec<u8>` which is infallible.
+///
 /// ```
 /// use std::io::Cursor;
 /// use quick_xml::{Writer, events::{BytesStart, BytesEnd, Event}};
@@ -98,6 +104,12 @@ impl XmlWriterExt for XmlWriter {
 
 /// Build a `207 Multi-Status` XML response.
 ///
+/// # Panics
+///
+/// Panics if the response builder fails to construct a valid response.
+/// This only occurs when the builder is in an invalid state (e.g. body
+/// already set), which cannot happen with a fresh builder.
+///
 /// ```
 /// use rshs::webdav::xml::multistatus;
 ///
@@ -120,6 +132,12 @@ pub fn multistatus(xml: String) -> Response {
 /// For each entry it emits the requested live properties (creationdate,
 /// getcontentlength, getetag, resourcetype, etc.), dead properties, and
 /// active lock information via [`write_activelock`].
+///
+/// # Panics
+///
+/// Panics if the assembled XML buffer contains invalid UTF-8.
+/// In normal operation this never occurs — `quick_xml` always produces
+/// valid UTF-8 when writing to an in-memory buffer.
 ///
 /// ```
 /// use std::time::{SystemTime, UNIX_EPOCH};

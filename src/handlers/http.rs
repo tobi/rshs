@@ -18,6 +18,12 @@ use crate::utils::error::{IntoResolved, OrStatus};
 ///
 /// Supports conditional `If-Modified-Since` via the `Last-Modified` header.
 /// Accepts `Range` requests for partial content delivery.
+///
+/// # Panics
+///
+/// Panics if constructing an HTTP response fails. In practice this never
+/// occurs — the response builder is always fresh and the body/headers are
+/// valid.
 pub async fn handle_get_head(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let request_path = req.uri().path().to_owned();
 
@@ -166,6 +172,11 @@ pub async fn handle_delete(State(state): State<Arc<AppState>>, req: Request) -> 
 ///
 /// Includes the `DAV: 1,2` compliance level and `MS-Author-Via: DAV` header
 /// for compatibility with legacy clients.
+///
+/// # Panics
+///
+/// Panics if constructing the response fails. In practice this never occurs
+/// — the response builder is always fresh with valid headers and an empty body.
 pub async fn handle_options() -> AppResult {
     Ok(Response::builder()
         .status(StatusCode::OK)

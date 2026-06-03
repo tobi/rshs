@@ -231,6 +231,11 @@ impl AuthState {
     ///
     /// Each line must be in `username:$hash$...` format (SHA-512 crypt).
     /// Empty lines and malformed entries are skipped with a warning.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the shadow file cannot be read (missing,
+    /// permission denied, or not valid UTF-8).
     pub fn load_from_shadow_file(path: &Path) -> io::Result<Self> {
         let content = fs::read_to_string(path).map_err(|e| {
             io::Error::new(
@@ -282,6 +287,11 @@ impl AuthState {
     ///
     /// Plaintext passwords are hashed with SHA-512 crypt before writing.
     /// If `create` is true, the file is created with `0600` permissions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if parent directory creation fails, the shadow file
+    /// cannot be created, permissions cannot be set, or password hashing fails.
     pub fn write_to_shadow_file(&self, path: &Path, create: bool) -> io::Result<()> {
         if create {
             if let Some(parent) = path.parent() {

@@ -21,6 +21,12 @@ use crate::server::AppResult;
 /// expensive password hash on every request. See [`AuthState::validate_cached`].
 ///
 /// Returns `401 Unauthorized` with `WWW-Authenticate: Basic realm="rshs"` on failure.
+///
+/// # Panics
+///
+/// Panics if constructing the `401 Unauthorized` response fails.
+/// This only occurs when the response builder is in an invalid state,
+/// which cannot happen with a fresh builder.
 pub async fn auth_middleware(
     State(state): State<Arc<AuthState>>,
     req: Request,

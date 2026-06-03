@@ -450,6 +450,11 @@ fn extract_element_ns(e: &BytesStart) -> Result<(String, String), ParseError> {
 /// Detects `<allprop/>`, `<propname/>`, or named `<prop>` elements and returns
 /// the appropriate `PropRequest` variant.
 ///
+/// # Errors
+///
+/// Returns a [`ParseError`] if the XML is malformed, contains invalid UTF-8,
+/// or has an unsupported document structure.
+///
 /// ```
 /// use rshs::webdav::{parse_propfind_request, PropRequest};
 ///
@@ -599,6 +604,17 @@ fn decode_xml_char_refs(text: &str) -> String {
 }
 
 /// Parse a PROPPATCH request body into a sequence of set/remove actions.
+///
+/// # Errors
+///
+/// Returns a [`ParseError`] if the XML is malformed, contains invalid UTF-8,
+/// or has no valid actions.
+///
+/// # Panics
+///
+/// Panics if the XML parser encounters an unexpected state (e.g. a text
+/// event with no current property name). In practice this only occurs on
+/// structurally invalid input that bypasses the parser's normal error paths.
 ///
 /// ```
 /// use rshs::webdav::{parse_proppatch_request, PropPatchAction};

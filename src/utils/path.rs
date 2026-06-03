@@ -91,6 +91,12 @@ pub fn resolve_write_target(root_dir: &Path, request_path: &str) -> Option<PathB
 /// syscalls for the same parent directory.
 ///
 /// Returns the canonical target `PathBuf`.
+///
+/// # Panics
+///
+/// Panics if `resolve_write_target` returned a path with no file name
+/// component. In practice this never occurs — `resolve_write_target`
+/// rejects empty paths and directory paths (trailing `/`).
 pub async fn resolve_and_guard(
     root_dir: &Path,
     root_canonical: &Path,

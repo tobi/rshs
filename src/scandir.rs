@@ -150,6 +150,11 @@ pub(crate) struct DirEntryMeta {
 ///
 /// Entries whose metadata cannot be read are silently skipped (matching
 /// the existing `continue`-on-error behaviour in the PROPFIND handlers).
+///
+/// # Errors
+///
+/// Returns an error if the directory cannot be opened for reading or
+/// the `spawn_blocking` task panics.
 pub(crate) async fn batch_read_dir_entries(dir_path: &Path) -> io::Result<Vec<DirEntryMeta>> {
     let path = dir_path.to_path_buf();
     tokio::task::spawn_blocking(move || batch_read_dir_entries_sync(&path))
