@@ -106,13 +106,8 @@ impl XmlWriterExt for XmlWriter {
 /// assert!(response.headers().get("content-type").unwrap().to_str().unwrap().contains("application/xml"));
 /// ```
 pub fn multistatus(xml: String) -> Response {
-    xml_response(StatusCode::from_u16(207).unwrap(), xml)
-}
-
-/// Build an XML response with the given status code.
-fn xml_response(status: StatusCode, xml: String) -> Response {
     Response::builder()
-        .status(status)
+        .status(StatusCode::MULTI_STATUS) // 207 Multi-Status
         .header("content-type", "application/xml; charset=utf-8")
         .body(Body::from(xml))
         .unwrap()
