@@ -92,6 +92,11 @@ impl Method {
     /// WebDAV extension methods (PROPFIND, MKCOL, etc.) are matched by
     /// string comparison.
     ///
+    /// # Errors
+    ///
+    /// Returns an `InvalidMethod` error if the method is not recognized as a
+    /// standard HTTP method or a supported WebDAV extension method.
+    ///
     /// # Panics
     ///
     /// Panics if `HttpMethod::from_bytes(b"")` ever returns `Ok`, which
