@@ -1,10 +1,287 @@
-//! Lock system evaluation — ancestor walk, `If` condition evaluation, active-lock filtering.
+//! Lock system evaluation — `If` header types, condition parsing, ancestor walk, and lock evaluation.
 
 use std::path::Path;
+use std::time::SystemTime;
 
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
+use derive_new::new;
 
-use super::{Depth, IfCondition, IfList, LockInfo, LockStore};
+use super::{Depth, LockInfo, LockStore};
+
+// ---------------------------------------------------------------------------
+// If header types (RFC 4918 §10.4)
+// ---------------------------------------------------------------------------
+
+/// A single condition in an `If` header (RFC 4918 §10.4).
+///
+/// ```
+/// use rshs::webdav::IfCondition;
+///
+/// let token = IfCondition::StateToken("opaquelocktoken:abc".into());
+/// let not = IfCondition::Not(Box::new(token.clone()));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IfCondition {
+    /// `<token>` — match a specific lock token.
+    StateToken(String),
+    /// `Not <condition>` — negate a condition.
+    Not(Box<IfCondition>),
+}
+
+impl IfCondition {
+    /// Evaluate this condition against a raw lock slice.
+    ///
+    /// Filters out expired locks internally, then delegates to
+    /// [`eval_active`](IfCondition::eval_active). For evaluating
+    /// multiple conditions against the same lock set, use
+    /// [`eval_if`] which filters once and calls `eval_active`.
+    ///
+    /// - `StateToken("DAV:no-lock")`: true if no active locks exist.
+    /// - `StateToken(t)`: true if any active lock has token `t`.
+    /// - `Not(inner)`: negates the inner condition.
+    pub fn eval(&self, infos: &[LockInfo]) -> bool {
+        let active: Vec<&LockInfo> = active_slice(infos).collect();
+        self.eval_active(&active)
+    }
+
+    /// Evaluate this condition against a pre-filtered active lock slice.
+    ///
+    /// The caller is responsible for filtering out expired locks before
+    /// calling this method — use [`active_slice`] to obtain an active
+    /// iterator and `collect` into `Vec<&LockInfo>`. This is the inner
+    /// variant called by [`eval_if`] after filtering once for all
+    /// conditions.
+    pub fn eval_active(&self, active: &[&LockInfo]) -> bool {
+        match self {
+            IfCondition::StateToken(t) if t == "DAV:no-lock" => active.is_empty(),
+            IfCondition::StateToken(t) => active.iter().any(|l| l.token == *t),
+            IfCondition::Not(inner) => !inner.eval_active(active),
+        }
+    }
+}
+
+/// One list of conditions in an `If` header, optionally scoped to a resource.
+///
+/// Multiple lists are OR'd; multiple conditions within a list are AND'd.
+///
+/// ```
+/// use rshs::webdav::{IfList, IfCondition};
+///
+/// let list = IfList {
+///     resource_tag: None,
+///     conditions: vec![
+///         IfCondition::StateToken("opaquelocktoken:t1".into()),
+///         IfCondition::Not(Box::new(IfCondition::StateToken("DAV:no-lock".into()))),
+///     ],
+/// };
+/// assert!(list.has_lock_token());
+/// assert_eq!(list.positive_tokens(), vec!["opaquelocktoken:t1"]);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, new)]
+pub struct IfList {
+    pub resource_tag: Option<String>,
+    pub conditions: Vec<IfCondition>,
+}
+
+impl IfList {
+    /// Collect all non-negated state tokens.
+    ///
+    /// ```
+    /// use rshs::webdav::{IfList, IfCondition};
+    ///
+    /// let list = IfList {
+    ///     resource_tag: None,
+    ///     conditions: vec![
+    ///         IfCondition::StateToken("t1".into()),
+    ///         IfCondition::Not(Box::new(IfCondition::StateToken("t2".into()))),
+    ///         IfCondition::StateToken("t3".into()),
+    ///     ],
+    /// };
+    /// assert_eq!(list.positive_tokens(), vec!["t1", "t3"]);
+    /// ```
+    pub fn positive_tokens(&self) -> Vec<&str> {
+        self.positive_tokens_iter().collect()
+    }
+
+    /// Iterator over non-negated state tokens.
+    pub fn positive_tokens_iter(&self) -> impl Iterator<Item = &str> + '_ {
+        self.conditions.iter().filter_map(|c| match c {
+            IfCondition::StateToken(t) => Some(t.as_str()),
+            _ => None,
+        })
+    }
+
+    /// Whether this list contains any actual lock token (excluding `DAV:no-lock`).
+    ///
+    /// ```
+    /// use rshs::webdav::{IfList, IfCondition};
+    ///
+    /// let no_lock = IfList {
+    ///     resource_tag: None,
+    ///     conditions: vec![IfCondition::StateToken("DAV:no-lock".into())],
+    /// };
+    /// assert!(!no_lock.has_lock_token());
+    ///
+    /// let has_token = IfList {
+    ///     resource_tag: None,
+    ///     conditions: vec![IfCondition::StateToken("opaquelocktoken:xyz".into())],
+    /// };
+    /// assert!(has_token.has_lock_token());
+    /// ```
+    pub fn has_lock_token(&self) -> bool {
+        self.conditions.iter().any(|c| match c {
+            IfCondition::StateToken(t) => t != "DAV:no-lock",
+            IfCondition::Not(inner) => {
+                matches!(inner.as_ref(), IfCondition::StateToken(t) if t != "DAV:no-lock")
+            }
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Header parsers
+// ---------------------------------------------------------------------------
+
+/// Parse the `If` header into a list of `IfList`s (RFC 4918 §10.4).
+///
+/// ```
+/// use axum::http::HeaderMap;
+/// use rshs::webdav::{parse_if_header, IfCondition, IfList};
+///
+/// let mut h = HeaderMap::new();
+/// h.insert("if", "(<opaquelocktoken:t1>)".parse().unwrap());
+///
+/// let lists = parse_if_header(&h);
+/// assert_eq!(lists.len(), 1);
+/// assert_eq!(lists[0].conditions.len(), 1);
+/// assert_eq!(lists[0].conditions[0], IfCondition::StateToken("opaquelocktoken:t1".into()));
+///
+/// // Not condition
+/// let mut h = HeaderMap::new();
+/// h.insert("if", "(Not <DAV:no-lock>)".parse().unwrap());
+/// let lists = parse_if_header(&h);
+/// assert_eq!(lists[0].conditions[0], IfCondition::Not(Box::new(IfCondition::StateToken("DAV:no-lock".into()))));
+///
+/// // Resource tags
+/// let mut h = HeaderMap::new();
+/// h.insert("if", "</path> (<opaquelocktoken:t1>)".parse().unwrap());
+/// let lists = parse_if_header(&h);
+/// assert_eq!(lists[0].resource_tag, Some("/path".into()));
+/// ```
+pub fn parse_if_header(headers: &HeaderMap) -> Vec<IfList> {
+    let value = match headers.get("if").and_then(|v| v.to_str().ok()) {
+        Some(v) => v,
+        None => return Vec::new(),
+    };
+
+    let bytes = value.as_bytes();
+    let mut pos = 0;
+    let mut lists = Vec::new();
+
+    while pos < bytes.len() {
+        pos = skip_ws(bytes, pos);
+        if pos >= bytes.len() {
+            break;
+        }
+
+        match bytes[pos] {
+            b'<' => {
+                let Some((tag, new_pos)) = read_angle_bracket(bytes, pos) else {
+                    break;
+                };
+                pos = skip_ws(bytes, new_pos);
+
+                if pos < bytes.len() && bytes[pos] == b'(' {
+                    let resource_tag = tag;
+                    while pos < bytes.len() && bytes[pos] == b'(' {
+                        let (conditions, new_pos) = read_list(bytes, pos);
+                        pos = skip_ws(bytes, new_pos);
+                        lists.push(IfList::new(Some(resource_tag.clone()), conditions));
+                    }
+                } else {
+                    lists.push(IfList::new(None, vec![IfCondition::StateToken(tag)]));
+                }
+            }
+            b'(' => {
+                let (conditions, new_pos) = read_list(bytes, pos);
+                pos = skip_ws(bytes, new_pos);
+                lists.push(IfList::new(None, conditions));
+            }
+            _ => {
+                pos += 1;
+            }
+        }
+    }
+
+    lists
+}
+
+fn skip_ws(bytes: &[u8], mut p: usize) -> usize {
+    while p < bytes.len() && bytes[p].is_ascii_whitespace() {
+        p += 1;
+    }
+    p
+}
+
+fn read_angle_bracket(bytes: &[u8], p: usize) -> Option<(String, usize)> {
+    debug_assert!(bytes.get(p) == Some(&b'<'));
+    let start = p + 1;
+    let end = bytes[start..].iter().position(|&b| b == b'>')?;
+    Some((
+        std::str::from_utf8(&bytes[start..start + end])
+            .ok()?
+            .to_string(),
+        start + end + 1,
+    ))
+}
+
+fn read_list(bytes: &[u8], mut p: usize) -> (Vec<IfCondition>, usize) {
+    debug_assert!(bytes.get(p) == Some(&b'('));
+    p += 1;
+    let mut conditions = Vec::new();
+    loop {
+        p = skip_ws(bytes, p);
+        if p >= bytes.len() || bytes[p] == b')' {
+            if p < bytes.len() {
+                p += 1;
+            }
+            break;
+        }
+
+        let mut negated = false;
+        if bytes[p..].starts_with(b"Not") {
+            let after = p + 3;
+            if after >= bytes.len()
+                || bytes[after].is_ascii_whitespace()
+                || bytes[after] == b'<'
+                || bytes[after] == b'('
+            {
+                negated = true;
+                p = skip_ws(bytes, after);
+            }
+        }
+
+        if p < bytes.len() && bytes[p] == b'<' {
+            let Some((token, new_p)) = read_angle_bracket(bytes, p) else {
+                break;
+            };
+            p = new_p;
+            let cond = IfCondition::StateToken(token);
+            conditions.push(if negated {
+                IfCondition::Not(Box::new(cond))
+            } else {
+                cond
+            });
+        } else {
+            p += 1;
+        }
+    }
+    (conditions, p)
+}
+
+// ---------------------------------------------------------------------------
+// Lock evaluation
+// ---------------------------------------------------------------------------
 
 /// Filter a lock slice to only active (non-expired) locks.
 ///
@@ -104,7 +381,7 @@ pub fn find_ancestor_lock<'a>(
     let mut result: Option<&'a LockInfo> = None;
     walk_locked_ancestors(locks, target, root_canonical, |infos| {
         for lock in infos {
-            if lock.depth == Depth::Infinity && predicate(lock) {
+            if lock.depth == Depth::Infinity && !lock.is_expired() && predicate(lock) {
                 result = Some(lock);
                 return true;
             }
@@ -114,17 +391,49 @@ pub fn find_ancestor_lock<'a>(
     result
 }
 
-/// Evaluate a single `If` header condition against an active lock slice.
+/// Find and refresh the timeout of an ancestor `Depth::Infinity` lock
+/// matching a predicate.
 ///
-/// - `StateToken("DAV:no-lock")`: true if no active locks exist.
-/// - `StateToken(t)`: true if any active lock has token `t`.
-/// - `Not(inner)`: negates the inner condition.
-pub fn eval_condition(cond: &IfCondition, infos: &[LockInfo]) -> bool {
-    match cond {
-        IfCondition::StateToken(t) if t == "DAV:no-lock" => !active_slice(infos).any(|_| true),
-        IfCondition::StateToken(t) => active_slice(infos).any(|l| l.token == *t),
-        IfCondition::Not(inner) => !eval_condition(inner, infos),
+/// Walks ancestor directories of `target` within `root_canonical`,
+/// finds the first active infinity lock that satisfies `predicate`,
+/// updates its `created` timestamp to the current time (refreshing
+/// the timeout), and returns a clone of the refreshed lock.
+///
+/// Returns `None` if no matching active ancestor lock exists.
+///
+/// Used by [`handle_lock`](crate::handlers::locks::handle_lock) to
+/// refresh depth:infinity ancestor locks when a client submits a
+/// LOCK request with a matching `If` header token.
+pub fn find_and_refresh_ancestor_lock(
+    locks: &mut LockStore,
+    target: &Path,
+    predicate: impl Fn(&LockInfo) -> bool,
+) -> Option<LockInfo> {
+    // Two-pass approach to avoid borrow conflicts:
+    // 1. Collect candidate paths (immutable iteration)
+    // 2. Mutate the matching lock (mutable access)
+    let candidate_paths: Vec<std::path::PathBuf> = locks
+        .iter()
+        .filter(|(path, infos)| {
+            infos
+                .iter()
+                .any(|l| l.depth == Depth::Infinity && !l.is_expired())
+                && is_ancestor_of(path, target)
+        })
+        .map(|(path, _)| path.clone())
+        .collect();
+
+    for path in candidate_paths {
+        if let Some(infos) = locks.get_mut(&path) {
+            for lock in infos.iter_mut() {
+                if lock.depth == Depth::Infinity && !lock.is_expired() && predicate(lock) {
+                    lock.created = SystemTime::now();
+                    return Some(lock.clone());
+                }
+            }
+        }
     }
+    None
 }
 
 /// Evaluate a full `If` header (list of `IfList`s) against an active lock
@@ -151,7 +460,8 @@ pub fn eval_if(lists: &[IfList], infos: &[LockInfo], request_path: &str) -> bool
         return true;
     }
 
-    applicable.all(|l| l.conditions.iter().all(|c| eval_condition(c, infos)))
+    let active: Vec<&LockInfo> = active_slice(infos).collect();
+    applicable.all(|l| l.conditions.iter().all(|c| c.eval_active(&active)))
 }
 
 /// Check whether an existing exclusive lock blocks a request.
@@ -207,42 +517,42 @@ mod tests {
     fn test_eval_condition_state_token_match() {
         let infos = vec![make_lock(LockScope::Exclusive, "t1")];
         let cond = IfCondition::StateToken("t1".into());
-        assert!(eval_condition(&cond, &infos));
+        assert!(cond.eval(&infos));
     }
 
     #[test]
     fn test_eval_condition_state_token_no_match() {
         let infos = vec![make_lock(LockScope::Exclusive, "t1")];
         let cond = IfCondition::StateToken("t2".into());
-        assert!(!eval_condition(&cond, &infos));
+        assert!(!cond.eval(&infos));
     }
 
     #[test]
     fn test_eval_condition_dav_no_lock_unlocked() {
         let infos: Vec<LockInfo> = vec![];
         let cond = IfCondition::StateToken("DAV:no-lock".into());
-        assert!(eval_condition(&cond, &infos));
+        assert!(cond.eval(&infos));
     }
 
     #[test]
     fn test_eval_condition_dav_no_lock_locked() {
         let infos = vec![make_lock(LockScope::Exclusive, "t1")];
         let cond = IfCondition::StateToken("DAV:no-lock".into());
-        assert!(!eval_condition(&cond, &infos));
+        assert!(!cond.eval(&infos));
     }
 
     #[test]
     fn test_eval_condition_not_token() {
         let infos = vec![make_lock(LockScope::Exclusive, "t1")];
         let cond = IfCondition::Not(Box::new(IfCondition::StateToken("t2".into())));
-        assert!(eval_condition(&cond, &infos));
+        assert!(cond.eval(&infos));
     }
 
     #[test]
     fn test_eval_condition_not_token_reject() {
         let infos = vec![make_lock(LockScope::Exclusive, "t1")];
         let cond = IfCondition::Not(Box::new(IfCondition::StateToken("t1".into())));
-        assert!(!eval_condition(&cond, &infos));
+        assert!(!cond.eval(&infos));
     }
 
     #[test]
@@ -334,14 +644,14 @@ mod tests {
     fn test_dav_no_lock_expired_ignored() {
         let infos = vec![make_expired_lock("t1")];
         let cond = IfCondition::StateToken("DAV:no-lock".into());
-        assert!(eval_condition(&cond, &infos));
+        assert!(cond.eval(&infos));
     }
 
     #[test]
     fn test_token_match_expired_rejected() {
         let infos = vec![make_expired_lock("t1")];
         let cond = IfCondition::StateToken("t1".into());
-        assert!(!eval_condition(&cond, &infos));
+        assert!(!cond.eval(&infos));
     }
 
     #[test]
@@ -523,5 +833,85 @@ mod tests {
         assert!(!is_ancestor_of(Path::new("/a/b/c"), Path::new("/a/b")));
         // Empty ancestor
         assert!(!is_ancestor_of(Path::new(""), Path::new("/a")));
+    }
+
+    #[test]
+    fn test_find_ancestor_lock_ignores_expired() {
+        let store = lock_store(vec![(
+            "/a",
+            LockInfo::new(
+                LockScope::Exclusive,
+                "expired-token".into(),
+                None,
+                SystemTime::now() - Duration::from_secs(10),
+                Some(Duration::from_secs(1)),
+                Depth::Infinity,
+            ),
+        )]);
+        let target = Path::new("/a/b/file.txt");
+        let root = Path::new("/");
+        let found = find_ancestor_lock(&store, target, root, |l| l.token == "expired-token");
+        assert!(found.is_none(), "expired ancestor lock should not be found");
+    }
+
+    #[test]
+    fn test_find_and_refresh_ancestor_lock_updates_created() {
+        let old_time = SystemTime::now() - Duration::from_secs(3600);
+        let mut store = lock_store(vec![(
+            "/a",
+            LockInfo::new(
+                LockScope::Exclusive,
+                "t1".into(),
+                None,
+                old_time,
+                Some(Duration::from_secs(7200)),
+                Depth::Infinity,
+            ),
+        )]);
+        let target = Path::new("/a/b/file.txt");
+
+        let refreshed = find_and_refresh_ancestor_lock(&mut store, target, |l| l.token == "t1");
+        assert!(refreshed.is_some());
+
+        let new_created = store.get(Path::new("/a")).unwrap()[0].created;
+        let elapsed = new_created.duration_since(old_time).unwrap();
+        assert!(elapsed >= Duration::from_secs(3599));
+    }
+
+    #[test]
+    fn test_find_and_refresh_ancestor_lock_ignores_expired() {
+        let mut store = lock_store(vec![(
+            "/a",
+            LockInfo::new(
+                LockScope::Exclusive,
+                "expired".into(),
+                None,
+                SystemTime::now() - Duration::from_secs(10),
+                Some(Duration::from_secs(1)),
+                Depth::Infinity,
+            ),
+        )]);
+        let target = Path::new("/a/b/file.txt");
+        let result = find_and_refresh_ancestor_lock(&mut store, target, |l| l.token == "expired");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_and_refresh_ancestor_lock_no_match() {
+        let mut store = lock_store(vec![(
+            "/a",
+            LockInfo::new(
+                LockScope::Exclusive,
+                "t1".into(),
+                None,
+                SystemTime::now(),
+                None,
+                Depth::Infinity,
+            ),
+        )]);
+        let target = Path::new("/a/b/file.txt");
+        let result =
+            find_and_refresh_ancestor_lock(&mut store, target, |l| l.token == "wrong-token");
+        assert!(result.is_none());
     }
 }

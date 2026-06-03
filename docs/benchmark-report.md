@@ -4,7 +4,7 @@
 
 | Item       | Detail                        |
 | ---------- | ----------------------------- |
-| rshs       | v0.9.0                        |
+| rshs       | v0.9.1                        |
 | Rust       | 1.87+ (edition 2024)          |
 | Criterion  | 0.8                           |
 | Platform   | macOS aarch64 (Apple Silicon) |
@@ -47,27 +47,27 @@ All benchmarks use `tower::ServiceExt::oneshot()` against the production `make_r
 | ---------------------- | ------------------ | ------------- |
 | GET 1MB dispatch       | Latency            | **42 µs**     |
 | GET 64KB body-drain    | Latency            | **118 µs**    |
-| GET 1MB body-drain     | Latency            | **1.13 ms**   |
-| GET 10MB body-drain    | Latency            | **12.0 ms**   |
-| GET 10MB read          | Throughput         | **835 MiB/s** |
-| PUT 1KB (overwrite)    | Latency            | **70 µs**     |
-| PUT 1KB (new)          | Latency            | **96 µs**     |
-| PUT 10MB               | Throughput         | **720 MiB/s** |
-| DELETE file            | Latency            | **271 µs**    |
-| DELETE dir tree (d=5)  | Latency            | **7.07 ms**   |
-| Dir listing 10 items   | Latency            | **67 µs**     |
-| Dir listing 200 items  | Latency            | **426 µs**    |
-| Dir listing 1000 items | Latency            | **2.04 ms**   |
-| OPTIONS                | Latency            | **2.93 µs**   |
-| PROPFIND depth:0       | Latency            | **34 µs**     |
-| PROPFIND depth:1 (200) | Latency            | **1.15 ms**   |
-| PROPFIND depth:inf     | Latency (3×5 tree) | **309 µs**    |
+| GET 1MB body-drain     | Latency            | **1.11 ms**   |
+| GET 10MB body-drain    | Latency            | **11.7 ms**   |
+| GET 10MB read          | Throughput         | **852 MiB/s** |
+| PUT 1KB (overwrite)    | Latency            | **62 µs**     |
+| PUT 1KB (new)          | Latency            | **95 µs**     |
+| PUT 10MB               | Throughput         | **724 MiB/s** |
+| DELETE file            | Latency            | **270 µs**    |
+| DELETE dir tree (d=5)  | Latency            | **6.96 ms**   |
+| Dir listing 10 items   | Latency            | **64 µs**     |
+| Dir listing 200 items  | Latency            | **410 µs**    |
+| Dir listing 1000 items | Latency            | **1.91 ms**   |
+| OPTIONS                | Latency            | **2.91 µs**   |
+| PROPFIND depth:0       | Latency            | **29 µs**     |
+| PROPFIND depth:1 (200) | Latency            | **643 µs**    |
+| PROPFIND depth:inf     | Latency (3×5 tree) | **232 µs**    |
 | MKCOL                  | Latency            | **260 µs**    |
-| COPY file              | Latency            | **442 µs**    |
-| COPY dir tree          | Latency            | **6.21 ms**   |
-| MOVE file              | Latency            | **514 µs**    |
-| LOCK exclusive         | Latency            | **252 µs**    |
-| UNLOCK                 | Latency            | **369 µs**    |
+| COPY file              | Latency            | **433 µs**    |
+| COPY dir tree          | Latency            | **6.15 ms**   |
+| MOVE file              | Latency            | **513 µs**    |
+| LOCK exclusive         | Latency            | **264 µs**    |
+| UNLOCK                 | Latency            | **367 µs**    |
 | HealthCheck intercept  | Latency            | **1.10 µs**   |
 | Auth plaintext valid   | Latency            | **42 µs**     |
 | Auth SHA-512 cached    | Latency            | **42.0 µs**   |
@@ -96,10 +96,10 @@ GET benchmarks measure two independent dimensions of read performance:
 | File Size | Dispatch Latency | Body-Drain Latency | Read Throughput |
 | --------- | ---------------- | ------------------ | --------------- |
 | 13 B      | **42.5 µs**      | —                  | —               |
-| 1 KB      | **42.3 µs**      | —                  | —               |
-| 64 KB     | **42.4 µs**      | **119 µs**         | **528 MiB/s**   |
-| 1 MB      | **42.3 µs**      | **1.13 ms**        | **888 MiB/s**   |
-| 10 MB     | **42.4 µs**      | **12.1 ms**        | **828 MiB/s**   |
+| 1 KB      | **41.9 µs**      | —                  | —               |
+| 64 KB     | **41.9 µs**      | **118 µs**         | **528 MiB/s**   |
+| 1 MB      | **42.0 µs**      | **1.11 ms**        | **899 MiB/s**   |
+| 10 MB     | **41.9 µs**      | **11.7 ms**        | **852 MiB/s**   |
 
 > **Dispatch latency** (~42µs, constant regardless of file size): The time from
 > request arrival to the handler returning control. This reflects the server's
@@ -125,18 +125,18 @@ GET benchmarks measure two independent dimensions of read performance:
 
 | Scenario        | Latency     | Throughput    |
 | --------------- | ----------- | ------------- |
-| Overwrite 1KB   | **63 µs**   | 15.4 MiB/s    |
-| New file 1KB    | **94 µs**   | 10.4 MiB/s    |
-| Large file 10MB | **14.4 ms** | **693 MiB/s** |
+| Overwrite 1KB   | **62 µs**   | 15.8 MiB/s    |
+| New file 1KB    | **95 µs**   | 10.3 MiB/s    |
+| Large file 10MB | **13.8 ms** | **724 MiB/s** |
 
 ### DELETE — File and Directory Trees
 
 | Scenario               | Files Removed | Latency     |
 | ---------------------- | ------------- | ----------- |
-| Single file            | 1             | **283 µs**  |
-| Depth 2 directory tree | ~20           | **2.87 ms** |
-| Depth 3 directory tree | ~30           | **4.63 ms** |
-| Depth 5 directory tree | ~50           | **7.06 ms** |
+| Single file            | 1             | **270 µs**  |
+| Depth 2 directory tree | ~20           | **2.79 ms** |
+| Depth 3 directory tree | ~30           | **4.16 ms** |
+| Depth 5 directory tree | ~50           | **6.96 ms** |
 
 > Scaling is approximately linear with file count. `remove_dir_all` is the dominant cost.
 
@@ -144,10 +144,10 @@ GET benchmarks measure two independent dimensions of read performance:
 
 | Items | Latency     | Throughput (items/s) |
 | ----- | ----------- | -------------------- |
-| 10    | **67 µs**   | 148 K/s              |
-| 50    | **143 µs**  | 349 K/s              |
-| 200   | **426 µs**  | 469 K/s              |
-| 1000  | **2.04 ms** | 491 K/s              |
+| 10    | **64 µs**   | 155 K/s              |
+| 50    | **137 µs**  | 365 K/s              |
+| 200   | **410 µs**  | 488 K/s              |
+| 1000  | **1.91 ms** | 524 K/s              |
 
 > Per-entry cost has dropped from ~6µs to ~2µs. This is the result of
 > `batch_read_dir_entries` — all entries' metadata is collected in a single
@@ -162,44 +162,53 @@ GET benchmarks measure two independent dimensions of read performance:
 
 | Scenario                  | Entries | Latency     | Per-entry |
 | ------------------------- | ------- | ----------- | --------- |
-| Depth:0 single file       | 1       | **34 µs**   | 34 µs     |
-| Depth:1 dir (10 files)    | 11      | **108 µs**  | 9.8 µs    |
-| Depth:1 dir (50 files)    | 51      | **332 µs**  | 6.5 µs    |
-| Depth:1 dir (200 files)   | 201     | **1.15 ms** | 5.7 µs    |
-| Depth:1 dir (1000 files)  | 1001    | **5.96 ms** | 6.0 µs    |
-| Depth:infinity (3×5 tree) | ~20     | **309 µs**  | 15.5 µs   |
+| Depth:0 single file       | 1       | **29 µs**   | 29 µs     |
+| Depth:1 dir (10 files)    | 11      | **77 µs**   | 7.0 µs    |
+| Depth:1 dir (50 files)    | 51      | **201 µs**  | 3.9 µs    |
+| Depth:1 dir (200 files)   | 201     | **643 µs**  | 3.2 µs    |
+| Depth:1 dir (1000 files)  | 1001    | **3.05 ms** | 3.0 µs    |
+| Depth:infinity (3×5 tree) | ~20     | **232 µs**  | 11.6 µs   |
 
-> Per-entry cost is now dominated by XML generation (~3µs/entry) and lock/dead-property
+> Per-entry cost is now dominated by XML generation (~1.4µs/entry) and lock/dead-property
 > lookups — not filesystem traversal. The `batch_read_dir_entries` optimization
 > (single `spawn_blocking` for all entries) has moved the bottleneck elsewhere.
 > On Linux with io_uring, per-entry cost drops further (see §Linux / io_uring).
+>
+> **v0.9.1 note**: XML generation latency dropped **~66%** across all sizes
+> (from ~3.6µs/entry to ~1.4µs/entry) due to replacing runtime `format!`-based
+> element name construction with `const &str` constants in hot XML generation
+> paths (see §XML Generation below). Combined with `active_slice` caching in
+> `eval_if`, PROPFIND is now **~44% faster** overall.
 
 ### XML Generation — Micro-benchmark
 
 | Entries | Latency     | Per-entry |
 | ------- | ----------- | --------- |
-| 1       | **3.63 µs** | 3.63 µs   |
-| 10      | **31.4 µs** | 3.14 µs   |
-| 100     | **312 µs**  | 3.12 µs   |
-| 1000    | **3.11 ms** | 3.11 µs   |
+| 1       | **1.36 µs** | 1.36 µs   |
+| 10      | **10.4 µs** | 1.04 µs   |
+| 100     | **102 µs**  | 1.02 µs   |
+| 1000    | **1.01 ms** | 1.01 µs   |
 
-> XML generation is efficient (~3µs/entry), scaling linearly. Not a bottleneck.
+> XML generation is now ~1.4µs/entry (down from ~3.6µs in v0.9.0), a **~62–67%**
+> improvement. The gain comes from replacing `dav_qname` (which called `format!`
+> per element name) with `&'static str` constants for all common DAV: element
+> names. `write_activelock` alone dropped from ~1.5µs to ~571ns (**-60.8%**).
 
 ### Lock Operations
 
 | Operation      | Latency    |
 | -------------- | ---------- |
 | LOCK exclusive | **264 µs** |
-| LOCK shared    | **252 µs** |
-| UNLOCK         | **373 µs** |
+| LOCK shared    | **265 µs** |
+| UNLOCK         | **367 µs** |
 
 ### COPY / MOVE
 
 | Operation       | Latency     |
 | --------------- | ----------- |
-| COPY small file | **438 µs**  |
-| COPY dir tree   | **6.16 ms** |
-| MOVE small file | **490 µs**  |
+| COPY small file | **433 µs**  |
+| COPY dir tree   | **6.15 ms** |
+| MOVE small file | **513 µs**  |
 
 ---
 
@@ -311,13 +320,13 @@ Auth caching reduces repeated SHA-512 crypt verification overhead:
 
 ### Low-cost / Optimal Paths
 
-| Component                    | Cost           | Notes                              |
-| ---------------------------- | -------------- | ---------------------------------- |
-| Method dispatch (`try_from`) | **1.9 ns**     | Essentially free                   |
-| If-header parsing            | **111 ns**     | Handwritten parser, zero-alloc     |
-| Header parsing               | **16–113 ns**  | Depth, Timeout, Destination, etc.  |
-| XML generation               | **3 µs/entry** | Linear scaling, allocation-minimal |
-| Lock token check             | **6 ns**       | Single iteration, short-circuit    |
+| Component                    | Cost             | Notes                               |
+| ---------------------------- | ---------------- | ----------------------------------- |
+| Method dispatch (`try_from`) | **1.9 ns**       | Essentially free                    |
+| If-header parsing            | **111 ns**       | Handwritten parser, zero-alloc      |
+| Header parsing               | **16–113 ns**    | Depth, Timeout, Destination, etc.   |
+| XML generation               | **1.4 µs/entry** | Static `&str` constants, zero-alloc |
+| Lock token check             | **6 ns**         | Single iteration, short-circuit     |
 
 ---
 
@@ -382,8 +391,8 @@ threshold-based dispatch between serial and batch stat.
 
 - **Dispatch latency is flat**: GET ~42µs regardless of file size — `canonicalize` + `metadata` + `open` dominate.
 - **Body-drain throughput is high**: 828 MiB/s read, 693 MiB/s write. Read is ~12% faster than write (expected: writes incur flush overhead).
-- **WebDAV PROPFIND is fast**: After batch `spawn_blocking`, per-entry cost is ~5µs (macOS),
-  dominated by XML generation (~3µs) and lock/dead-property lookups — not I/O.
+- **WebDAV PROPFIND is fast**: After batch `spawn_blocking`, per-entry cost is ~3µs (macOS),
+  dominated by XML generation (~1.4µs) and lock/dead-property lookups — not I/O.
 - **SHA-512 auth with caching**: First request costs 528µs (blocking thread pool, not worker threads). Subsequent requests within the 60s TTL hit the auth cache: 528µs → <1µs per verification (43µs total dispatch). Configurable via `--auth-cache-ttl` (0 = disable).
 - **Path depth matters**: 5-level deep paths cost 3× more than single-level — `canonicalize` per component.
 - **Concurrency ceiling**: In hot-cache scenarios, each GET dispatch takes ~42µs. Ceiling: **~24,000 requests/second** (single-core).
@@ -401,13 +410,13 @@ Both numbers are accurate — they measure different phases of the same HTTP tra
 
 | Directory Size | PROPFIND depth:1 | Dir Listing HTML |
 | -------------- | ---------------- | ---------------- |
-| 10 files       | 108 µs           | 67 µs            |
-| 50 files       | 332 µs           | 143 µs           |
-| 100 files      | ~600 µs          | ~280 µs          |
-| 200 files      | 1.15 ms          | 426 µs           |
-| 1000 files     | 5.96 ms          | 2.04 ms          |
+| 10 files       | 77 µs            | 64 µs            |
+| 50 files       | 201 µs           | 137 µs           |
+| 100 files      | ~370 µs          | ~270 µs          |
+| 200 files      | 643 µs           | 410 µs           |
+| 1000 files     | 3.05 ms          | 1.91 ms          |
 
-> PROPFIND per-entry overhead over plain directory listing is now ~3-4µs,
-> attributable to XML generation (~3µs) plus lock/dead-property lookups.
-> For directories with >1000 files, PROPFIND depth:1 still completes in ~5ms —
+> PROPFIND per-entry overhead over plain directory listing is now ~1.5-2µs,
+> attributable to XML generation (~1.4µs) plus lock/dead-property lookups.
+> For directories with >1000 files, PROPFIND depth:1 still completes in ~3ms —
 > well within typical WebDAV client timeouts.

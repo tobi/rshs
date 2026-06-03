@@ -61,11 +61,13 @@ src/
     locks.rs                    # LOCK/UNLOCK handler
 
   webdav/
-    mod.rs                      # Lock types (LockInfo/LockStore/LockScope), If header types
-                                #   (IfCondition/IfList), parse helpers, find_ancestor_lock,
-                                #   ParseError, DeadPropertyStore, PropEntry
-    ls.rs                       # Lock system: ancestor walk, If-condition evaluation,
-                                #   active-slice filter, exclusive-lock check
+    mod.rs                      # Lock types (LockInfo/LockStore/LockScope), property types
+                                #   (PropEntry/PropRequest/DeadPropertyStore), Depth, general
+                                #   parsers (parse_destination, parse_depth, parse_timeout,
+                                #   parse_lock_token_header, parse_overwrite), ParseError
+    ls.rs                       # If header types (IfCondition/IfList), If header parser,
+                                #   lock evaluation (ancestor walk, eval/eval_active,
+                                #   exclusive-lock check, active_slice, find_and_refresh_ancestor_lock)
     method.rs                   # Method type (enum-like struct for HTTP/WebDAV method constants)
     xml.rs                      # Multistatus XML generation, write_activelock (shared lock XML)
     fs.rs                       # Filesystem traversal + href encoding
@@ -147,7 +149,9 @@ src/
   for integration testing without binding a TCP port.
   `AppState` also provides convenience methods delegates to `utils::path`:
   `state.resolve_existing(path)`, `state.resolve_write_target(path)`,
-  `state.resolve_and_guard(path)`.
+  `state.resolve_and_guard(path)` (resolves the target, verifies the
+  parent is canonical and within the root, but does NOT create parent
+  directories — callers are responsible for ensuring parents exist).
 - **File I/O**: Hot-path file operations (GET/HEAD serving, directory listing) use
   `tokio::fs` to offload blocking syscalls from async worker threads onto the blocking
   thread pool. Startup-only I/O (TLS cert/key loading, shadow file reads) uses
@@ -155,10 +159,14 @@ src/
   not compete for worker threads.
 - **Middleware via tower Layer**: Middleware is applied with `Router::layer(L)`. Tower Layers
   compose from inside out — the last `.layer()` in the chain runs first.
-- **Middleware order**: `HealthCheck` (outermost) → `LockEnforce` → `Auth` → `TraceLayer` → handler.
-  HealthCheck intercepts `x-health-check: true` before auth. Auth middleware auto-skips when
-  no users are configured (`auth_state.is_empty()`). LockEnforce checks write operations
-  (PUT/DELETE/MKCOL/PROPPATCH) against the lock store before the handler runs.
+  Example: `Router::new().layer(TraceLayer).layer(LockEnforce).layer(Auth).layer(HealthCheck)`
+  produces runtime order `HealthCheck` → `Auth` → `LockEnforce` → `TraceLayer` → handler.
+- **Middleware order**: `HealthCheck` (outermost) → `Auth` → `LockEnforce` → `TraceLayer` → handler.
+  HealthCheck intercepts any request with `x-health-check: true` header
+  (header name matched case-insensitively; value matched as the exact ASCII bytes `true`).
+  Auth middleware authenticates the request (auto-skips when no users configured).
+  LockEnforce intercepts write methods: PUT, DELETE, MKCOL, PROPPATCH, MOVE, COPY.
+  For COPY, only the destination is checked (source is read-only).
 - **Request dispatch**: `.fallback(any(dispatch))` routes all requests through a single
   `dispatch` function that converts `req.method()` to `webdav::Method` via
   `Method::try_from()` and matches on type-safe constants:
@@ -177,27 +185,39 @@ src/
 - **Path resolution**: `utils::path` provides three functions + one error type:
   - `resolve_existing()` — canonicalize + traversal check for read ops (GET/HEAD) and delete ops (DELETE)
   - `resolve_write_target()` — segment check + traversal guard for write ops (PUT/DELETE/MKCOL)
-  - `resolve_and_guard()` — combined: resolve target + create parent dirs (optional) + canonicalize + traversal check
+  - `resolve_and_guard(path, canonical_cache)` — resolves target, canonicalizes parent
+    (using a cache), and verifies traversal safety; does NOT create parent directories —
+    callers must ensure the parent exists before calling
   - `ResolveTargetError` — tagged error type with `InvalidPath`, `ParentCanonicalizeFailed`, `TraversalBlocked`;
     implements `Display` + `status(on_invalid) -> StatusCode` for handler use.
     All percent-decode the URI path via `percent_encoding::percent_decode_str`.
+    If percent-decoding yields invalid UTF-8, the helpers return
+    `ResolveTargetError::InvalidPath`; handlers map this to `400 Bad Request`
+    via `ResolveTargetError::status(on_invalid)`.
 - **Error handling**: `utils::error::OrStatus` trait extends `Result<T, E: Display>` with
   `.or_400(msg)` and `.or_500(msg)` methods that map errors to `Result<T, StatusCode>`
   with tracing log. Handlers return `Result<Response, StatusCode>`,
   using the `?` operator to propagate errors (axum auto-converts via its blanket
   `IntoResponse` impl for `Result<T: IntoResponse, E: IntoResponse>`).
   `IntoResolved` trait converts `ResolveTargetError` to `Result<T, StatusCode>`.
-  Middleware returns `Result<Response, Response>` because it may need custom
-  headers on error responses (e.g. `WWW-Authenticate` for 401).
+  Most middleware returns `AppResult` (`Result<Response, StatusCode>`).
+  The auth middleware returns `Result<Response, Response>` so it can attach
+  `WWW-Authenticate` headers to 401 responses.
 - **XML generation**: `webdav/xml.rs` defines `XmlWriterExt` trait (adds `.ev(event)` to
   `Writer<Cursor<Vec<u8>>>` as shorthand for `.write_event(event).unwrap()`).
   `write_activelock(lock)` is the shared function for LOCK response + PROPFIND lockdiscovery XML.
   Helper functions: `multistatus(xml)` → `207 Multi-Status`.
+  DAV: element name constants are grouped in the `El` zero-sized struct
+  (`El::PROP`, `El::LOCKDISCOVERY`, etc.) — accessed via `rshs::webdav::xml::El`.
 - **Lock system**: In-memory lock support via `LockStore` (`Arc<RwLock<HashMap<PathBuf, Vec<LockInfo>>>>`).
   Shared and exclusive locks with conflict resolution (shared+shared ok, exclusive blocks all).
   Full RFC 4918 §10.4 conditional `If` header evaluation: `Not`, `DAV:no-lock`, resource-tags, AND semantics.
-  Core lock logic lives in `webdav::ls` (`walk_locked_ancestors`, `find_ancestor_lock`,
-  `active_slice`, `eval_condition`, `eval_if`, `check_existing_exclusive`).
+  Core lock logic lives in `webdav::ls`:
+  — **Types**: `IfCondition` (with `eval`/`eval_active` methods), `IfList`.
+  — **Evaluation**: `parse_if_header`, `walk_locked_ancestors`, `find_ancestor_lock`,
+  `find_and_refresh_ancestor_lock` (refreshes lock timeout), `eval_if`,
+  `check_existing_exclusive`.
+  — **Filtering**: `active_slice` (lazy expired-lock skip, used by all eval paths).
   Depth:infinity ancestor chain enforcement in `lock_enforce` + indirect refresh via
   ancestor lock discovery in `handle_lock`. Lock enforcement via tower Layer middleware
   (`middleware::lock::lock_enforce`), which converts the request method to `webdav::Method`
@@ -455,8 +475,11 @@ rshs -S /etc/rshs/shadow:rw -W --user admin:newpass ./data
 RSHS_SHADOW_FILE=./shadow:ro rshs ./data
 ```
 
-- Shadow file path can be suffixed with `:rw` (default) or `:ro` to control write access
+- Shadow file path can be suffixed with `:rw` (default) or `:ro` to control write access.
+  If `--shadow-write` is passed but the configured shadow file is `:ro`, the server
+  exits with an error: `error: shadow file is read-only; cannot write '--shadow-write'`.
 - `-W` / `--shadow-write` writes CLI credentials into the shadow file after merge
+  (requires shadow file to be writable — `:rw` or no explicit suffix)
 - Shadow files store passwords hashed with SHA-512 crypt (`$6$...`)
 
 Auth caching reduces the overhead of repeated SHA-512 verification for returning clients:
