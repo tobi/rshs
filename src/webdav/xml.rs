@@ -11,34 +11,6 @@ use super::{PropEntry, PropRequest};
 
 /// WebDAV XML namespace URI. Used as the "D" prefix in all generated XML elements.
 pub const DAV_NS: &str = "DAV:";
-// Element names for WebDAV XML responses. Each is prefixed with "D:" in the output.
-pub const EL_ACTIVELOCK: &str = "D:activelock";
-pub const EL_COLLECTION: &str = "D:collection";
-pub const EL_DEPTH: &str = "D:depth";
-pub const EL_EXCLUSIVE: &str = "D:exclusive";
-pub const EL_HREF: &str = "D:href";
-pub const EL_LOCKDISCOVERY: &str = "D:lockdiscovery";
-pub const EL_LOCKENTRY: &str = "D:lockentry";
-pub const EL_LOCKSCOPE: &str = "D:lockscope";
-pub const EL_LOCKTOKEN: &str = "D:locktoken";
-pub const EL_LOCKTYPE: &str = "D:locktype";
-pub const EL_MULTISTATUS: &str = "D:multistatus";
-pub const EL_OWNER: &str = "D:owner";
-pub const EL_PROP: &str = "D:prop";
-pub const EL_PROPSTAT: &str = "D:propstat";
-pub const EL_RESOURCETYPE: &str = "D:resourcetype";
-pub const EL_RESPONSE: &str = "D:response";
-pub const EL_SHARED: &str = "D:shared";
-pub const EL_STATUS: &str = "D:status";
-pub const EL_SUPPORTEDLOCK: &str = "D:supportedlock";
-pub const EL_TIMEOUT: &str = "D:timeout";
-pub const EL_WRITE: &str = "D:write";
-// Live property element names — used once per entry in PROPFIND responses.
-const EL_CREATIONDATE: &str = "D:creationdate";
-const EL_GETCONTENTLENGTH: &str = "D:getcontentlength";
-const EL_GETCONTENTTYPE: &str = "D:getcontenttype";
-const EL_GETETAG: &str = "D:getetag";
-const EL_GETLASTMODIFIED: &str = "D:getlastmodified";
 
 /// List of supported live properties for PROPFIND responses.
 pub const SUPPORTED_PROPS: &[&str] = &[
@@ -51,6 +23,47 @@ pub const SUPPORTED_PROPS: &[&str] = &[
     "resourcetype",
     "supportedlock",
 ];
+
+/// Zero-sized struct holding all `D:`-prefixed XML element name constants.
+///
+/// ```
+/// use rshs::webdav::xml::El;
+/// assert_eq!(El::MULTISTATUS, "D:multistatus");
+/// assert_eq!(El::PROP, "D:prop");
+/// ```
+pub struct El;
+
+impl El {
+    // ── Shared (pub) element names ──────────────────────────────
+    pub const ACTIVELOCK: &str = "D:activelock";
+    pub const COLLECTION: &str = "D:collection";
+    pub const DEPTH: &str = "D:depth";
+    pub const EXCLUSIVE: &str = "D:exclusive";
+    pub const HREF: &str = "D:href";
+    pub const LOCKDISCOVERY: &str = "D:lockdiscovery";
+    pub const LOCKENTRY: &str = "D:lockentry";
+    pub const LOCKSCOPE: &str = "D:lockscope";
+    pub const LOCKTOKEN: &str = "D:locktoken";
+    pub const LOCKTYPE: &str = "D:locktype";
+    pub const MULTISTATUS: &str = "D:multistatus";
+    pub const OWNER: &str = "D:owner";
+    pub const PROP: &str = "D:prop";
+    pub const PROPSTAT: &str = "D:propstat";
+    pub const RESOURCETYPE: &str = "D:resourcetype";
+    pub const RESPONSE: &str = "D:response";
+    pub const SHARED: &str = "D:shared";
+    pub const STATUS: &str = "D:status";
+    pub const SUPPORTEDLOCK: &str = "D:supportedlock";
+    pub const TIMEOUT: &str = "D:timeout";
+    pub const WRITE: &str = "D:write";
+
+    // ── Live property element names (crate-only) ───────────────
+    pub(crate) const CREATIONDATE: &str = "D:creationdate";
+    pub(crate) const GETCONTENTLENGTH: &str = "D:getcontentlength";
+    pub(crate) const GETCONTENTTYPE: &str = "D:getcontenttype";
+    pub(crate) const GETETAG: &str = "D:getetag";
+    pub(crate) const GETLASTMODIFIED: &str = "D:getlastmodified";
+}
 
 /// Convenience alias for the XML writer used throughout `rshs`.
 ///
@@ -65,11 +78,11 @@ pub type XmlWriter = Writer<Cursor<Vec<u8>>>;
 /// ```
 /// use std::io::Cursor;
 /// use quick_xml::{Writer, events::{BytesStart, BytesEnd, Event}};
-/// use rshs::webdav::xml::{XmlWriter, XmlWriterExt, EL_RESPONSE};
+/// use rshs::webdav::xml::{XmlWriter, XmlWriterExt, El};
 ///
 /// let mut w = Writer::new(Cursor::new(Vec::new()));
-/// w.ev(Event::Start(BytesStart::new(EL_RESPONSE)));
-/// w.ev(Event::End(BytesEnd::new(EL_RESPONSE)));
+/// w.ev(Event::Start(BytesStart::new(El::RESPONSE)));
+/// w.ev(Event::End(BytesEnd::new(El::RESPONSE)));
 /// let xml = String::from_utf8(w.into_inner().into_inner()).unwrap();
 /// assert!(xml.contains("D:response"));
 /// ```
@@ -138,7 +151,7 @@ pub fn build_multistatus(entries: &[PropEntry], prop_request: &PropRequest) -> S
 
     writer.ev(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
 
-    let mut ms = BytesStart::new(EL_MULTISTATUS);
+    let mut ms = BytesStart::new(El::MULTISTATUS);
     ms.push_attribute(("xmlns:D", DAV_NS));
     writer.ev(Event::Start(ms));
 
@@ -146,21 +159,21 @@ pub fn build_multistatus(entries: &[PropEntry], prop_request: &PropRequest) -> S
         write_response(&mut writer, entry, prop_request);
     }
 
-    writer.ev(Event::End(BytesEnd::new(EL_MULTISTATUS)));
+    writer.ev(Event::End(BytesEnd::new(El::MULTISTATUS)));
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
 
 fn write_response(writer: &mut XmlWriter, entry: &PropEntry, prop_request: &PropRequest) {
-    writer.ev(Event::Start(BytesStart::new(EL_RESPONSE)));
+    writer.ev(Event::Start(BytesStart::new(El::RESPONSE)));
 
-    writer.ev(Event::Start(BytesStart::new(EL_HREF)));
+    writer.ev(Event::Start(BytesStart::new(El::HREF)));
     writer.ev(Event::Text(BytesText::new(&entry.href)));
-    writer.ev(Event::End(BytesEnd::new(EL_HREF)));
+    writer.ev(Event::End(BytesEnd::new(El::HREF)));
 
     if matches!(prop_request, PropRequest::PropName) {
         write_propname(writer, SUPPORTED_PROPS);
-        writer.ev(Event::End(BytesEnd::new(EL_RESPONSE)));
+        writer.ev(Event::End(BytesEnd::new(El::RESPONSE)));
         return;
     }
 
@@ -219,7 +232,7 @@ fn write_response(writer: &mut XmlWriter, entry: &PropEntry, prop_request: &Prop
         }
     }
 
-    writer.ev(Event::End(BytesEnd::new(EL_RESPONSE)));
+    writer.ev(Event::End(BytesEnd::new(El::RESPONSE)));
 }
 
 fn is_applicable(prop: &str, is_dir: bool) -> bool {
@@ -239,8 +252,8 @@ fn write_propstat_200<'a, I>(writer: &mut XmlWriter, entry: &PropEntry, props: I
 where
     I: Iterator<Item = &'a str>,
 {
-    writer.ev(Event::Start(BytesStart::new(EL_PROPSTAT)));
-    writer.ev(Event::Start(BytesStart::new(EL_PROP)));
+    writer.ev(Event::Start(BytesStart::new(El::PROPSTAT)));
+    writer.ev(Event::Start(BytesStart::new(El::PROP)));
 
     for prop_name in props {
         match prop_name {
@@ -249,15 +262,15 @@ where
                     .created
                     .map(crate::utils::time::format_rfc3339)
                     .unwrap_or_default();
-                write_prop_text(writer, EL_CREATIONDATE, &date);
+                write_prop_text(writer, El::CREATIONDATE, &date);
             }
             "getcontentlength" => {
-                write_prop_text(writer, EL_GETCONTENTLENGTH, &entry.size.to_string());
+                write_prop_text(writer, El::GETCONTENTLENGTH, &entry.size.to_string());
             }
             "getcontenttype" => {
                 write_prop_text(
                     writer,
-                    EL_GETCONTENTTYPE,
+                    El::GETCONTENTTYPE,
                     entry.content_type.as_deref().unwrap_or(""),
                 );
             }
@@ -271,63 +284,63 @@ where
                         .as_secs(),
                     entry.size
                 );
-                write_prop_text(writer, EL_GETETAG, &etag);
+                write_prop_text(writer, El::GETETAG, &etag);
             }
             "getlastmodified" => {
                 let date = crate::utils::time::format_rfc1123(entry.modified);
-                write_prop_text(writer, EL_GETLASTMODIFIED, &date);
+                write_prop_text(writer, El::GETLASTMODIFIED, &date);
             }
             "lockdiscovery" => {
-                writer.ev(Event::Start(BytesStart::new(EL_LOCKDISCOVERY)));
+                writer.ev(Event::Start(BytesStart::new(El::LOCKDISCOVERY)));
                 if let Some(ref locks) = entry.active_locks {
                     for lock in locks {
                         write_activelock(writer, lock);
                     }
                 }
-                writer.ev(Event::End(BytesEnd::new(EL_LOCKDISCOVERY)));
+                writer.ev(Event::End(BytesEnd::new(El::LOCKDISCOVERY)));
             }
             "resourcetype" => {
-                writer.ev(Event::Start(BytesStart::new(EL_RESOURCETYPE)));
+                writer.ev(Event::Start(BytesStart::new(El::RESOURCETYPE)));
                 if entry.is_dir {
-                    writer.ev(Event::Empty(BytesStart::new(EL_COLLECTION)));
+                    writer.ev(Event::Empty(BytesStart::new(El::COLLECTION)));
                 }
-                writer.ev(Event::End(BytesEnd::new(EL_RESOURCETYPE)));
+                writer.ev(Event::End(BytesEnd::new(El::RESOURCETYPE)));
             }
             "supportedlock" => {
-                writer.ev(Event::Start(BytesStart::new(EL_SUPPORTEDLOCK)));
+                writer.ev(Event::Start(BytesStart::new(El::SUPPORTEDLOCK)));
                 write_lockentry(writer, "exclusive");
                 write_lockentry(writer, "shared");
-                writer.ev(Event::End(BytesEnd::new(EL_SUPPORTEDLOCK)));
+                writer.ev(Event::End(BytesEnd::new(El::SUPPORTEDLOCK)));
             }
             _ => {}
         }
     }
 
-    writer.ev(Event::End(BytesEnd::new(EL_PROP)));
-    writer.ev(Event::Start(BytesStart::new(EL_STATUS)));
+    writer.ev(Event::End(BytesEnd::new(El::PROP)));
+    writer.ev(Event::Start(BytesStart::new(El::STATUS)));
     writer.ev(Event::Text(BytesText::new("HTTP/1.1 200 OK")));
-    writer.ev(Event::End(BytesEnd::new(EL_STATUS)));
-    writer.ev(Event::End(BytesEnd::new(EL_PROPSTAT)));
+    writer.ev(Event::End(BytesEnd::new(El::STATUS)));
+    writer.ev(Event::End(BytesEnd::new(El::PROPSTAT)));
 }
 
 fn write_lockentry(writer: &mut XmlWriter, scope: &str) {
-    writer.ev(Event::Start(BytesStart::new(EL_LOCKENTRY)));
-    writer.ev(Event::Start(BytesStart::new(EL_LOCKSCOPE)));
+    writer.ev(Event::Start(BytesStart::new(El::LOCKENTRY)));
+    writer.ev(Event::Start(BytesStart::new(El::LOCKSCOPE)));
     writer.ev(Event::Empty(BytesStart::new(if scope == "exclusive" {
-        EL_EXCLUSIVE
+        El::EXCLUSIVE
     } else {
-        EL_SHARED
+        El::SHARED
     })));
-    writer.ev(Event::End(BytesEnd::new(EL_LOCKSCOPE)));
-    writer.ev(Event::Start(BytesStart::new(EL_LOCKTYPE)));
-    writer.ev(Event::Empty(BytesStart::new(EL_WRITE)));
-    writer.ev(Event::End(BytesEnd::new(EL_LOCKTYPE)));
-    writer.ev(Event::End(BytesEnd::new(EL_LOCKENTRY)));
+    writer.ev(Event::End(BytesEnd::new(El::LOCKSCOPE)));
+    writer.ev(Event::Start(BytesStart::new(El::LOCKTYPE)));
+    writer.ev(Event::Empty(BytesStart::new(El::WRITE)));
+    writer.ev(Event::End(BytesEnd::new(El::LOCKTYPE)));
+    writer.ev(Event::End(BytesEnd::new(El::LOCKENTRY)));
 }
 
 fn write_propstat_404(writer: &mut XmlWriter, props: &[String]) {
-    writer.ev(Event::Start(BytesStart::new(EL_PROPSTAT)));
-    writer.ev(Event::Start(BytesStart::new(EL_PROP)));
+    writer.ev(Event::Start(BytesStart::new(El::PROPSTAT)));
+    writer.ev(Event::Start(BytesStart::new(El::PROP)));
 
     for prop_name in props {
         let (ns, local) = super::parse_clark(prop_name).unwrap_or(("", prop_name));
@@ -338,26 +351,26 @@ fn write_propstat_404(writer: &mut XmlWriter, props: &[String]) {
         writer.ev(Event::Empty(elem));
     }
 
-    writer.ev(Event::End(BytesEnd::new(EL_PROP)));
-    writer.ev(Event::Start(BytesStart::new(EL_STATUS)));
+    writer.ev(Event::End(BytesEnd::new(El::PROP)));
+    writer.ev(Event::Start(BytesStart::new(El::STATUS)));
     writer.ev(Event::Text(BytesText::new("HTTP/1.1 404 Not Found")));
-    writer.ev(Event::End(BytesEnd::new(EL_STATUS)));
-    writer.ev(Event::End(BytesEnd::new(EL_PROPSTAT)));
+    writer.ev(Event::End(BytesEnd::new(El::STATUS)));
+    writer.ev(Event::End(BytesEnd::new(El::PROPSTAT)));
 }
 
 fn write_propname(writer: &mut XmlWriter, props: &[&str]) {
-    writer.ev(Event::Start(BytesStart::new(EL_PROPSTAT)));
-    writer.ev(Event::Start(BytesStart::new(EL_PROP)));
+    writer.ev(Event::Start(BytesStart::new(El::PROPSTAT)));
+    writer.ev(Event::Start(BytesStart::new(El::PROP)));
 
     for prop_name in props {
         writer.ev(Event::Empty(BytesStart::new(format!("D:{prop_name}"))));
     }
 
-    writer.ev(Event::End(BytesEnd::new(EL_PROP)));
-    writer.ev(Event::Start(BytesStart::new(EL_STATUS)));
+    writer.ev(Event::End(BytesEnd::new(El::PROP)));
+    writer.ev(Event::Start(BytesStart::new(El::STATUS)));
     writer.ev(Event::Text(BytesText::new("HTTP/1.1 200 OK")));
-    writer.ev(Event::End(BytesEnd::new(EL_STATUS)));
-    writer.ev(Event::End(BytesEnd::new(EL_PROPSTAT)));
+    writer.ev(Event::End(BytesEnd::new(El::STATUS)));
+    writer.ev(Event::End(BytesEnd::new(El::PROPSTAT)));
 }
 
 /// Write an `<D:activelock>` element for a lock.
@@ -389,59 +402,59 @@ fn write_propname(writer: &mut XmlWriter, props: &[&str]) {
 /// assert!(xml.contains("opaquelocktoken:abc"));
 /// ```
 pub fn write_activelock(writer: &mut XmlWriter, lock: &super::LockInfo) {
-    writer.ev(Event::Start(BytesStart::new(EL_ACTIVELOCK)));
+    writer.ev(Event::Start(BytesStart::new(El::ACTIVELOCK)));
 
-    writer.ev(Event::Start(BytesStart::new(EL_LOCKSCOPE)));
+    writer.ev(Event::Start(BytesStart::new(El::LOCKSCOPE)));
     match lock.scope {
         super::LockScope::Exclusive => {
-            writer.ev(Event::Empty(BytesStart::new(EL_EXCLUSIVE)));
+            writer.ev(Event::Empty(BytesStart::new(El::EXCLUSIVE)));
         }
         super::LockScope::Shared => {
-            writer.ev(Event::Empty(BytesStart::new(EL_SHARED)));
+            writer.ev(Event::Empty(BytesStart::new(El::SHARED)));
         }
     }
-    writer.ev(Event::End(BytesEnd::new(EL_LOCKSCOPE)));
+    writer.ev(Event::End(BytesEnd::new(El::LOCKSCOPE)));
 
-    writer.ev(Event::Start(BytesStart::new(EL_LOCKTYPE)));
-    writer.ev(Event::Empty(BytesStart::new(EL_WRITE)));
-    writer.ev(Event::End(BytesEnd::new(EL_LOCKTYPE)));
+    writer.ev(Event::Start(BytesStart::new(El::LOCKTYPE)));
+    writer.ev(Event::Empty(BytesStart::new(El::WRITE)));
+    writer.ev(Event::End(BytesEnd::new(El::LOCKTYPE)));
 
     let depth_str = match lock.depth {
         super::Depth::Zero => "0",
         super::Depth::One => "1",
         super::Depth::Infinity => "infinity",
     };
-    writer.ev(Event::Start(BytesStart::new(EL_DEPTH)));
+    writer.ev(Event::Start(BytesStart::new(El::DEPTH)));
     writer.ev(Event::Text(BytesText::new(depth_str)));
-    writer.ev(Event::End(BytesEnd::new(EL_DEPTH)));
+    writer.ev(Event::End(BytesEnd::new(El::DEPTH)));
 
     if let Some(ref owner) = lock.owner {
-        writer.ev(Event::Start(BytesStart::new(EL_OWNER)));
+        writer.ev(Event::Start(BytesStart::new(El::OWNER)));
         writer.ev(Event::Text(BytesText::new(owner)));
-        writer.ev(Event::End(BytesEnd::new(EL_OWNER)));
+        writer.ev(Event::End(BytesEnd::new(El::OWNER)));
     }
 
     if let Some(d) = lock.timeout {
-        writer.ev(Event::Start(BytesStart::new(EL_TIMEOUT)));
+        writer.ev(Event::Start(BytesStart::new(El::TIMEOUT)));
         writer.ev(Event::Text(BytesText::new(&format!(
             "Second-{}",
             d.as_secs()
         ))));
-        writer.ev(Event::End(BytesEnd::new(EL_TIMEOUT)));
+        writer.ev(Event::End(BytesEnd::new(El::TIMEOUT)));
     }
 
-    writer.ev(Event::Start(BytesStart::new(EL_LOCKTOKEN)));
-    writer.ev(Event::Start(BytesStart::new(EL_HREF)));
+    writer.ev(Event::Start(BytesStart::new(El::LOCKTOKEN)));
+    writer.ev(Event::Start(BytesStart::new(El::HREF)));
     writer.ev(Event::Text(BytesText::new(&lock.token)));
-    writer.ev(Event::End(BytesEnd::new(EL_HREF)));
-    writer.ev(Event::End(BytesEnd::new(EL_LOCKTOKEN)));
+    writer.ev(Event::End(BytesEnd::new(El::HREF)));
+    writer.ev(Event::End(BytesEnd::new(El::LOCKTOKEN)));
 
-    writer.ev(Event::End(BytesEnd::new(EL_ACTIVELOCK)));
+    writer.ev(Event::End(BytesEnd::new(El::ACTIVELOCK)));
 }
 
 fn write_dead_propstat(writer: &mut XmlWriter, props: &std::collections::HashMap<String, String>) {
-    writer.ev(Event::Start(BytesStart::new(EL_PROPSTAT)));
-    writer.ev(Event::Start(BytesStart::new(EL_PROP)));
+    writer.ev(Event::Start(BytesStart::new(El::PROPSTAT)));
+    writer.ev(Event::Start(BytesStart::new(El::PROP)));
 
     for (clark_key, value) in props {
         let (ns, local) = super::parse_clark(clark_key).unwrap_or(("", clark_key));
@@ -454,9 +467,9 @@ fn write_dead_propstat(writer: &mut XmlWriter, props: &std::collections::HashMap
         writer.ev(Event::End(BytesEnd::new(local)));
     }
 
-    writer.ev(Event::End(BytesEnd::new(EL_PROP)));
-    writer.ev(Event::Start(BytesStart::new(EL_STATUS)));
+    writer.ev(Event::End(BytesEnd::new(El::PROP)));
+    writer.ev(Event::Start(BytesStart::new(El::STATUS)));
     writer.ev(Event::Text(BytesText::new("HTTP/1.1 200 OK")));
-    writer.ev(Event::End(BytesEnd::new(EL_STATUS)));
-    writer.ev(Event::End(BytesEnd::new(EL_PROPSTAT)));
+    writer.ev(Event::End(BytesEnd::new(El::STATUS)));
+    writer.ev(Event::End(BytesEnd::new(El::PROPSTAT)));
 }

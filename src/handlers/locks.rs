@@ -12,11 +12,7 @@ use quick_xml::events::{BytesEnd, BytesStart, Event};
 
 use crate::server::{AppResult, AppState};
 use crate::utils::error::{IntoResolved, OrStatus};
-use crate::webdav::xml;
-use crate::webdav::{
-    self, ls,
-    xml::{XmlWriterExt, write_activelock},
-};
+use crate::webdav::{self, El, XmlWriterExt};
 
 /// Result of conflict checking before lock-null resource creation.
 enum TryAcquire {
@@ -61,7 +57,7 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Ap
 
     let mut locks = state.locks.write().await;
 
-    if let Some(refreshed) = webdav::find_and_refresh_ancestor_lock(&mut locks, &target, |l| {
+    if let Some(refreshed) = webdav::ls::find_and_refresh_ancestor_lock(&mut locks, &target, |l| {
         if_tokens.contains(&l.token)
     }) {
         let xml = build_lock_response(&refreshed);
@@ -77,7 +73,7 @@ pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> Ap
     let entry = locks.entry(target.clone()).or_default();
 
     // Common prefix: check for existing exclusive lock matching our tokens
-    let decision = if let Some(token) = ls::check_existing_exclusive(entry, &if_tokens)? {
+    let decision = if let Some(token) = webdav::ls::check_existing_exclusive(entry, &if_tokens)? {
         // Matching exclusive lock found — scope determines refresh behavior
         entry.retain(|l| !l.is_exclusive());
         let token = match lock_scope {
@@ -211,16 +207,16 @@ fn parse_lock_body(xml: &[u8]) -> (Option<String>, webdav::LockScope) {
 fn build_lock_response(lock: &webdav::LockInfo) -> String {
     let mut writer = Writer::new(Cursor::new(Vec::new()));
 
-    let mut prop = BytesStart::new(xml::EL_PROP);
+    let mut prop = BytesStart::new(El::PROP);
     prop.push_attribute(("xmlns:D", "DAV:"));
     writer.ev(Event::Start(prop));
 
-    writer.ev(Event::Start(BytesStart::new(xml::EL_LOCKDISCOVERY)));
+    writer.ev(Event::Start(BytesStart::new(El::LOCKDISCOVERY)));
 
-    write_activelock(&mut writer, lock);
+    webdav::xml::write_activelock(&mut writer, lock);
 
-    writer.ev(Event::End(BytesEnd::new(xml::EL_LOCKDISCOVERY)));
-    writer.ev(Event::End(BytesEnd::new(xml::EL_PROP)));
+    writer.ev(Event::End(BytesEnd::new(El::LOCKDISCOVERY)));
+    writer.ev(Event::End(BytesEnd::new(El::PROP)));
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
@@ -241,7 +237,7 @@ async fn ensure_lock_null_resource(target: &std::path::Path) -> Result<bool, Sta
 /// Try to create a new exclusive lock when no matching exclusive exists.
 ///
 /// Precondition: caller has already verified that no exclusive lock
-/// matched `if_tokens` (via [`check_existing_exclusive`](ls::check_existing_exclusive)).
+/// matched `if_tokens` (via [`check_existing_exclusive`](check_existing_exclusive)).
 fn try_new_exclusive(
     entry: &mut Vec<webdav::LockInfo>,
     if_tokens: &[String],

@@ -207,6 +207,8 @@ src/
   `Writer<Cursor<Vec<u8>>>` as shorthand for `.write_event(event).unwrap()`).
   `write_activelock(lock)` is the shared function for LOCK response + PROPFIND lockdiscovery XML.
   Helper functions: `multistatus(xml)` → `207 Multi-Status`.
+  DAV: element name constants are grouped in the `El` zero-sized struct
+  (`El::PROP`, `El::LOCKDISCOVERY`, etc.) — accessed via `rshs::webdav::xml::El`.
 - **Lock system**: In-memory lock support via `LockStore` (`Arc<RwLock<HashMap<PathBuf, Vec<LockInfo>>>>`).
   Shared and exclusive locks with conflict resolution (shared+shared ok, exclusive blocks all).
   Full RFC 4918 §10.4 conditional `If` header evaluation: `Not`, `DAV:no-lock`, resource-tags, AND semantics.

@@ -21,11 +21,9 @@ use quick_xml::events::{BytesStart, Event};
 
 use crate::scandir::DirEntryMeta;
 
-pub use ls::{IfCondition, IfList};
-pub use ls::{
-    find_ancestor_lock, find_and_refresh_ancestor_lock, parse_if_header, walk_locked_ancestors,
-};
+pub use ls::{IfCondition, IfList, parse_if_header};
 pub use method::Method;
+pub use xml::{El, XmlWriter, XmlWriterExt};
 
 /// Per-resource dead property store: resource path → (prop name → value).
 pub type DeadPropertyStore = HashMap<PathBuf, HashMap<String, String>>;

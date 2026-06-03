@@ -13,10 +13,7 @@ use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
 use crate::server::{AppResult, AppState};
 use crate::utils::error::{IntoResolved, OrStatus};
-use crate::webdav::{
-    self,
-    xml::{self, XmlWriter, XmlWriterExt},
-};
+use crate::webdav::{self, El, XmlWriter, XmlWriterExt};
 
 /// PROPFIND handler — returns resource properties (RFC 4918 §9.1).
 ///
@@ -310,7 +307,7 @@ fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> Str
 
     writer.ev(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
 
-    let mut ms = BytesStart::new(xml::EL_MULTISTATUS);
+    let mut ms = BytesStart::new(El::MULTISTATUS);
 
     ms.push_attribute(("xmlns:D", "DAV:"));
 
@@ -320,35 +317,35 @@ fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> Str
         write_proppatch_result(&mut writer, request_path, &action.0, "200 OK");
     }
 
-    writer.ev(Event::End(BytesEnd::new(xml::EL_MULTISTATUS)));
+    writer.ev(Event::End(BytesEnd::new(El::MULTISTATUS)));
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
 
 fn write_proppatch_result(writer: &mut XmlWriter, href: &str, prop_name: &str, status: &str) {
-    writer.ev(Event::Start(BytesStart::new(xml::EL_RESPONSE)));
+    writer.ev(Event::Start(BytesStart::new(El::RESPONSE)));
 
-    writer.ev(Event::Start(BytesStart::new(xml::EL_HREF)));
+    writer.ev(Event::Start(BytesStart::new(El::HREF)));
     writer.ev(Event::Text(BytesText::new(href)));
-    writer.ev(Event::End(BytesEnd::new(xml::EL_HREF)));
+    writer.ev(Event::End(BytesEnd::new(El::HREF)));
 
-    writer.ev(Event::Start(BytesStart::new(xml::EL_PROPSTAT)));
+    writer.ev(Event::Start(BytesStart::new(El::PROPSTAT)));
 
-    writer.ev(Event::Start(BytesStart::new(xml::EL_PROP)));
+    writer.ev(Event::Start(BytesStart::new(El::PROP)));
     let (ns, local) = webdav::parse_clark(prop_name).unwrap_or(("", prop_name));
     let mut elem = BytesStart::new(local);
     if !ns.is_empty() {
         elem.push_attribute(("xmlns", ns));
     }
     writer.ev(Event::Empty(elem));
-    writer.ev(Event::End(BytesEnd::new(xml::EL_PROP)));
+    writer.ev(Event::End(BytesEnd::new(El::PROP)));
 
-    writer.ev(Event::Start(BytesStart::new(xml::EL_STATUS)));
+    writer.ev(Event::Start(BytesStart::new(El::STATUS)));
     writer.ev(Event::Text(BytesText::new(&format!("HTTP/1.1 {status}"))));
-    writer.ev(Event::End(BytesEnd::new(xml::EL_STATUS)));
+    writer.ev(Event::End(BytesEnd::new(El::STATUS)));
 
-    writer.ev(Event::End(BytesEnd::new(xml::EL_PROPSTAT)));
-    writer.ev(Event::End(BytesEnd::new(xml::EL_RESPONSE)));
+    writer.ev(Event::End(BytesEnd::new(El::PROPSTAT)));
+    writer.ev(Event::End(BytesEnd::new(El::RESPONSE)));
 }
 
 // ---------------------------------------------------------------------------

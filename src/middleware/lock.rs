@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 use axum::middleware::Next;
 
 use crate::server::{AppResult, AppState};
-use crate::webdav::{self, Method, ls};
+use crate::webdav::{self, Method};
 
 /// Rejects write requests (`PUT`, `DELETE`, `MKCOL`, `PROPPATCH`, `MOVE`, `COPY`)
 /// with `423 Locked` if the target resource or an ancestor with `Depth::Infinity` is
@@ -89,12 +89,12 @@ fn is_path_locked(
         None => &[],
     };
 
-    if !ls::eval_if(lists, infos, request_path) {
+    if !webdav::ls::eval_if(lists, infos, request_path) {
         return true;
     }
 
-    webdav::walk_locked_ancestors(locks, path, root_canonical, |infos| {
-        ls::active_slice(infos).any(|l| l.depth == webdav::Depth::Infinity)
-            && !ls::eval_if(lists, infos, request_path)
+    webdav::ls::walk_locked_ancestors(locks, path, root_canonical, |infos| {
+        webdav::ls::active_slice(infos).any(|l| l.depth == webdav::Depth::Infinity)
+            && !webdav::ls::eval_if(lists, infos, request_path)
     })
 }
