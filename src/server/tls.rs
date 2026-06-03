@@ -32,6 +32,16 @@ impl TlsConfig {
 
     /// Load and parse the certificate and key files, returning a `rustls::ServerConfig`
     /// with ALPN protocols `h2` and `http/1.1`. Logs certificate fingerprints.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the certificate or key file cannot be opened, the PEM
+    /// data is malformed, or no certificates/keys are found in the files.
+    ///
+    /// # Panics
+    ///
+    /// Panics if formatting the certificate fingerprint fails. In practice this
+    /// never occurs — `String`'s `fmt::Write` is infallible except for OOM.
     pub fn load(&self) -> io::Result<rustls::ServerConfig> {
         let cert_file = match File::open(&self.cert_path) {
             Ok(f) => f,
@@ -128,6 +138,11 @@ pub struct TlsListener {
 
 impl TlsListener {
     /// Bind to `addr` and wrap the TCP listener with a TLS acceptor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if binding to the address fails (e.g. port already
+    /// in use, permission denied).
     pub async fn bind(addr: SocketAddr, ls_config: rustls::ServerConfig) -> io::Result<Self> {
         let inner = tokio::net::TcpListener::bind(addr).await?;
         let acceptor = TlsAcceptor::from(Arc::new(ls_config));

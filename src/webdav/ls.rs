@@ -472,6 +472,11 @@ pub fn eval_if(lists: &[IfList], infos: &[LockInfo], request_path: &str) -> bool
 /// - `Err(LOCKED)` if an exclusive lock exists and `if_tokens` doesn't match.
 ///
 /// Used by the lock enforcement middleware.
+///
+/// # Errors
+///
+/// Returns `Err(StatusCode::LOCKED)` when an active exclusive lock exists
+/// and the request does not present a matching lock token.
 pub fn check_existing_exclusive(
     entry: &[LockInfo],
     if_tokens: &[String],

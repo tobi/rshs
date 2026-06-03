@@ -19,6 +19,12 @@ use crate::webdav::{self, Method};
 /// Evaluates `If` header conditions against the lock store. For `COPY`/`MOVE`, both
 /// the source and destination paths are checked. If an `If` header with non-token
 /// conditions is present and no `Lock-Token` is provided, returns `412 Precondition Failed`.
+///
+/// # Errors
+///
+/// Returns `423 Locked` when the target is locked without a matching token,
+/// or `412 Precondition Failed` when an `If` header is present without a
+/// `Lock-Token` and without lock-token conditions.
 pub async fn lock_enforce(
     State(state): State<Arc<AppState>>,
     req: Request,

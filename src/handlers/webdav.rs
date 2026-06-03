@@ -19,6 +19,12 @@ use crate::webdav::{self, El, XmlWriter, XmlWriterExt};
 ///
 /// Supports `Depth: 0`, `1`, and `infinity`. Accepts `allprop`, `propname`,
 /// and named property requests. Returns a `207 Multi-Status` XML response.
+///
+/// # Panics
+///
+/// Panics if XML serialization or response construction fails. In practice
+/// this never occurs — the XML is built from an in-memory buffer and the
+/// response builder is always fresh.
 pub async fn handle_propfind(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let depth = webdav::parse_depth(req.headers());
     let request_path = req.uri().path().to_owned();
@@ -261,6 +267,12 @@ async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), Sta
 ///
 /// Processes `set` and `remove` actions from the request body. Returns a
 /// `207 Multi-Status` response with per-property success/failure status.
+///
+/// # Panics
+///
+/// Panics if XML serialization or response construction fails. In practice
+/// this never occurs — the XML is built from an in-memory buffer and the
+/// response builder is always fresh.
 pub async fn handle_proppatch(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let request_path = req.uri().path().to_owned();
 
@@ -307,7 +319,7 @@ fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> Str
 
     writer.ev(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
 
-    let mut ms = BytesStart::new(El::MULTISTATUS);
+    let mut ms = BytesStart::new(El::MULTI_STATUS);
 
     ms.push_attribute(("xmlns:D", "DAV:"));
 
@@ -317,7 +329,7 @@ fn build_proppatch_response(request_path: &str, op: &webdav::PropPatchOp) -> Str
         write_proppatch_result(&mut writer, request_path, &action.0, "200 OK");
     }
 
-    writer.ev(Event::End(BytesEnd::new(El::MULTISTATUS)));
+    writer.ev(Event::End(BytesEnd::new(El::MULTI_STATUS)));
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()
 }
@@ -329,7 +341,7 @@ fn write_proppatch_result(writer: &mut XmlWriter, href: &str, prop_name: &str, s
     writer.ev(Event::Text(BytesText::new(href)));
     writer.ev(Event::End(BytesEnd::new(El::HREF)));
 
-    writer.ev(Event::Start(BytesStart::new(El::PROPSTAT)));
+    writer.ev(Event::Start(BytesStart::new(El::PROP_STAT)));
 
     writer.ev(Event::Start(BytesStart::new(El::PROP)));
     let (ns, local) = webdav::parse_clark(prop_name).unwrap_or(("", prop_name));
@@ -344,7 +356,7 @@ fn write_proppatch_result(writer: &mut XmlWriter, href: &str, prop_name: &str, s
     writer.ev(Event::Text(BytesText::new(&format!("HTTP/1.1 {status}"))));
     writer.ev(Event::End(BytesEnd::new(El::STATUS)));
 
-    writer.ev(Event::End(BytesEnd::new(El::PROPSTAT)));
+    writer.ev(Event::End(BytesEnd::new(El::PROP_STAT)));
     writer.ev(Event::End(BytesEnd::new(El::RESPONSE)));
 }
 

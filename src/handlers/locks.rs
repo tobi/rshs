@@ -30,6 +30,12 @@ enum TryAcquire {
 /// Supports exclusive and shared locks. Handles lock-null resource creation
 /// for locking non-existent URLs. Refreshes existing locks when the same
 /// token is presented. Returns the `Lock-Token` header and activelock XML.
+///
+/// # Panics
+///
+/// Panics if constructing the lock response XML or HTTP response fails.
+/// In practice this never occurs — the XML is always valid UTF-8 from an
+/// in-memory buffer, and the response builder is always fresh.
 pub async fn handle_lock(State(state): State<Arc<AppState>>, req: Request) -> AppResult {
     let request_path = req.uri().path().trim_end_matches('/').to_owned();
 
@@ -211,11 +217,11 @@ fn build_lock_response(lock: &webdav::LockInfo) -> String {
     prop.push_attribute(("xmlns:D", "DAV:"));
     writer.ev(Event::Start(prop));
 
-    writer.ev(Event::Start(BytesStart::new(El::LOCKDISCOVERY)));
+    writer.ev(Event::Start(BytesStart::new(El::LOCK_DISCOVERY)));
 
     webdav::xml::write_activelock(&mut writer, lock);
 
-    writer.ev(Event::End(BytesEnd::new(El::LOCKDISCOVERY)));
+    writer.ev(Event::End(BytesEnd::new(El::LOCK_DISCOVERY)));
     writer.ev(Event::End(BytesEnd::new(El::PROP)));
 
     String::from_utf8(writer.into_inner().into_inner()).unwrap()

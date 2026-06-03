@@ -87,6 +87,22 @@ impl Method {
     pub const REPORT: Self = Self(Inner::Report);
 
     /// Convert from `http::Method` to `webdav::Method`.
+    ///
+    /// Standard HTTP methods (GET, HEAD, PUT, etc.) are matched directly.
+    /// WebDAV extension methods (PROPFIND, MKCOL, etc.) are matched by
+    /// string comparison.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `InvalidMethod` error if the method is not recognized as a
+    /// standard HTTP method or a supported WebDAV extension method.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `HttpMethod::from_bytes(b"")` ever returns `Ok`, which
+    /// would indicate an upstream behavior change in the `http` crate.
+    /// In practice this never occurs — an empty byte string is always
+    /// an invalid HTTP method.
     pub(crate) fn from_http_method(method: &HttpMethod) -> Result<Self, InvalidMethod> {
         match *method {
             HttpMethod::GET => Ok(Self::GET),

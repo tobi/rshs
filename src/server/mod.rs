@@ -94,6 +94,11 @@ pub struct ServerConfig {
 /// Builds the axum router with all middleware layers, then starts the HTTP or HTTPS
 /// server. Also spawns a background task to prune expired locks and auth cache entries
 /// every 30 seconds.
+///
+/// # Errors
+///
+/// Returns an error if the address cannot be parsed, the server fails to bind
+/// (port already in use, permission denied), or TLS loading fails.
 pub async fn start_server(config: ServerConfig) -> io::Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.host, config.port)
         .parse()
@@ -152,7 +157,7 @@ pub async fn start_server(config: ServerConfig) -> io::Result<()> {
 ///
 /// This produces the same Router used by [`start_server`], enabling integration
 /// testing without binding a TCP port. Layers are applied from inside out:
-/// `HealthCheck` (outermost) → `LockEnforce` → `Auth` → `TraceLayer` → dispatch.
+/// `HealthCheck` (outermost) -> `Auth` -> `LockEnforce` -> `TraceLayer` -> dispatch.
 pub fn make_router(state: Arc<AppState>) -> Router {
     use crate::middleware::{auth, health, lock};
     use axum::middleware::from_fn_with_state;

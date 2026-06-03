@@ -22,6 +22,12 @@ use crate::utils::time::format_rfc850;
 /// Returns the HTML string and the number of directory entries. If the
 /// directory cannot be read, returns a styled error page with entry count 0.
 ///
+/// # Panics
+///
+/// Panics if writing to the in-memory HTML buffer fails.
+/// In practice this never occurs — `String`'s `fmt::Write` implementation
+/// is infallible except for out-of-memory, which Rust does not recover from.
+///
 /// This is the primary entry point used by
 /// [`handle_get_head`](crate::handlers::http::handle_get_head) to serve
 /// directory index pages to browsers.
