@@ -239,10 +239,10 @@ fn write_response(writer: &mut XmlWriter, entry: &PropEntry, prop_request: &Prop
     }
 
     // Dead properties
-    if let Some(ref dead) = entry.dead_props {
-        if !dead.is_empty() {
-            write_dead_propstat(writer, dead);
-        }
+    if let Some(ref dead) = entry.dead_props
+        && !dead.is_empty()
+    {
+        write_dead_propstat(writer, dead);
     }
 
     writer.ev(Event::End(BytesEnd::new(El::RESPONSE)));

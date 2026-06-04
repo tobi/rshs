@@ -153,26 +153,24 @@ async fn do_move_or_copy(state: &Arc<AppState>, req: Request, is_move: bool) -> 
     let meta = meta.or_404("source not found for COPY/MOVE")?;
 
     // Type-incompatible overwrite with Overwrite:T — clean up target first
-    if overwrite && dest_existed {
-        if let Ok(dest_meta) = tokio::fs::metadata(&dest).await {
-            if !meta.is_dir() && dest_meta.is_dir() {
-                let _ = tokio::fs::remove_dir_all(&dest).await;
-                dest_existed = false;
-            } else if meta.is_dir() && dest_meta.is_file() {
-                let _ = tokio::fs::remove_file(&dest).await;
-                dest_existed = false;
-            }
+    if (overwrite && dest_existed)
+        && let Ok(dest_meta) = tokio::fs::metadata(&dest).await
+    {
+        if !meta.is_dir() && dest_meta.is_dir() {
+            let _ = tokio::fs::remove_dir_all(&dest).await;
+            dest_existed = false;
+        } else if meta.is_dir() && dest_meta.is_file() {
+            let _ = tokio::fs::remove_file(&dest).await;
+            dest_existed = false;
         }
     }
 
     if meta.is_dir() {
         // MOVE ignores Depth header; COPY with Depth:0 makes shallow copy
         if !is_move && depth == webdav::Depth::Zero {
-            if !dest_existed {
-                if let Err(e) = tokio::fs::create_dir(&dest).await {
-                    tracing::error!(error = %e, "shallow copy create dir failed");
-                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                }
+            if !dest_existed && let Err(e) = tokio::fs::create_dir(&dest).await {
+                tracing::error!(error = %e, "shallow copy create dir failed");
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
             }
         } else {
             copy_dir(&fs_src, &dest, dest_existed).await?;
@@ -241,11 +239,11 @@ async fn copy_dir(src: &Path, dest: &Path, dest_existed: bool) -> Result<(), Sta
             let entry_dest = dest_dir.join(entry.file_name());
 
             if file_type.is_dir() {
-                if let Err(e) = tokio::fs::create_dir(&entry_dest).await {
-                    if e.kind() != std::io::ErrorKind::AlreadyExists {
-                        tracing::error!(error = %e, dest = %entry_dest.display(), "create sub dir failed");
-                        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                    }
+                if let Err(e) = tokio::fs::create_dir(&entry_dest).await
+                    && e.kind() != std::io::ErrorKind::AlreadyExists
+                {
+                    tracing::error!(error = %e, dest = %entry_dest.display(), "create sub dir failed");
+                    return Err(StatusCode::INTERNAL_SERVER_ERROR);
                 }
                 stack.push((entry.path(), entry_dest));
             } else if file_type.is_symlink() {

@@ -589,10 +589,10 @@ fn decode_xml_char_refs(text: &str) -> String {
         if let Some(end) = rest.find(';') {
             let num_str = &rest[..end];
             let radix = if hex { 16 } else { 10 };
-            if let Ok(n) = u32::from_str_radix(num_str, radix) {
-                if let Some(c) = char::from_u32(n) {
-                    result.push(c);
-                }
+            if let Ok(n) = u32::from_str_radix(num_str, radix)
+                && let Some(c) = char::from_u32(n)
+            {
+                result.push(c);
             }
             rest = &rest[end + 1..];
         } else {

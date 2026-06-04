@@ -335,10 +335,10 @@ pub fn walk_locked_ancestors<'a>(
             if !parent.starts_with(root_canonical) {
                 break;
             }
-            if let Some(infos) = locks.get(parent) {
-                if f(infos) {
-                    return true;
-                }
+            if let Some(infos) = locks.get(parent)
+                && f(infos)
+            {
+                return true;
             }
             current = parent.parent();
         }
