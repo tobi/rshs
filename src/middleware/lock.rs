@@ -57,25 +57,24 @@ pub async fn lock_enforce(
     let locks = state.locks.read().await;
 
     // Source check (skip for COPY — source is read-only)
-    if method != Method::COPY {
-        if let Ok(src) = state.resolve_and_guard(&request_path).await {
-            if is_path_locked(&locks, &src, &lists, &state.root_canonical, &request_path) {
-                tracing::debug!(path = %src.display(), "source locked, rejecting write");
-                return Err(StatusCode::LOCKED);
-            }
-        }
+    if method != Method::COPY
+        && let Ok(src) = state.resolve_and_guard(&request_path).await
+        && is_path_locked(&locks, &src, &lists, &state.root_canonical, &request_path)
+    {
+        tracing::debug!(path = %src.display(), "source locked, rejecting write");
+        return Err(StatusCode::LOCKED);
     }
 
     // Destination check (COPY/MOVE only)
-    if method == Method::COPY || method == Method::MOVE {
-        if let Some(dest) = webdav::parse_destination(req.headers()) {
-            let dest_norm = dest.trim_end_matches('/');
-            if let Ok(dest_path) = state.resolve_and_guard(dest_norm).await {
-                if is_path_locked(&locks, &dest_path, &lists, &state.root_canonical, dest_norm) {
-                    tracing::debug!(path = %dest_norm, "destination locked, rejecting COPY/MOVE");
-                    return Err(StatusCode::LOCKED);
-                }
-            }
+    if (method == Method::COPY || method == Method::MOVE)
+        && let Some(dest) = webdav::parse_destination(req.headers())
+    {
+        let dest_norm = dest.trim_end_matches('/');
+        if let Ok(dest_path) = state.resolve_and_guard(dest_norm).await
+            && is_path_locked(&locks, &dest_path, &lists, &state.root_canonical, dest_norm)
+        {
+            tracing::debug!(path = %dest_norm, "destination locked, rejecting COPY/MOVE");
+            return Err(StatusCode::LOCKED);
         }
     }
 

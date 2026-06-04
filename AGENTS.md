@@ -37,7 +37,7 @@ TESTS="basic http copymove locks props" TESTROOT=. ./litmus http://localhost:808
 - Single crate `rshs` with both binary (`src/main.rs`) and library (`src/lib.rs`) targets
 - Library root `src/lib.rs` declares modules and re-exports public API
 - Tests live in `tests/` directory (integration tests)
-- Edition 2024 — requires Rust 1.87+
+- Edition 2024 — requires Rust 1.88+
 
 ### Module Map
 

@@ -4,10 +4,13 @@ on:
   push:
     branches: [master]
     tags: [v*]
+  pull_request:
+    paths: ["./Dockerfile"]
   workflow_dispatch:
 
 jobs:
-  build:
+  container:
+    name: Build & Push Container Image
     uses: docker/github-builder/.github/workflows/build.yml@v1.10.0
     permissions:
       contents: read
@@ -16,7 +19,7 @@ jobs:
       id-token: write
     with:
       output: image
-      push: true
+      push: ${{ github.event_name != 'pull_request' }}
       platforms: linux/amd64,linux/arm64
       meta-images: |
         docker.io/mogeko/rshs
@@ -35,3 +38,14 @@ jobs:
         - registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+  crate:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo publish
