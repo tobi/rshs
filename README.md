@@ -5,18 +5,18 @@
 <div align="center">
   <h3>WebDAV, simplified</h3>
   <a href="https://github.com/mogeko/rshs/blob/master/docs/usage.md">Guide</a> •
+  <a href="https://docs.rs/rshs">API&nbsp;Docs</a> •
   <a href="https://github.com/mogeko/rshs/blob/master/docs/benchmark-report.md">Benchmark</a> •
-  <a href="https://github.com/mogeko/rshs/blob/master/docs/litmus-test-report.md">Litmus Test</a> •
-  <a href="https://www.rfc-editor.org/info/rfc4918">RFC 4918</a>
-
+  <a href="https://github.com/mogeko/rshs/blob/master/docs/litmus-test-report.md">Litmus&nbsp;Test</a> •
+  <a href="https://www.rfc-editor.org/info/rfc4918">RFC&nbsp;4918</a>
 </div>
 
 <br/>
 
 <div align="center">
 
-[![Build](https://github.com/mogeko/rshs/actions/workflows/build.yaml/badge.svg)](https://github.com/mogeko/rshs/actions/workflows/build.yaml)
-[![Test](https://github.com/mogeko/rshs/actions/workflows/test.yaml/badge.svg)](https://github.com/mogeko/rshs/actions/workflows/test.yaml)
+[![crates.io](https://img.shields.io/crates/v/rshs)](https://crates.io/crates/rshs)
+[![Build & Test](https://github.com/mogeko/rshs/actions/workflows/build+test.yaml/badge.svg)](https://github.com/mogeko/rshs/actions/workflows/build+test.yaml)
 [![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 </div>
