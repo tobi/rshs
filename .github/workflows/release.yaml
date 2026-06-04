@@ -4,6 +4,8 @@ on:
   push:
     branches: [master]
     tags: [v*]
+  pull_request:
+    paths: ["./Dockerfile"]
   workflow_dispatch:
 
 jobs:
@@ -16,7 +18,7 @@ jobs:
       id-token: write
     with:
       output: image
-      push: true
+      push: ${{ github.event_name != 'pull_request' }}
       platforms: linux/amd64,linux/arm64
       meta-images: |
         docker.io/mogeko/rshs
