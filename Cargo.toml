@@ -23,7 +23,7 @@ derive-new = "0.7"
 futures-util = "0.3"
 mime_guess = "2.0"
 percent-encoding = "2.3"
-quick-xml = "0.40"
+quick-xml = "0.41"
 rustls = "0.23"
 rustls-pemfile = "2.2"
 sha-crypt = { version = "0.6", features = ["getrandom"] }
